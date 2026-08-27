@@ -7,11 +7,51 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
+
+// ringBuffer keeps the most recent raw (JSON) log lines in memory so the debug
+// UI can show a live tail without reading the log file.
+type ringBuffer struct {
+	mu   sync.Mutex
+	buf  []string
+	size int
+}
+
+var recent = &ringBuffer{size: 400}
+
+func (r *ringBuffer) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, line := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		r.buf = append(r.buf, line)
+		if len(r.buf) > r.size {
+			r.buf = r.buf[len(r.buf)-r.size:]
+		}
+	}
+	return len(p), nil
+}
+
+// RecentLines returns up to the last n captured log lines (newest last). A
+// non-positive n returns all retained lines.
+func RecentLines(n int) []string {
+	recent.mu.Lock()
+	defer recent.mu.Unlock()
+	if n <= 0 || n > len(recent.buf) {
+		n = len(recent.buf)
+	}
+	out := make([]string, n)
+	copy(out, recent.buf[len(recent.buf)-n:])
+	return out
+}
 
 // Options controls logger setup.
 type Options struct {
@@ -38,6 +78,8 @@ func Setup(o Options) (zerolog.Logger, error) {
 	} else {
 		writers = append(writers, os.Stderr)
 	}
+	// Always capture a rolling tail in memory for the debug UI.
+	writers = append(writers, recent)
 
 	if o.File && o.LogPath != "" {
 		if err := os.MkdirAll(filepath.Dir(o.LogPath), 0o700); err != nil {

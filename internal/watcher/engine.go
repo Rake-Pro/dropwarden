@@ -106,8 +106,26 @@ type Engine struct {
 	skipReq    bool
 	refreshReq bool
 
-	statusMu sync.Mutex
-	status   Status
+	statusMu    sync.Mutex
+	status      Status
+	eligibility map[string]int
+}
+
+// LastEligibility returns the most recent selection eligibility tally.
+func (e *Engine) LastEligibility() map[string]int {
+	e.statusMu.Lock()
+	defer e.statusMu.Unlock()
+	out := make(map[string]int, len(e.eligibility))
+	for k, v := range e.eligibility {
+		out[k] = v
+	}
+	return out
+}
+
+func (e *Engine) setEligibility(t map[string]int) {
+	e.statusMu.Lock()
+	e.eligibility = t
+	e.statusMu.Unlock()
 }
 
 // New builds an engine, filling default Now/Rand.

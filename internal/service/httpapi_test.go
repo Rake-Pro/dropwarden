@@ -77,6 +77,30 @@ func TestHTTPStateAndActions(t *testing.T) {
 	}
 }
 
+func TestHTTPDebug(t *testing.T) {
+	b := testBackend(t)
+	h := NewHTTPHandler(b)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/debug", nil))
+	if rr.Code != 200 {
+		t.Fatalf("debug code=%d", rr.Code)
+	}
+	var dbg struct {
+		RuntimeUp bool              `json:"runtimeUp"`
+		Paths     map[string]string `json:"paths"`
+		LogTail   []string          `json:"logTail"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &dbg); err != nil {
+		t.Fatalf("decode debug: %v", err)
+	}
+	if dbg.RuntimeUp {
+		t.Fatal("runtimeUp should be false with nil engine")
+	}
+	if dbg.Paths["config"] == "" {
+		t.Fatalf("expected config path in debug paths: %+v", dbg.Paths)
+	}
+}
+
 func jsonReq(method, path, body string) *http.Request {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")

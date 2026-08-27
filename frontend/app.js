@@ -6,6 +6,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<':
 const pct = (cur, req) => req > 0 ? Math.min(100, Math.round(cur / req * 100)) : 0;
 
 let cfg = null;
+let debugOpen = true;
 
 function switchView(view) {
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === view));
@@ -184,9 +185,12 @@ async function renderSettings() {
     </div>
     <div class="warnnote">⚠ Stored credentials are disabled by design and unsupported. Leave off unless manual login stops working.</div></div>
 
-    <div class="group"><div class="caption">Diagnostics</div><div class="card">
-      <div class="row"><div class="lab"><div class="l">Dump GraphQL bodies</div><div class="h">Writes campaign JSON (no auth) to ~/.dropwarden/debug/ on each discovery, for troubleshooting.</div></div><div class="ctl">${toggle('captureGqlBodies', cfg.captureGqlBodies)}</div></div>
-    </div></div>
+    <div class="group"><div class="caption">Debugging</div><div class="card">
+      <div class="row"><div class="lab"><div class="l">Dump GraphQL bodies</div><div class="h">Writes campaign JSON (no auth) to the debug folder on each discovery.</div></div><div class="ctl">${toggle('captureGqlBodies', cfg.captureGqlBodies)}</div></div>
+      <div class="row"><div class="lab"><div class="l">Live debug panel</div><div class="h">Runtime state, last discovery, eligibility breakdown, and a log tail.</div></div><div class="ctl"><button class="btn" id="dbg-toggle" type="button">Hide</button></div></div>
+    </div>
+    <div id="debug-panel" style="margin-top:10px"></div>
+    </div>
 
     <div class="foot-btns"><button class="btn primary" id="save">Save changes</button><button class="btn" id="reset">Reset to defaults</button><span id="savemsg" style="align-self:center;color:var(--text-secondary);font-size:12px"></span></div>
   </div>`);
@@ -217,6 +221,13 @@ async function renderSettings() {
   const anyToggle = wrap.querySelector('[data-toggle="anyGame"]');
   if (anyToggle) anyToggle.addEventListener('click', renderGames);
 
+  const dbgToggleBtn = wrap.querySelector('#dbg-toggle');
+  if (dbgToggleBtn) {
+    dbgToggleBtn.textContent = debugOpen ? 'Hide' : 'Show';
+    dbgToggleBtn.addEventListener('click', () => { debugOpen = !debugOpen; dbgToggleBtn.textContent = debugOpen ? 'Hide' : 'Show'; renderDebugPanel(); });
+  }
+  renderDebugPanel();
+
   $('#save', wrap).addEventListener('click', async () => {
     const msg = $('#savemsg', wrap);
     try {
@@ -233,6 +244,42 @@ async function renderSettings() {
   });
   $('#reset', wrap).addEventListener('click', () => renderSettings());
   v.append(wrap);
+}
+
+async function renderDebugPanel() {
+  const host = document.querySelector('#debug-panel');
+  if (!host) return;
+  if (!debugOpen) { host.innerHTML = ''; return; }
+  let d;
+  try { d = await api.debug(); }
+  catch (e) { host.innerHTML = '<div class="card mini"><div class="empty">Debug info needs the backend (run the app, not a static preview).</div></div>'; return; }
+  const st = d.status || {};
+  const disc = d.lastDiscovery;
+  const elig = d.eligibility || {};
+  const hk = (disc && disc.headerKeys) || [];
+  const integrity = hk.indexOf('client-integrity') !== -1;
+  const paths = d.paths || {};
+  const eligStr = Object.keys(elig).length ? Object.entries(elig).map(([k, v]) => `${cap(k)} ${v}`).join('   ') : '—';
+  const runLine = `${d.runtimeUp ? 'up' : 'starting'} · ${esc(st.state || '—')}${st.channelLogin ? ' @' + esc(st.channelLogin) : ''}`;
+  const discLine = disc ? `gql ${disc.gqlResponses} · parsed ${disc.campaignsParsed} · details ${disc.detailsParsed} · enqueued ${disc.enqueued}` : 'not run yet';
+  host.innerHTML = `<div class="card mini">
+    <div class="kv"><span class="k">Runtime</span><span class="v">${runLine}</span></div>
+    <div class="kv"><span class="k">Eligibility</span><span class="v mono">${esc(eligStr)}</span></div>
+    <div class="kv"><span class="k">Last discovery</span><span class="v mono">${esc(discLine)}</span></div>
+    <div class="kv"><span class="k">Integrity token captured</span><span class="v" style="color:${integrity ? 'var(--ok)' : 'var(--err)'}">${integrity ? 'yes' : 'no'}</span></div>
+    <div class="kv"><span class="k">Debug folder</span><span class="v mono" style="font-size:11px;max-width:60%;overflow:hidden;text-overflow:ellipsis">${esc(paths.debugDir || '')}</span></div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn" id="dbg-refresh" type="button">Refresh</button>
+      <button class="btn" id="dbg-discover" type="button">Force discovery</button>
+    </div>
+    <div style="margin-top:12px"><div class="caption">Log tail</div>
+      <pre id="dbg-log" style="max-height:240px;overflow:auto;background:var(--bg-window);border:1px solid var(--hairline-card);border-radius:8px;padding:10px;font-size:11px;line-height:1.5;white-space:pre-wrap;margin:0">${esc((d.logTail || []).slice(-120).join('\n')) || 'no log lines yet'}</pre>
+    </div>
+  </div>`;
+  const logEl = host.querySelector('#dbg-log');
+  if (logEl) logEl.scrollTop = logEl.scrollHeight;
+  host.querySelector('#dbg-refresh').addEventListener('click', renderDebugPanel);
+  host.querySelector('#dbg-discover').addEventListener('click', async () => { await api.refresh().catch(() => {}); setTimeout(renderDebugPanel, 1000); });
 }
 
 function cap(s) { return String(s || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()); }
@@ -257,6 +304,11 @@ function init() {
   });
   // Live updates: re-poll periodically; live builds also get pushed events.
   setInterval(() => { renderDashboard(); renderFoot(); }, 5000);
+  // Auto-refresh the debug panel while it is open on the settings view.
+  setInterval(() => {
+    const sv = document.querySelector('.view[data-view="settings"]');
+    if (sv && sv.classList.contains('active') && debugOpen) renderDebugPanel();
+  }, 4000);
   api.onEvent('watcher:progress', () => renderDashboard());
   api.onEvent('watcher:state', () => { renderDashboard(); renderFoot(); });
   api.onEvent('drop:claimed', () => refreshAll());

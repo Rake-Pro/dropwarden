@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -17,6 +19,17 @@ import (
 	"github.com/rake-pro/dropwarden/internal/twitch"
 )
 
+// Diagnostic is a snapshot of the last discovery pass, for the debug UI.
+type Diagnostic struct {
+	At              time.Time `json:"at"`
+	GQLResponses    int       `json:"gqlResponses"`
+	OpsSeen         []string  `json:"opsSeen"`
+	HeaderKeys      []string  `json:"headerKeys"`
+	CampaignsParsed int       `json:"campaignsParsed"`
+	DetailsParsed   int       `json:"detailsParsed"`
+	Enqueued        int       `json:"enqueued"`
+}
+
 // Discoverer runs a single discovery pass on demand. The jittered scheduling
 // loop lives in the watcher engine, which calls RunOnce during Idle/Cooldown.
 type Discoverer struct {
@@ -24,6 +37,16 @@ type Discoverer struct {
 	pages  *twitch.Pages
 	cfg    *config.Config
 	logger zerolog.Logger
+
+	mu   sync.Mutex
+	last Diagnostic
+}
+
+// LastDiagnostic returns a snapshot of the most recent discovery pass.
+func (d *Discoverer) LastDiagnostic() Diagnostic {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.last
 }
 
 // New builds a Discoverer.
@@ -109,6 +132,14 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 		return res, err
 	}
 	res.Enqueued = enq
+
+	d.mu.Lock()
+	d.last = Diagnostic{
+		At: time.Now(), GQLResponses: captured.RawCount, OpsSeen: captured.OpsSeen,
+		HeaderKeys: headerKeys, CampaignsParsed: len(captured.Campaigns),
+		DetailsParsed: res.Details, Enqueued: res.Enqueued,
+	}
+	d.mu.Unlock()
 
 	d.logger.Info().Int("campaigns", res.Campaigns).Int("details", res.Details).
 		Int("progress", res.Progress).Int("enqueued", res.Enqueued).Msg("discovery pass complete")

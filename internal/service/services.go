@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/config"
+	"github.com/rake-pro/dropwarden/internal/discovery"
 	"github.com/rake-pro/dropwarden/internal/domain"
 	"github.com/rake-pro/dropwarden/internal/store"
 	"github.com/rake-pro/dropwarden/internal/watcher"
@@ -22,6 +23,7 @@ type Backend struct {
 	mu     sync.RWMutex
 	cfg    *config.Config
 	engine *watcher.Engine
+	disco  *discovery.Discoverer
 }
 
 // NewBackend builds a Backend.
@@ -41,6 +43,20 @@ func (b *Backend) Engine() *watcher.Engine {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.engine
+}
+
+// SetDiscoverer attaches the discoverer once the runtime is up.
+func (b *Backend) SetDiscoverer(d *discovery.Discoverer) {
+	b.mu.Lock()
+	b.disco = d
+	b.mu.Unlock()
+}
+
+// Discoverer returns the attached discoverer, or nil if the runtime is not up.
+func (b *Backend) Discoverer() *discovery.Discoverer {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.disco
 }
 
 func (b *Backend) config() *config.Config {

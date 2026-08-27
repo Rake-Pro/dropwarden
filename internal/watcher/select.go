@@ -91,6 +91,7 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 			}
 		}
 	}
+	e.setEligibility(tally)
 	if len(items) > 0 {
 		ev := e.deps.Log.Info().Int("queued", len(items)).Interface("eligibility", tally)
 		// Include one queued campaign's raw window fields to diagnose filtering.

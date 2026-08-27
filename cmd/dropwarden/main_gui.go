@@ -64,6 +64,7 @@ func startRuntime(ctx context.Context, a *app.App, backend *service.Backend, emi
 		return
 	}
 	backend.SetEngine(a.Engine)
+	backend.SetDiscoverer(a.Disco)
 	a.Log.Info().Msg("runtime up; watcher engine attached")
 	if err := a.Engine.Run(ctx); err != nil && ctx.Err() == nil {
 		a.Log.Error().Err(err).Msg("engine loop exited")

@@ -68,6 +68,11 @@ export const api = {
   async spark() { return (await fetchState()).spark || []; },
   async config() { return (await fetchState()).config; },
   async saveConfig(cfg) { return post('/api/config', cfg); },
+  async debug() {
+    const r = await fetch('/api/debug', { cache: 'no-store' });
+    if (!r.ok) throw new Error('debug ' + r.status);
+    return r.json();
+  },
 
   start() { return post('/api/watch/start'); },
   stop() { return post('/api/watch/stop'); },

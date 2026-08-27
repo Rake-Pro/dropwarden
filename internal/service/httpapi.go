@@ -3,7 +3,11 @@ package service
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"time"
+
+	"github.com/rake-pro/dropwarden/internal/config"
+	"github.com/rake-pro/dropwarden/internal/logging"
 )
 
 // NewHTTPHandler builds an http.Handler exposing the services as a small JSON
@@ -36,6 +40,10 @@ func NewHTTPHandler(b *Backend) http.Handler {
 			"config":     settings.Load(),
 			"spark":      minutesSpark(history),
 		})
+	})
+
+	mux.HandleFunc("GET /api/debug", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, buildDebug(b, watch))
 	})
 
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +158,37 @@ func minutesSpark(h *HistoryService) []int {
 	out := make([]int, days)
 	for i, v := range buckets {
 		out[i] = v * 100 / max
+	}
+	return out
+}
+
+// buildDebug assembles the debug snapshot for the Debugging pane.
+func buildDebug(b *Backend, watch *WatcherService) map[string]any {
+	dir, _ := config.Dir()
+	dbPath, _ := config.DBPath()
+	logPath, _ := config.LogPath()
+	profile, _ := b.config().ProfileDir()
+	debugDir := ""
+	if dir != "" {
+		debugDir = filepath.Join(dir, "debug")
+	}
+
+	out := map[string]any{
+		"status":        watch.Status(),
+		"runtimeUp":     b.Engine() != nil,
+		"eligibility":   map[string]int{},
+		"lastDiscovery": nil,
+		"logTail":       logging.RecentLines(120),
+		"paths": map[string]string{
+			"appRoot": dir, "config": b.ConfigPath, "database": dbPath,
+			"log": logPath, "chromeProfile": profile, "debugDir": debugDir,
+		},
+	}
+	if eng := b.Engine(); eng != nil {
+		out["eligibility"] = eng.LastEligibility()
+	}
+	if d := b.Discoverer(); d != nil {
+		out["lastDiscovery"] = d.LastDiagnostic()
 	}
 	return out
 }
