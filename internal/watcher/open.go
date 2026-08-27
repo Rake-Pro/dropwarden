@@ -81,25 +81,34 @@ func (e *Engine) runValidating(ctx context.Context) (State, string) {
 	return e.failChannel(domain.OutcomeAbortedStall, "playback validation timed out", e.deps.Cfg.Watcher.OfflineBlacklistTTL)
 }
 
-// beginWatching records the session baseline and enters Watching.
+// beginWatching records the session baseline and enters Watching. Re-entry
+// after a mid-watch hard/proactive refresh CONTINUES the existing session (one
+// session = one continuous watch of a channel toward a drop; refreshes do not
+// end it) - a fresh session is only minted when none is in flight.
 func (e *Engine) beginWatching(ctx context.Context) (State, string) {
 	now := e.deps.Now()
 	base := 0
 	if p, err := e.deps.Store.GetProgress(e.cur.drop.ID); err == nil && p != nil {
 		base, _ = p.Effective()
 	}
-	e.cur.startMinutes = base
-	e.cur.lastMinutes = base
-	e.cur.lastProgress = now
-	e.setStatus(func(s *Status) { s.Current = base; s.SessionMinutes = 0 })
-	e.cur.session = domain.WatchSession{
-		ID:           newSessionID(now, e.deps.Rand),
-		DropID:       e.cur.drop.ID,
-		CampaignID:   e.cur.campaign.ID,
-		ChannelLogin: e.cur.login,
-		StartedAt:    now,
-		StartMinutes: base,
+	if e.cur.session.ID == "" {
+		e.cur.startMinutes = base
+		e.cur.lastMinutes = base
+		e.cur.session = domain.WatchSession{
+			ID:           newSessionID(now, e.deps.Rand),
+			DropID:       e.cur.drop.ID,
+			CampaignID:   e.cur.campaign.ID,
+			ChannelLogin: e.cur.login,
+			StartedAt:    now,
+			StartMinutes: base,
+		}
+		e.setStatus(func(s *Status) { s.SessionStartedAt = now })
+	} else if base > e.cur.lastMinutes {
+		// Continuation after a refresh: keep the session, adopt newer minutes.
+		e.cur.lastMinutes = base
 	}
+	e.cur.lastProgress = now
+	e.setStatus(func(s *Status) { s.Current = e.cur.lastMinutes })
 	// Playback is confirmed; tuck the window away again if running minimized.
 	e.setWindowMinimized(ctx, true)
 	return StateWatching, "playback validated"

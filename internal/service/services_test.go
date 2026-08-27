@@ -2,6 +2,7 @@ package service
 
 import (
 	"testing"
+	"time"
 
 	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rake-pro/dropwarden/internal/domain"
@@ -61,7 +62,13 @@ func TestQueueAndHistoryServices(t *testing.T) {
 	}
 	b.Store.UpsertQueueItem(domain.QueueItem{DropID: "d1", CampaignID: "c1", Enabled: true, Status: domain.ItemPending})
 	b.Store.AppendClaim(domain.Claim{DropID: "d0", DropName: "Old", GameName: "Rust"})
-	b.Store.AppendSession(domain.WatchSession{ID: "s1", DropID: "d0", StartMinutes: 0, EndMinutes: 60, Outcome: domain.OutcomeClaimed})
+	// MinutesWatched totals are wall-clock (StartedAt..EndedAt), not the
+	// per-drop credited delta - simultaneous drops credit in parallel.
+	started := time.Date(2026, 8, 27, 10, 0, 0, 0, time.UTC)
+	b.Store.AppendSession(domain.WatchSession{
+		ID: "s1", DropID: "d0", StartedAt: started, EndedAt: started.Add(60 * time.Minute),
+		StartMinutes: 0, EndMinutes: 45, Outcome: domain.OutcomeClaimed,
+	})
 
 	q, err := NewQueueService(b).Get()
 	if err != nil || len(q) != 1 || q[0].DropName != "Skin" || q[0].Game != "Rust" {

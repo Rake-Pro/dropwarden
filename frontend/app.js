@@ -226,7 +226,7 @@ async function renderHistory() {
   const v = $('#v-history');
   const hours = (stats.minutesWatched / 60).toFixed(1);
   v.innerHTML = '';
-  v.append(el(`<div><h2 class="title">History &amp; report</h2><p class="sub">Lifetime totals from the local SQLite database. A session is one continuous watch of a single channel toward a single drop; it ends on completion or claim, channel loss (offline, raid, stall), a skip or pause, or the max-session rotation (default 4h). The session in progress is included live.</p></div>`));
+  v.append(el(`<div><h2 class="title">History &amp; report</h2><p class="sub">Lifetime totals from the local SQLite database. A session is one continuous watch of a single channel toward a single drop (page refreshes do not end it); it ends on completion or claim, channel loss (offline, raid, stall), a skip or pause, or the max-session rotation (default 4h). Minutes watched is wall-clock time on stream — simultaneous drops credit in parallel, so per-drop progress can outpace it. The session in progress is included live.</p></div>`));
   v.append(el(`<div class="stat-row">
     <div class="card stat"><div class="big ok">${stats.dropsEarned}</div><div class="cap">Drops earned</div></div>
     <div class="card stat"><div class="big ok">${stats.dropsClaimed}</div><div class="cap">Drops claimed</div></div>

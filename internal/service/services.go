@@ -239,7 +239,7 @@ func (s *HistoryService) Sessions(limit int) ([]SessionDTO, error) {
 	for _, ws := range sessions {
 		out = append(out, SessionDTO{
 			ID: ws.ID, DropID: ws.DropID, ChannelLogin: ws.ChannelLogin,
-			StartedAt: ws.StartedAt, EndedAt: ws.EndedAt, Minutes: ws.MinutesWatched(), Outcome: string(ws.Outcome),
+			StartedAt: ws.StartedAt, EndedAt: ws.EndedAt, Minutes: ws.DurationMinutes(), Outcome: string(ws.Outcome),
 		})
 	}
 	return out, nil
@@ -272,7 +272,9 @@ func (s *HistoryService) Stats() (StatsDTO, error) {
 	}
 	success := 0
 	for _, ws := range sessions {
-		st.MinutesWatched += ws.MinutesWatched()
+		// Wall-clock time on stream, NOT per-drop credited minutes: drops accrue
+		// simultaneously, so credited deltas badly undercount time watched.
+		st.MinutesWatched += ws.DurationMinutes()
 		st.OutcomeCounts[string(ws.Outcome)]++
 		if ws.Outcome == domain.OutcomeClaimed || ws.Outcome == domain.OutcomeCompleted {
 			success++
@@ -285,8 +287,8 @@ func (s *HistoryService) Stats() (StatsDTO, error) {
 	// land in the store when they END, which otherwise freezes the numbers for
 	// hours mid-watch. Success rate stays completed-sessions-only.
 	if eng := s.b.Engine(); eng != nil {
-		if es := eng.Status(); es.State == watcher.StateWatching {
-			st.MinutesWatched += es.SessionMinutes
+		if es := eng.Status(); es.State == watcher.StateWatching && !es.SessionStartedAt.IsZero() {
+			st.MinutesWatched += int(time.Since(es.SessionStartedAt).Minutes())
 			st.Sessions++
 		}
 	}

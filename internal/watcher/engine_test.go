@@ -194,9 +194,6 @@ func TestPollProgressUpdatesAndRateLimits(t *testing.T) {
 	if got := e.Status().Current; got != 7 {
 		t.Fatalf("status current = %d want 7", got)
 	}
-	if got := e.Status().SessionMinutes; got != 7 {
-		t.Fatalf("status sessionMinutes = %d want 7 (startMinutes 0)", got)
-	}
 	if emit.count(EvProgress) != 1 {
 		t.Fatalf("expected 1 progress event, got %d", emit.count(EvProgress))
 	}
@@ -291,5 +288,29 @@ func TestHardStallSameChannelStillBlacklists(t *testing.T) {
 	}
 	if bl, _ := st.IsBlacklisted("grabbys", now); !bl {
 		t.Fatal("stalled channel that IS our credited session should be blacklisted")
+	}
+}
+
+func TestBeginWatchingContinuesSessionAcrossRevalidation(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	c := seedCampaign(t, st, false)
+	e := testEngine(t, st, newFakeController(), &fakePager{}, &fakeDisco{}, newRecordingEmitter())
+	e.cur = &activeWatch{drop: c.Drops[0], campaign: c, login: "streamer_a"}
+
+	if next, _ := e.beginWatching(context.Background()); next != StateWatching {
+		t.Fatalf("expected Watching, got %s", next)
+	}
+	first := e.cur.session
+	if first.ID == "" || e.Status().SessionStartedAt.IsZero() {
+		t.Fatal("fresh watch must mint a session and stamp SessionStartedAt")
+	}
+
+	// Mid-watch refresh re-validates and re-enters; the session must survive.
+	if next, _ := e.beginWatching(context.Background()); next != StateWatching {
+		t.Fatalf("expected Watching, got %s", next)
+	}
+	if e.cur.session.ID != first.ID || !e.cur.session.StartedAt.Equal(first.StartedAt) {
+		t.Fatalf("revalidation must not mint a new session: %+v vs %+v", e.cur.session, first)
 	}
 }

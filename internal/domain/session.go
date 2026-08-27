@@ -39,13 +39,23 @@ type WatchSession struct {
 	Note    string
 }
 
-// MinutesWatched is the credited watch time accrued during the session.
+// MinutesWatched is the drop-credited watch time accrued during the session
+// for its TARGET drop only. It is not wall-clock time: simultaneous drops
+// accrue in parallel, so use DurationMinutes for "time spent watching".
 func (s WatchSession) MinutesWatched() int {
 	d := s.EndMinutes - s.StartMinutes
 	if d < 0 {
 		return 0
 	}
 	return d
+}
+
+// DurationMinutes is the wall-clock length of the session in whole minutes.
+func (s WatchSession) DurationMinutes() int {
+	if s.StartedAt.IsZero() || s.EndedAt.IsZero() || s.EndedAt.Before(s.StartedAt) {
+		return 0
+	}
+	return int(s.EndedAt.Sub(s.StartedAt).Minutes())
 }
 
 // Claim is a claimed drop reward, recorded for the history/report view.
