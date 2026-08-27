@@ -20,13 +20,23 @@ const clientID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
 // a safe JS string literal.
 func gqlFetchIIFE(bodyJSON []byte) string {
 	lit, _ := json.Marshal(string(bodyJSON)) // JSON string == valid JS string literal
+	// Reuse the auth + integrity headers captured from the page's own GraphQL
+	// requests (window.__dw_headers, populated by the capture shim). Twitch
+	// rejects requests without a valid Client-Integrity token, and the page
+	// already holds one; replaying its headers makes this request pass the same
+	// integrity check as the client's own. Falls back to Client-Id + the
+	// auth-token cookie if no headers were captured yet.
 	return `(async () => {
   try {
+    const base = window.__dw_headers || {};
     const m = document.cookie.match(/auth-token=(\w+)/);
     const t = m ? m[1] : '';
+    const headers = Object.assign({}, base, { 'Content-Type': 'application/json' });
+    if (!headers['client-id'] && !headers['Client-Id']) headers['Client-Id'] = '` + clientID + `';
+    if (!headers['authorization'] && !headers['Authorization']) headers['Authorization'] = 'OAuth ' + t;
     const r = await fetch('` + gqlEndpoint + `', {
       method: 'POST',
-      headers: { 'Client-Id': '` + clientID + `', 'Authorization': 'OAuth ' + t, 'Content-Type': 'application/json' },
+      headers: headers,
       body: ` + string(lit) + `,
     });
     return await r.text();
@@ -67,19 +77,29 @@ func (p *Pages) FetchLogin(ctx context.Context) (string, error) {
 const detailsQuery = `query($login:String!,$id:ID!){user(login:$login){dropCampaign(id:$id){id name status startAt endAt accountLinkURL game{id displayName slug} allow{channels{id name displayName}} timeBasedDrops{id name requiredMinutesWatched startAt endAt benefitEdges{benefit{id name imageAssetURL}} preconditionDrops{id}}}}}`
 
 // FetchCampaignDetails fetches and parses one campaign's full details (drops +
-// channel ACL) via a page-context GraphQL call.
-func (p *Pages) FetchCampaignDetails(ctx context.Context, login, campaignID string) (domain.Campaign, error) {
+// channel ACL) via a page-context GraphQL call. It also returns the raw response
+// body for the debug dump.
+func (p *Pages) FetchCampaignDetails(ctx context.Context, login, campaignID string) (domain.Campaign, string, error) {
 	body, _ := json.Marshal(map[string]any{
 		"query":     detailsQuery,
 		"variables": map[string]string{"login": login, "id": campaignID},
 	})
 	var raw string
 	if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
-		return domain.Campaign{}, fmt.Errorf("twitch: fetch details %s: %w", campaignID, err)
+		return domain.Campaign{}, raw, fmt.Errorf("twitch: fetch details %s: %w", campaignID, err)
 	}
 	c, err := gql.ParseCampaignDetails([]byte(raw))
 	if err != nil {
-		return domain.Campaign{}, fmt.Errorf("twitch: parse details %s (%.160s): %w", campaignID, raw, err)
+		return domain.Campaign{}, raw, fmt.Errorf("twitch: parse details %s (%.160s): %w", campaignID, raw, err)
 	}
-	return c, nil
+	return c, raw, nil
+}
+
+// CapturedHeaderKeys returns the names (not values) of the GraphQL request
+// headers captured from the page, so a run can confirm whether the integrity
+// token was picked up without ever logging the secret values.
+func (p *Pages) CapturedHeaderKeys(ctx context.Context) []string {
+	var keys []string
+	_ = p.ctrl.Session().Eval(ctx, `(() => Object.keys(window.__dw_headers || {}))()`, &keys)
+	return keys
 }

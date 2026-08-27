@@ -30,9 +30,9 @@ type CaptureResult struct {
 	RawCount int
 	OpsSeen  []string
 
-	// DebugSample holds a truncated campaigns-op response body when it parsed to
-	// zero campaigns, so a shape mismatch is diagnosable from one run's log.
-	DebugSample string
+	// CampaignsRaw holds the full first campaigns-op response body, for the
+	// debug dump and for diagnosing a shape mismatch.
+	CampaignsRaw string
 }
 
 // Drain reads and clears the in-page GQL capture buffer, parsing every
@@ -75,8 +75,8 @@ func Drain(ctx context.Context, sess interface {
 				if err == nil {
 					res.Campaigns = append(res.Campaigns, cs...)
 				}
-				if len(cs) == 0 && res.DebugSample == "" {
-					res.DebugSample = truncate(sub, 700)
+				if res.CampaignsRaw == "" {
+					res.CampaignsRaw = string(sub)
 				}
 			case gql.IsDetailsOp(op):
 				if c, err := gql.ParseCampaignDetails(sub); err == nil && c.ID != "" {
@@ -120,12 +120,4 @@ func splitBatch(body []byte, ops []string) (bodies [][]byte, outOps []string) {
 		op = ops[0]
 	}
 	return [][]byte{body}, []string{op}
-}
-
-// truncate returns up to n bytes of b as a string, for diagnostic logging.
-func truncate(b []byte, n int) string {
-	if len(b) > n {
-		return string(b[:n]) + "..."
-	}
-	return string(b)
 }

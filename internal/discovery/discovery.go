@@ -5,6 +5,8 @@ package discovery
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/rs/zerolog"
@@ -50,15 +52,24 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 	// the shim did not observe any GraphQL (capture problem); if it is >0 but
 	// campaigns is 0, an operation name or response shape needs updating - the
 	// ops_seen list shows the real names. See docs/NOTES-twitch.md.
+	headerKeys := d.pages.CapturedHeaderKeys(ctx)
 	d.logger.Info().
 		Int("gql_responses", captured.RawCount).
 		Strs("ops_seen", captured.OpsSeen).
 		Int("campaigns_parsed", len(captured.Campaigns)).
 		Int("details_parsed", len(captured.Details)).
+		Strs("captured_header_keys", headerKeys).
 		Msg("discovery: capture diagnostic")
-	if len(captured.Campaigns) == 0 && captured.DebugSample != "" {
-		d.logger.Warn().Str("campaigns_body_sample", captured.DebugSample).
+	if len(captured.Campaigns) == 0 && captured.CampaignsRaw != "" {
+		sample := captured.CampaignsRaw
+		if len(sample) > 700 {
+			sample = sample[:700]
+		}
+		d.logger.Warn().Str("campaigns_body_sample", sample).
 			Msg("discovery: campaigns op captured but parsed 0 - response shape sample follows")
+	}
+	if d.cfg.Logging.CaptureGQLBodies && captured.CampaignsRaw != "" {
+		d.dumpDebug("dashboard.json", []byte(captured.CampaignsRaw))
 	}
 
 	// List entries first (basic fields), then detail entries (full drops + ACL)
@@ -140,7 +151,10 @@ func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign)
 
 	n := 0
 	for _, c := range targets {
-		full, err := d.pages.FetchCampaignDetails(ctx, login, c.ID)
+		full, raw, err := d.pages.FetchCampaignDetails(ctx, login, c.ID)
+		if d.cfg.Logging.CaptureGQLBodies && raw != "" {
+			d.dumpDebug("details-"+safeName(c.ID)+".json", []byte(raw))
+		}
 		if err != nil {
 			d.logger.Warn().Err(err).Str("campaign", c.ID).Msg("discovery: fetch details failed")
 			continue
@@ -219,6 +233,38 @@ func (d *Discoverer) reconcileQueue(ctx context.Context) (int, error) {
 		}
 	}
 	return added, nil
+}
+
+// dumpDebug writes a raw GraphQL body to <approot>/debug/<name> when the
+// capture_gql_bodies flag is on. These files contain campaign JSON only (no auth
+// headers), so they are safe to share for diagnosing response shapes.
+func (d *Discoverer) dumpDebug(name string, body []byte) {
+	dir, err := config.Dir()
+	if err != nil {
+		return
+	}
+	ddir := filepath.Join(dir, "debug")
+	if err := os.MkdirAll(ddir, 0o700); err != nil {
+		return
+	}
+	path := filepath.Join(ddir, name)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		d.logger.Warn().Err(err).Msg("discovery: write debug dump failed")
+		return
+	}
+	d.logger.Info().Str("file", path).Int("bytes", len(body)).Msg("discovery: wrote debug dump")
+}
+
+// safeName sanitizes a string for use as a filename.
+func safeName(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, s)
 }
 
 // matchesFilter reports whether a campaign's game is in the configured set (or

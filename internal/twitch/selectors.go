@@ -82,12 +82,26 @@ const jsCaptureShim = `(() => {
     catch (e) {}
     while (window.__dw_gql.length > CAP) window.__dw_gql.shift();
   };
+  const captureHeaders = (init) => {
+    try {
+      const hh = init && init.headers;
+      if (!hh) return;
+      const h = {};
+      if (typeof hh.forEach === 'function') hh.forEach((v, k) => { h[String(k).toLowerCase()] = v; });
+      else Object.keys(hh).forEach(k => { h[k.toLowerCase()] = hh[k]; });
+      // Only keep the auth/integrity headers we need to replay; ignore the rest.
+      const keep = {};
+      ['client-id','client-integrity','authorization','client-session-id','client-version','x-device-id','device-id'].forEach(k => { if (h[k]) keep[k] = h[k]; });
+      if (Object.keys(keep).length) window.__dw_headers = Object.assign(window.__dw_headers || {}, keep);
+    } catch (e) {}
+  };
   const of = window.fetch;
   window.fetch = function(input, init) {
     let url = (typeof input === 'string') ? input : (input && input.url) || '';
     let reqBody = (init && init.body) || '';
     const p = of.apply(this, arguments);
     if (isGQL(url)) {
+      captureHeaders(init);
       p.then(r => { try { r.clone().text().then(t => push(opsOf(reqBody), t)); } catch(e){} }).catch(()=>{});
     }
     return p;
