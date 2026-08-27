@@ -192,6 +192,9 @@ func ParseCurrentDrop(body []byte) (*domain.Progress, error) {
 		Source:          domain.SourceCurrentDrop,
 		ObservedAt:      time.Now(),
 	}
+	if s.Channel != nil {
+		p.ChannelLogin = strings.ToLower(s.Channel.Login)
+	}
 	p.Claimable = p.RequiredMinutes > 0 && p.RealMinutes >= p.RequiredMinutes
 	return p, nil
 }

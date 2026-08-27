@@ -20,7 +20,7 @@ const SAMPLE = {
   config: {
     theme: 'dark', games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'], anyGame: false,
     priorityMode: 'top_down', autoEnqueueNew: true, volume: 0.01, forceLowestQuality: true,
-    neverFocus: true, dimOpacity: 0.55, chromePath: '', claimStrategy: 'in_page',
+    neverFocus: true, dimOpacity: 0.55, chromePath: '', muteAudio: false, claimStrategy: 'in_page',
     allowGqlFallback: false, skipAccountLink: true, authMode: 'manual', storedEnabled: false, logLevel: 'info',
   },
 };

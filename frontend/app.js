@@ -244,6 +244,7 @@ function settingsPaneHTML() {
           <div class="ctl" style="display:flex;align-items:center;gap:10px"><input class="input" type="number" min="0.005" max="1" step="0.005" value="${cfg.volume}" data-field="volume" style="width:96px"><span class="mono" id="vol-pct" style="color:var(--text-secondary);min-width:36px;text-align:right">${Math.round(cfg.volume * 100)}%</span></div></div>
         <div class="row"><div class="lab"><div class="l">Force lowest quality</div><div class="h">Saves bandwidth and CPU; does not affect drop credit.</div></div><div class="ctl">${toggleHTML('forceLowestQuality', cfg.forceLowestQuality)}</div></div>
         <div class="row"><div class="lab"><div class="l">Never focus the window</div><div class="h">Keep the watcher window in the background, dimmed, to avoid burn-in.</div></div><div class="ctl">${toggleHTML('neverFocus', cfg.neverFocus)}</div></div>
+        <div class="row"><div class="lab"><div class="l">Mute Chrome audio</div><div class="h">Tab-level: silences the watcher Chrome at the sink while the player stays unmuted at 1%, so crediting is unaffected. Needs a Chrome restart.</div></div><div class="ctl">${toggleHTML('muteAudio', cfg.muteAudio)}</div></div>
       </div></div>`;
     case 'browser': return `
       <div class="group"><div class="caption">Browser &amp; claiming</div><div class="card">

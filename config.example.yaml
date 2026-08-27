@@ -53,6 +53,7 @@ claim:
 browser:
   chrome_path: ""              # blank = auto-detect
   profile_dir: ""              # blank = <approot>/chrome-profile
+  mute_audio: false            # silence Chrome at the sink; player stays unmuted so crediting is unaffected
   extra_flags: []
   window:
     width: 640

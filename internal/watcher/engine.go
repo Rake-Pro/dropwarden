@@ -91,6 +91,7 @@ type activeWatch struct {
 	lastMinutes   int
 	lastProgress  time.Time
 	lastPoll      time.Time
+	creditChannel string // channel Twitch last reported as crediting (from the poll)
 	hardRefreshes int
 	stallEvents   int
 	raids         int

@@ -64,6 +64,7 @@ claim:
 browser:
   chrome_path: ""              # blank = auto-detect; override for Chrome Beta/Dev or odd installs
   profile_dir: ""              # blank = <approot>/chrome-profile
+  mute_audio: false            # silence Chrome at the sink; player stays unmuted so crediting is unaffected
   extra_flags: []
   window:
     width: 640

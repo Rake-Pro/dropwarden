@@ -78,6 +78,7 @@ type ConfigDTO struct {
 	NeverFocus         bool     `json:"neverFocus"`
 	DimOpacity         float64  `json:"dimOpacity"`
 	ChromePath         string   `json:"chromePath"`
+	MuteAudio          bool     `json:"muteAudio"`
 	ClaimStrategy      string   `json:"claimStrategy"`
 	AllowGQLFallback   bool     `json:"allowGqlFallback"`
 	SkipAccountLink    bool     `json:"skipAccountLink"`

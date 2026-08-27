@@ -38,6 +38,12 @@ type Progress struct {
 
 	Source     ProgressSource
 	ObservedAt time.Time
+
+	// ChannelLogin is the channel Twitch reports as crediting this session
+	// (dropCurrentSession only). Transient - not persisted by the store - and
+	// used to tell "our channel is not crediting" apart from "another session
+	// (e.g. the user watching on a phone) holds the drop slot".
+	ChannelLogin string
 }
 
 // Effective returns the best-known minute count and whether that count is

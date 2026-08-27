@@ -66,6 +66,9 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 	if p, err := e.deps.Pages.FetchCurrentDrop(ctx); err != nil {
 		e.deps.Log.Warn().Err(err).Msg("current-drop poll failed")
 	} else if p != nil {
+		if p.ChannelLogin != "" {
+			e.cur.creditChannel = p.ChannelLogin
+		}
 		ps = append(ps, *p)
 	}
 	if inv, err := e.deps.Pages.FetchInventoryProgress(ctx); err != nil {

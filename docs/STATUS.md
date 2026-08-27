@@ -78,6 +78,22 @@ up-next rows stay live too), and beginWatching seeds Status.Current from the
 stored baseline. Totals (Minutes watched/Sessions) still only move at session
 END - that is by design (sessions table), not a progress bug.
 
+Also shipped on user request: (1) `browser.mute_audio` (Settings > Player >
+"Mute Chrome audio", default off, needs app restart) - silences the dedicated
+Chrome instance at the sink via --mute-audio while the player element stays
+unmuted at 1%, so the page cannot tell; the flags.go design note about muted
+background media pausing is unverified, and the frozen-video/stall watchdogs
+recover that case if it turns out real. (2) Stall handling now understands
+"credited elsewhere": the progress poll records which channel
+dropCurrentSession says is being credited; when hard-stall retries are
+exhausted AND Twitch credits a DIFFERENT channel (user watching on another
+device holds the drop slot), the engine stands down to cooldown WITHOUT
+blacklisting the channel and keeps retrying on the normal cadence. The
+already-existing soft/hard stall ladder (panel nudge at 6m, page reload at 12m,
+capped retries) is the "auto refresh on cooldown" behavior - tune
+watcher.soft_stall / hard_stall if a faster reload is wanted now that the poll
+confirms stalls within a minute.
+
 Still to confirm on the user's Mac:
 
 1. Does it reach state `watching` and does progress tick? This is the FIRST real

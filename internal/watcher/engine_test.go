@@ -242,3 +242,47 @@ func TestPollProgressCreditsActiveDropFromInventory(t *testing.T) {
 		t.Fatalf("status current = %d want 18", got)
 	}
 }
+
+func TestHardStallCreditedElsewhereDoesNotBlacklist(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	e := testEngine(t, st, newFakeController(), &fakePager{}, &fakeDisco{}, newRecordingEmitter())
+	now := e.deps.Now()
+	e.cur = &activeWatch{
+		drop:          domain.Drop{ID: "d1", RequiredMinutes: 60},
+		login:         "grabbys",
+		creditChannel: "phone_session_channel",
+		lastProgress:  now.Add(-time.Hour),
+		hardRefreshes: 99, // past max retries
+		session:       domain.WatchSession{ID: "s1", DropID: "d1"},
+	}
+	next, _, done := e.stallCheck(context.Background(), now, now.Add(time.Hour))
+	if !done || next != StateCooldown {
+		t.Fatalf("expected cooldown stand-down, got %s done=%v", next, done)
+	}
+	if bl, _ := st.IsBlacklisted("grabbys", now); bl {
+		t.Fatal("channel must not be blacklisted when another session holds the drop slot")
+	}
+}
+
+func TestHardStallSameChannelStillBlacklists(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	e := testEngine(t, st, newFakeController(), &fakePager{}, &fakeDisco{}, newRecordingEmitter())
+	now := e.deps.Now()
+	e.cur = &activeWatch{
+		drop:          domain.Drop{ID: "d1", RequiredMinutes: 60},
+		login:         "grabbys",
+		creditChannel: "grabbys", // Twitch credits us, yet minutes never moved
+		lastProgress:  now.Add(-time.Hour),
+		hardRefreshes: 99,
+		session:       domain.WatchSession{ID: "s1", DropID: "d1"},
+	}
+	next, _, done := e.stallCheck(context.Background(), now, now.Add(time.Hour))
+	if !done || next != StateSelectingChannel {
+		t.Fatalf("expected reselect after blacklist, got %s done=%v", next, done)
+	}
+	if bl, _ := st.IsBlacklisted("grabbys", now); !bl {
+		t.Fatal("stalled channel that IS our credited session should be blacklisted")
+	}
+}

@@ -80,6 +80,7 @@ type ClaimConfig struct {
 type BrowserConfig struct {
 	ChromePath string       `yaml:"chrome_path"` // blank = auto-detect
 	ProfileDir string       `yaml:"profile_dir"` // blank = <approot>/chrome-profile
+	MuteAudio  bool         `yaml:"mute_audio"`  // silence the dedicated Chrome at the sink (player stays unmuted)
 	ExtraFlags []string     `yaml:"extra_flags"`
 	Window     WindowConfig `yaml:"window"`
 	Burnin     BurninConfig `yaml:"burnin"`

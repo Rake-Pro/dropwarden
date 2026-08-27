@@ -14,10 +14,16 @@ import (
 //     element decoding while the window is covered or off to the side. Without
 //     them Chrome throttles the tab and drop progress stops accruing.
 //   - The omissions matter as much as the inclusions. --enable-automation and
-//     --headless are the two loudest bot tells on the platform, --mute-audio
-//     makes Chrome treat the video as inaudible background media and pause it,
-//     and --no-sandbox is a gratuitous security downgrade for a browser that
-//     loads untrusted pages.
+//     --headless are the two loudest bot tells on the platform, and --no-sandbox
+//     is a gratuitous security downgrade for a browser that loads untrusted
+//     pages.
+//
+// --mute-audio is OPT-IN (browser.mute_audio): it silences the dedicated
+// instance at the audio sink while the player element itself stays unmuted at
+// 1%, so the page cannot tell. The design-phase concern that Chrome pauses
+// inaudible background media has not been observed live; if it does happen, the
+// frozen-video and stall watchdogs catch and recover it, and the toggle turns
+// it back off.
 //
 // The trailing about:blank gives Chrome a real startup page, so the CDP target
 // list has exactly one page for the session to adopt.
@@ -36,6 +42,9 @@ func chromeFlags(cfg config.BrowserConfig, profileDir string, w config.WindowCon
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--no-service-autorun",
+	}
+	if cfg.MuteAudio {
+		flags = append(flags, "--mute-audio")
 	}
 	flags = append(flags, cfg.ExtraFlags...)
 	return append(flags, "about:blank")

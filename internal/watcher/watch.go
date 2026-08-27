@@ -205,6 +205,17 @@ func (e *Engine) stallCheck(ctx context.Context, now, proactiveAt time.Time) (St
 		e.cur.stallEvents++
 		e.cur.hardRefreshes++
 		if e.cur.hardRefreshes > w.HardStallMaxRetries {
+			// When the poll shows Twitch crediting a DIFFERENT channel, the drop
+			// slot is held by another session (e.g. the user watching on a phone).
+			// The channel is fine - stand down to cooldown without blacklisting so
+			// selection keeps retrying it on the normal cadence.
+			if other := e.cur.creditChannel; other != "" && !strings.EqualFold(other, e.cur.login) {
+				e.deps.Log.Warn().Str("watching", e.cur.login).Str("crediting", other).
+					Msg("another session holds the drop slot; standing down without penalizing the channel")
+				e.endSession(domain.OutcomeAbortedStall, "credited elsewhere: "+other)
+				s, r := e.abandon(domain.OutcomeAbortedStall, "another session is being credited ("+other+")")
+				return s, r, true
+			}
 			e.endSession(domain.OutcomeAbortedStall, "repeated hard stall")
 			s, r := e.failChannel(domain.OutcomeAbortedStall, "progress would not advance", w.ChannelBlacklistTTL)
 			return s, r, true

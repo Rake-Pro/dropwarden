@@ -41,8 +41,8 @@ func TestChromeFlagsRequired(t *testing.T) {
 }
 
 // The absent flags matter as much as the present ones: --enable-automation and
-// --headless are bot tells, --mute-audio makes Chrome pause background video,
-// and --no-sandbox is an unnecessary security downgrade.
+// --headless are bot tells, --mute-audio is strictly opt-in via
+// browser.mute_audio, and --no-sandbox is an unnecessary security downgrade.
 func TestChromeFlagsForbidden(t *testing.T) {
 	got := testFlags()
 	forbidden := []string{"--enable-automation", "--headless", "--mute-audio", "--no-sandbox"}
@@ -52,6 +52,17 @@ func TestChromeFlagsForbidden(t *testing.T) {
 				t.Errorf("forbidden flag %s present in %v", f, got)
 			}
 		}
+	}
+}
+
+func TestChromeFlagsMuteAudioOptIn(t *testing.T) {
+	got := chromeFlags(
+		config.BrowserConfig{MuteAudio: true},
+		"/profiles/dropwarden",
+		config.WindowConfig{Width: 640, Height: 400},
+	)
+	if !slices.Contains(got, "--mute-audio") {
+		t.Errorf("mute_audio: true must add --mute-audio: %v", got)
 	}
 }
 
