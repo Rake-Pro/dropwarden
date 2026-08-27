@@ -74,7 +74,7 @@ func (p *Pages) FetchLogin(ctx context.Context) (string, error) {
 // detailsQuery is a full DropCampaignDetails query (not a persisted hash, so it
 // is immune to hash rotation). It returns data.user.dropCampaign, matching
 // gql.ParseCampaignDetails.
-const detailsQuery = `query($login:String!,$id:ID!){user(login:$login){dropCampaign(id:$id){id name status startAt endAt accountLinkURL game{id displayName slug} allow{channels{id name displayName}} timeBasedDrops{id name requiredMinutesWatched startAt endAt benefitEdges{benefit{id name imageAssetURL}} preconditionDrops{id}}}}}`
+const detailsQuery = `query($login:String!,$id:ID!){user(login:$login){dropCampaign(id:$id){id name status startAt endAt accountLinkURL self{isAccountConnected} game{id displayName slug} allow{channels{id name displayName}} timeBasedDrops{id name requiredMinutesWatched startAt endAt benefitEdges{benefit{id name imageAssetURL}} preconditionDrops{id}}}}}`
 
 // FetchCampaignDetails fetches and parses one campaign's full details (drops +
 // channel ACL) via a page-context GraphQL call. It also returns the raw response

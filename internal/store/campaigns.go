@@ -39,9 +39,14 @@ func (s *Store) UpsertCampaign(c domain.Campaign) error {
 	}
 	aclJSON, _ := json.Marshal(acl)
 
+	var connected any
+	if c.AccountConnected != nil {
+		connected = *c.AccountConnected
+	}
+
 	_, err = tx.Exec(`INSERT INTO campaigns
-		(id,name,game_id,game_name,game_slug,status,start_at,end_at,account_link_url,allowed_channels,details_fetched)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		(id,name,game_id,game_name,game_slug,status,start_at,end_at,account_link_url,account_connected,allowed_channels,details_fetched)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			name=excluded.name, game_id=excluded.game_id, game_name=excluded.game_name,
 			status=excluded.status, start_at=excluded.start_at, end_at=excluded.end_at,
@@ -50,9 +55,10 @@ func (s *Store) UpsertCampaign(c domain.Campaign) error {
 			-- basic list upsert (no ACL/slug/link) never clobbers a detailed campaign.
 			game_slug=CASE WHEN excluded.game_slug='' THEN campaigns.game_slug ELSE excluded.game_slug END,
 			account_link_url=CASE WHEN excluded.account_link_url='' THEN campaigns.account_link_url ELSE excluded.account_link_url END,
+			account_connected=CASE WHEN excluded.account_connected IS NULL THEN campaigns.account_connected ELSE excluded.account_connected END,
 			allowed_channels=CASE WHEN excluded.allowed_channels IN ('','[]','null') THEN campaigns.allowed_channels ELSE excluded.allowed_channels END`,
 		c.ID, c.Name, c.GameID, c.GameName, c.GameSlug, string(c.Status),
-		unixPtr(c.StartAt), unixPtr(c.EndAt), c.AccountLinkURL, string(aclJSON), unixPtr(c.DetailsFetched))
+		unixPtr(c.StartAt), unixPtr(c.EndAt), c.AccountLinkURL, connected, string(aclJSON), unixPtr(c.DetailsFetched))
 	if err != nil {
 		return fmt.Errorf("store: upsert campaign: %w", err)
 	}
@@ -78,7 +84,7 @@ func (s *Store) UpsertCampaign(c domain.Campaign) error {
 
 // ListCampaigns returns all cached campaigns with their drops.
 func (s *Store) ListCampaigns() ([]domain.Campaign, error) {
-	rows, err := s.db.Query(`SELECT id,name,game_id,game_name,game_slug,status,start_at,end_at,account_link_url,allowed_channels,details_fetched FROM campaigns ORDER BY end_at`)
+	rows, err := s.db.Query(`SELECT id,name,game_id,game_name,game_slug,status,start_at,end_at,account_link_url,account_connected,allowed_channels,details_fetched FROM campaigns ORDER BY end_at`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list campaigns: %w", err)
 	}
@@ -89,8 +95,13 @@ func (s *Store) ListCampaigns() ([]domain.Campaign, error) {
 		var c domain.Campaign
 		var status, aclJSON string
 		var start, end, details sql.NullInt64
-		if err := rows.Scan(&c.ID, &c.Name, &c.GameID, &c.GameName, &c.GameSlug, &status, &start, &end, &c.AccountLinkURL, &aclJSON, &details); err != nil {
+		var connected sql.NullBool
+		if err := rows.Scan(&c.ID, &c.Name, &c.GameID, &c.GameName, &c.GameSlug, &status, &start, &end, &c.AccountLinkURL, &connected, &aclJSON, &details); err != nil {
 			return nil, fmt.Errorf("store: scan campaign: %w", err)
+		}
+		if connected.Valid {
+			v := connected.Bool
+			c.AccountConnected = &v
 		}
 		c.Status = domain.CampaignStatus(status)
 		c.StartAt, c.EndAt, c.DetailsFetched = fromUnix(start), fromUnix(end), fromUnix(details)

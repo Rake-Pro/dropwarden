@@ -25,11 +25,16 @@ type Campaign struct {
 	StartAt  time.Time
 	EndAt    time.Time
 
-	// AccountLinkURL is non-empty when the campaign requires the viewer to have
-	// linked their Twitch account to an external game account. Such drops cannot
-	// be claimed by watching alone and are surfaced to the user rather than
-	// attempted.
+	// AccountLinkURL is the campaign's external-account link page. Twitch
+	// populates it for most campaigns (often just the game's website), so its
+	// presence alone does NOT mean a link is required - AccountConnected is the
+	// authoritative signal.
 	AccountLinkURL string
+
+	// AccountConnected mirrors Twitch's self.isAccountConnected: true when the
+	// viewer either has the required external account linked or the campaign
+	// needs no link at all. nil means the signal has not been captured yet.
+	AccountConnected *bool
 
 	// AllowedChannels is the campaign ACL. An empty slice means "any channel
 	// streaming the game with drops enabled" (up to Twitch's own limits).
@@ -47,8 +52,16 @@ type Campaign struct {
 func (c Campaign) AnyChannel() bool { return len(c.AllowedChannels) == 0 }
 
 // RequiresAccountLink reports whether the campaign needs an external linked
-// account before its drops can be claimed.
-func (c Campaign) RequiresAccountLink() bool { return c.AccountLinkURL != "" }
+// account before its drops can be claimed. Twitch's self.isAccountConnected is
+// authoritative when captured (true covers both "linked" and "no link needed");
+// only when it is unknown does a non-empty AccountLinkURL count as requiring
+// one, which over-flags but never watches an unclaimable drop.
+func (c Campaign) RequiresAccountLink() bool {
+	if c.AccountConnected != nil {
+		return !*c.AccountConnected
+	}
+	return c.AccountLinkURL != ""
+}
 
 // Benefit is a single reward granted by a drop.
 type Benefit struct {

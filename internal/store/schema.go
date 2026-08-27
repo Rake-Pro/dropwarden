@@ -95,4 +95,11 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS idx_drops_campaign ON drops(campaign_id);`,
 	`CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);`,
 	`CREATE INDEX IF NOT EXISTS idx_claims_claimed ON claims(claimed_at);`,
+
+	// account_connected mirrors Twitch's self.isAccountConnected (NULL = not yet
+	// captured). Not idempotent by itself (SQLite has no ADD COLUMN IF NOT
+	// EXISTS), but the version gate runs it exactly once. New migrations must
+	// only ever be APPENDED here - the version pointer of an existing database
+	// is already past every earlier index.
+	`ALTER TABLE campaigns ADD COLUMN account_connected INTEGER;`,
 }

@@ -41,9 +41,20 @@ NOTES-twitch.md, NOTES-wails.md.
 
 ## NEXT live milestone (where to resume)
 
-The watcher had reached `selecting_channel` but not yet `watching` (last blocker
-was the ACL clobber, now fixed - a re-run should restore NARAKA's ACL and pick a
-channel). The next thing to confirm on the user's Mac:
+2026-08-27 live run diagnosed: every queued drop was tallied `needs_action`
+("account link required") so selection never left cooldown, even with Cinna's
+Special Events campaign live 24/7. Root cause: `RequiresAccountLink()` keyed on
+`accountLinkURL != ""`, but Twitch populates accountLinkURL on most campaigns
+(often just the game's site). Fixed by capturing `self.isAccountConnected` (the
+authoritative signal, per TwitchDropsMiner) from both the dashboard list and the
+details query; URL-presence remains only as the fallback when the signal was
+never captured. Store gained an `account_connected` column (migration 13,
+NULL-preserving upsert), and fetchDetails re-fetches rows missing the signal so
+existing DBs heal. Also split the misleading "no active campaigns matched the
+game filter" log from the "all matched campaigns already detailed" case.
+
+The watcher had reached `selecting_channel` but not yet `watching`. The next
+thing to confirm on the user's Mac:
 
 1. Does it reach state `watching` and does progress tick? This is the FIRST real
    test of the six-point playback validation and its DOM selectors

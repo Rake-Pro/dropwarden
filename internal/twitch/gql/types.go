@@ -111,6 +111,7 @@ type dropCampaignDetails struct {
 	EndAt          string        `json:"endAt"`
 	AccountLinkURL string        `json:"accountLinkURL"`
 	Game           *campaignGame `json:"game"`
+	Self           *campaignSelf `json:"self"`
 	Allow          *struct {
 		Channels []channelRef `json:"channels"`
 	} `json:"allow"`

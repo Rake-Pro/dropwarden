@@ -98,7 +98,8 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 		if c, ok := campaigns[items[0].CampaignID]; ok {
 			ev = ev.Str("sample_campaign", c.Name).Str("sample_status", string(c.Status)).
 				Time("sample_start", c.StartAt).Time("sample_end", c.EndAt).
-				Bool("sample_account_link", c.RequiresAccountLink())
+				Bool("sample_account_link", c.RequiresAccountLink()).
+				Interface("sample_account_connected", c.AccountConnected)
 		}
 		ev.Msg("selecting: eligibility tally")
 	}

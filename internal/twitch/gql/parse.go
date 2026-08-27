@@ -57,6 +57,10 @@ func ParseCampaigns(body []byte) ([]domain.Campaign, error) {
 			c.GameName = entry.Game.DisplayName
 			c.GameSlug = entry.Game.Slug
 		}
+		if entry.Self != nil {
+			connected := entry.Self.IsAccountConnected
+			c.AccountConnected = &connected
+		}
 		out = append(out, c)
 	}
 	return out, nil
@@ -86,6 +90,10 @@ func ParseCampaignDetails(body []byte) (domain.Campaign, error) {
 		c.GameID = dc.Game.ID
 		c.GameName = dc.Game.DisplayName
 		c.GameSlug = dc.Game.Slug
+	}
+	if dc.Self != nil {
+		connected := dc.Self.IsAccountConnected
+		c.AccountConnected = &connected
 	}
 
 	// verify live: whether "name" on the channel ref is login or display

@@ -129,6 +129,24 @@ func TestNextDrop_AccountLinkExcluded(t *testing.T) {
 	}
 }
 
+func TestNextDrop_ConnectedAccountEligibleDespiteLinkURL(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	future := now.Add(24 * time.Hour)
+	camp := baseCampaign("c1", future, domain.Drop{ID: "d1", CampaignID: "c1", RequiredMinutes: 60})
+	camp.AccountLinkURL = "https://example.com/game-site"
+	connected := true
+	camp.AccountConnected = &connected
+	items := []domain.QueueItem{{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending}}
+	campaigns := map[string]domain.Campaign{"c1": camp}
+	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil || got.Drop.ID != "d1" {
+		t.Fatalf("expected d1 eligible when self.isAccountConnected is true, got %+v", got)
+	}
+}
+
 func TestNextDrop_ExpiredCampaignExcluded(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	past := now.Add(-1 * time.Hour)

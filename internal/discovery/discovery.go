@@ -156,14 +156,19 @@ func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign)
 	}
 	// Candidates: matching game, active, and not already carrying drops.
 	var targets []domain.Campaign
+	matched, complete := 0, 0
 	for _, c := range listed {
 		if c.Status == domain.StatusExpired || !d.matchesFilter(c) {
 			continue
 		}
-		// Skip only when we already have COMPLETE details: drops plus a game slug
-		// (needed for any-channel directory lookups). A campaign with drops but no
-		// slug was left incomplete (e.g. an older row), so re-fetch it.
-		if existing, err := d.store.GetCampaign(c.ID); err == nil && existing != nil && len(existing.Drops) > 0 && existing.GameSlug != "" {
+		matched++
+		// Skip only when we already have COMPLETE details: drops, a game slug
+		// (needed for any-channel directory lookups), and the account-connected
+		// signal. A campaign missing any of those was left incomplete (e.g. a row
+		// written before that field existed), so re-fetch it.
+		if existing, err := d.store.GetCampaign(c.ID); err == nil && existing != nil &&
+			len(existing.Drops) > 0 && existing.GameSlug != "" && existing.AccountConnected != nil {
+			complete++
 			continue
 		}
 		targets = append(targets, c)
@@ -172,8 +177,13 @@ func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign)
 		}
 	}
 	if len(targets) == 0 {
-		d.logger.Info().Bool("any_game", d.cfg.AnyGame).Strs("games", d.cfg.Games).
-			Msg("discovery: no active campaigns matched the game filter; nothing to detail-fetch")
+		if matched > 0 {
+			d.logger.Info().Int("matched", matched).Int("already_detailed", complete).
+				Msg("discovery: all filter-matching campaigns already have details; nothing to detail-fetch")
+		} else {
+			d.logger.Info().Bool("any_game", d.cfg.AnyGame).Strs("games", d.cfg.Games).
+				Msg("discovery: no active campaigns matched the game filter; nothing to detail-fetch")
+		}
 		return 0
 	}
 

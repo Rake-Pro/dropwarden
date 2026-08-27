@@ -2,6 +2,31 @@ package domain
 
 import "testing"
 
+func TestRequiresAccountLink(t *testing.T) {
+	yes, no := true, false
+	cases := []struct {
+		name      string
+		url       string
+		connected *bool
+		want      bool
+	}{
+		{"unknown signal, no url", "", nil, false},
+		{"unknown signal, url present", "https://x", nil, true},
+		{"connected overrides url", "https://x", &yes, false},
+		{"no link needed reports connected", "", &yes, false},
+		{"unlinked requires link even without url", "", &no, true},
+		{"unlinked with url", "https://x", &no, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Campaign{AccountLinkURL: tc.url, AccountConnected: tc.connected}
+			if got := c.RequiresAccountLink(); got != tc.want {
+				t.Fatalf("RequiresAccountLink()=%v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestProgressEffective(t *testing.T) {
 	cases := []struct {
 		name     string

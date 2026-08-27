@@ -51,11 +51,13 @@ func TestCampaignRoundTrip(t *testing.T) {
 func TestListUpsertPreservesDetails(t *testing.T) {
 	s := newTestStore(t)
 	// Detailed campaign: has slug, ACL, drops.
+	connected := true
 	detailed := domain.Campaign{
 		ID: "c1", Name: "NBPL", GameName: "NARAKA", GameSlug: "naraka",
 		Status: domain.StatusActive, AccountLinkURL: "https://link",
-		AllowedChannels: []domain.Channel{{Login: "chan1"}, {Login: "chan2"}},
-		Drops:           []domain.Drop{{ID: "d1", CampaignID: "c1", RequiredMinutes: 60}},
+		AccountConnected: &connected,
+		AllowedChannels:  []domain.Channel{{Login: "chan1"}, {Login: "chan2"}},
+		Drops:            []domain.Drop{{ID: "d1", CampaignID: "c1", RequiredMinutes: 60}},
 	}
 	if err := s.UpsertCampaign(detailed); err != nil {
 		t.Fatal(err)
@@ -80,6 +82,19 @@ func TestListUpsertPreservesDetails(t *testing.T) {
 	}
 	if len(got.Drops) != 1 {
 		t.Fatalf("drops clobbered: %+v", got.Drops)
+	}
+	if got.AccountConnected == nil || !*got.AccountConnected {
+		t.Fatalf("account_connected clobbered by nil upsert: %+v", got.AccountConnected)
+	}
+	// A list row that DOES carry the signal must win over the stored value.
+	unlinked := false
+	listWithSelf := domain.Campaign{ID: "c1", Name: "NBPL", GameName: "NARAKA", Status: domain.StatusActive, AccountConnected: &unlinked}
+	if err := s.UpsertCampaign(listWithSelf); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetCampaign("c1")
+	if got.AccountConnected == nil || *got.AccountConnected {
+		t.Fatalf("account_connected not updated by non-nil upsert: %+v", got.AccountConnected)
 	}
 }
 

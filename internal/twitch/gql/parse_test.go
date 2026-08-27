@@ -43,10 +43,16 @@ func TestParseCampaigns(t *testing.T) {
 	if c0.AccountLinkURL != "" {
 		t.Errorf("list view should not populate AccountLinkURL, got %q", c0.AccountLinkURL)
 	}
+	if c0.AccountConnected == nil || !*c0.AccountConnected {
+		t.Errorf("campaign 0 AccountConnected = %+v, want true from self.isAccountConnected", c0.AccountConnected)
+	}
 
 	c1 := campaigns[1]
 	if c1.Status != domain.StatusUpcoming {
 		t.Errorf("campaign 1 status = %q, want %q", c1.Status, domain.StatusUpcoming)
+	}
+	if c1.AccountConnected != nil {
+		t.Errorf("campaign 1 AccountConnected = %+v, want nil when self is absent", c1.AccountConnected)
 	}
 }
 
@@ -119,6 +125,34 @@ func TestParseCampaignDetails_WithACL(t *testing.T) {
 	}
 	if !c.RequiresAccountLink() {
 		t.Errorf("expected RequiresAccountLink() true")
+	}
+}
+
+func TestParseCampaignDetails_ConnectedSelfOverridesLinkURL(t *testing.T) {
+	body := []byte(`{
+		"data": {
+			"user": {
+				"dropCampaign": {
+					"id": "camp-1",
+					"name": "Watch to Redeem",
+					"status": "ACTIVE",
+					"accountLinkURL": "https://example.com/game-site",
+					"self": {"isAccountConnected": true},
+					"game": {"id": "game-1", "displayName": "Special Events", "slug": "special-events"},
+					"timeBasedDrops": []
+				}
+			}
+		}
+	}`)
+	c, err := ParseCampaignDetails(body)
+	if err != nil {
+		t.Fatalf("ParseCampaignDetails: %v", err)
+	}
+	if c.AccountConnected == nil || !*c.AccountConnected {
+		t.Fatalf("AccountConnected = %+v, want true", c.AccountConnected)
+	}
+	if c.RequiresAccountLink() {
+		t.Errorf("expected RequiresAccountLink() false when self.isAccountConnected is true, despite non-empty accountLinkURL")
 	}
 }
 
