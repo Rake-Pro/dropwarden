@@ -102,13 +102,13 @@ language as the sibling GoShareIt app.
 > is out of scope. The Linux build is a stub that points you at the CLI. This
 > keeps `go build ./...` green everywhere.
 
-### Connecting the UI to live data
+### How the UI talks to Go
 
-The frontend renders from sample data until the Wails bindings are wired. This
-is a one-time step on your machine, documented at the top of
-`frontend/api.js`: run `wails3 generate bindings`, set `window.dw` to the
-generated services, and subscribe to events via `@wailsio/runtime`. Everything
-else in the UI is already built against that seam.
+The frontend is live out of the box: it calls a small JSON API
+(`internal/service/httpapi.go`) served on the same asset origin as the page, so
+no Wails binding generation is required. `go run ./cmd/dropwarden` and
+`wails3 dev` both work identically. If you open `frontend/index.html` with no
+backend behind it, it falls back to sample data for design review.
 
 ## GoLand
 

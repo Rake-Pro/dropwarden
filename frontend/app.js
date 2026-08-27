@@ -15,10 +15,12 @@ function switchView(view) {
 async function renderFoot() {
   const c = await api.connection();
   const foot = $('#rail-foot');
-  if (c.chrome && c.loggedIn) {
-    foot.innerHTML = `<span class="dot">●</span> Chrome connected · logged in<br>Discovery in ${c.nextRefreshMin} min`;
+  if (api.offline) {
+    foot.innerHTML = `<span class="dot off">●</span> preview mode<br>backend not connected`;
+  } else if (c.chrome) {
+    foot.innerHTML = `<span class="dot">●</span> Chrome connected<br>watcher running`;
   } else {
-    foot.innerHTML = `<span class="dot off">●</span> ${c.chrome ? 'not logged in' : 'Chrome not connected'}`;
+    foot.innerHTML = `<span class="dot off">●</span> starting Chrome…`;
   }
 }
 

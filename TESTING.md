@@ -77,9 +77,14 @@ Goal: accumulate real watch time and exercise recovery.
 
 1. `go run ./cmd/dropwarden` (or `wails3 dev`). Confirm the tray icon appears,
    its menu shows a live status line, and clicking it shows/hides the dashboard.
-2. Wire live data per `frontend/api.js`, then confirm the dashboard progress bar
-   moves during a watch without a manual refresh, and reordering the queue
-   persists and is honored on the next selection.
+2. The UI is live via the embedded JSON API - no binding step. Confirm the
+   dashboard shows the real watcher state and queue, the progress bar advances
+   during a watch (it polls every ~5s), toggling a queue item persists, and the
+   priority selector saves.
 3. Confirm the window starts hidden in the tray and closing it hides rather than
    quits (quit is from the tray). If the window ever freezes at start, see the
    `#4103` note in `docs/NOTES-wails.md`.
+
+First macOS build note: `go run ./cmd/dropwarden` needs Xcode Command Line
+Tools (`xcode-select --install`) because the macOS webview uses CGO. The CLI
+harness needs none of that.

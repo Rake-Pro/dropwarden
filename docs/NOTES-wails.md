@@ -26,20 +26,18 @@ GTK4 + WebKitGTK there.
 - Events: `app.Event.Emit(name string, data ...any)`.
 - `app.Run() error`, `app.Quit()`, window `Show()/Hide()`.
 
-## Bindings + live data
+## Live data: HTTP API, not generated bindings
 
-The frontend renders from sample data until bindings are wired (see the header
-of `frontend/api.js`). On the dev machine:
+The frontend does NOT use `wails3 generate bindings`. Instead the asset handler
+is a mux that serves `/api/*` from `internal/service/httpapi.go` (JSON) and
+everything else from the embedded frontend. The frontend calls it with plain
+`fetch` and polls `/api/state` every ~5s. This works identically under
+`go run ./cmd/dropwarden`, `wails3 dev`, and a plain browser, and needs no
+generated code. Engine events are still emitted via `app.Event.Emit` (see
+`emitter.go`) for future push-based updates, but the UI does not depend on them.
 
-1. `wails3 generate bindings -d frontend/bindings` (or `task generate`).
-2. In a small bridge (or in `api.js`), import the generated services and set
-   `window.dw = {CampaignService, QueueService, WatcherService, HistoryService,
-   SettingsService}`.
-3. Subscribe to engine events with `@wailsio/runtime` `Events.On(name, cb)` and
-   call the `api.onEvent` seam.
-
-Add `frontend/bindings` to the `//go:embed` list in `frontend/embed.go` before a
-packaged (non-dev) build so the bindings ship.
+If you later prefer typed bindings, they can be added alongside; the HTTP API is
+the supported path for MVP.
 
 ## Known risks to re-check on beta.14
 

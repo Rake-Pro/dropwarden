@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="gui app (Windows/macOS)" type="GoApplicationRunConfiguration" factoryName="Go Application">
+  <configuration default="false" name="dropwarden GUI" type="GoApplicationRunConfiguration" factoryName="Go Application">
     <module name="dropwarden" />
     <working_directory value="$PROJECT_DIR$" />
     <kind value="PACKAGE" />

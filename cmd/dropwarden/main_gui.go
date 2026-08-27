@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -25,17 +26,17 @@ func main() {
 
 	backend := service.NewBackend(a.Store, nil, a.Cfg, a.ConfigPath)
 
+	// The webview talks to Go over a small JSON API on the same asset origin
+	// (no generated bindings needed): /api/* is the service layer, everything
+	// else is the embedded frontend.
+	assets := http.NewServeMux()
+	assets.Handle("/api/", service.NewHTTPHandler(backend))
+	assets.Handle("/", webui.Handler())
+
 	wapp := application.New(application.Options{
 		Name:        "dropwarden",
 		Description: "Twitch drops collector",
-		Services: []application.Service{
-			application.NewService(service.NewCampaignService(backend)),
-			application.NewService(service.NewQueueService(backend)),
-			application.NewService(service.NewWatcherService(backend)),
-			application.NewService(service.NewHistoryService(backend)),
-			application.NewService(service.NewSettingsService(backend)),
-		},
-		Assets: application.AssetOptions{Handler: webui.Handler()},
+		Assets:      application.AssetOptions{Handler: assets},
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "pro.rake.dropwarden",
 		},
