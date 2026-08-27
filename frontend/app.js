@@ -56,6 +56,25 @@ async function renderDashboard() {
     <p class="sub">One channel at a time. The watcher keeps this window unfocused and dimmed while progress ticks.</p>
   </div>`));
 
+  // Drops waiting on the user (manual claim, account link) get a banner - the
+  // watcher deliberately does not retry these, so they must be visible.
+  const needy = queue.filter(q => q.status === 'needs_action');
+  if (needy.length) {
+    const detail = needy.slice(0, 2).map(q => `${q.dropName} — ${q.reason || 'action required'}`).join('  ·  ')
+      + (needy.length > 2 ? `  ·  +${needy.length - 2} more` : '');
+    const banner = el(`<div class="banner needs">
+      <span class="ic">!</span>
+      <div class="tx"><div class="t">${needy.length === 1 ? 'A drop needs' : needy.length + ' drops need'} your attention</div>
+      <div class="d">${esc(detail)}</div></div>
+      <button class="btn btn-sm" data-goto="queue">Open queue</button>
+    </div>`);
+    banner.querySelector('[data-goto]').addEventListener('click', () => {
+      const nav = document.querySelector('.nav[data-view="queue"]');
+      if (nav) nav.click();
+    });
+    v.append(banner);
+  }
+
   const grid = el(`<div class="grid2"></div>`);
   const nowCard = el(`<div class="card now">
     <div class="head">

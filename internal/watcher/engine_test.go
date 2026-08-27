@@ -137,12 +137,13 @@ func TestClaimVisibleRecordsClaim(t *testing.T) {
 	}
 }
 
-func TestClaimFailureDefers(t *testing.T) {
+func TestClaimFailureFlagsForManualReconcile(t *testing.T) {
 	st, _ := store.OpenMemory()
 	defer st.Close()
 	c := seedCampaign(t, st, false)
 	ctrl := newFakeController() // claimVisible=false, claimInv=false
-	e := testEngine(t, st, ctrl, &fakePager{}, &fakeDisco{}, newRecordingEmitter())
+	emit := newRecordingEmitter()
+	e := testEngine(t, st, ctrl, &fakePager{}, &fakeDisco{}, emit)
 	e.cur = &activeWatch{drop: c.Drops[0], campaign: c, login: "s", session: domain.WatchSession{ID: "s1", DropID: "d1"}}
 	next, _ := e.runClaiming(context.Background())
 	if next != StateCooldown {
@@ -152,8 +153,11 @@ func TestClaimFailureDefers(t *testing.T) {
 		t.Fatal("no claim should be recorded on failure")
 	}
 	q, _ := st.GetQueue()
-	if q[0].Status != domain.ItemUnavailable {
-		t.Fatalf("failed claim should mark unavailable, got %s", q[0].Status)
+	if q[0].Status != domain.ItemNeedsAction {
+		t.Fatalf("failed claim should mark needs_action for manual reconcile, got %s", q[0].Status)
+	}
+	if emit.count(EvNeedsAction) != 1 {
+		t.Fatal("failed claim should emit a needs_action event for the UI")
 	}
 }
 

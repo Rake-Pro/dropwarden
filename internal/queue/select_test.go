@@ -303,12 +303,14 @@ func TestEligibilityReason(t *testing.T) {
 			wantStatus: domain.ItemClaimed,
 		},
 		{
+			// Complete but not confirmed claimed = unclaimed reward on Twitch;
+			// surfaced for manual reconcile, never labeled "claimed".
 			name:       "complete via progress",
 			item:       domain.QueueItem{DropID: "d1", CampaignID: "c1", Enabled: true},
 			campaigns:  map[string]domain.Campaign{"c1": baseCampaign("c1", future, drop1)},
 			progress:   map[string]domain.Progress{"d1": {DropID: "d1", RealMinutes: 60, RequiredMinutes: 60, Source: domain.SourceInventory}},
 			wantElig:   false,
-			wantStatus: domain.ItemClaimed,
+			wantStatus: domain.ItemNeedsAction,
 		},
 		{
 			name:       "eligible",

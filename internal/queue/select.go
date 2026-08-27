@@ -209,8 +209,11 @@ func EligibilityReason(item domain.QueueItem, campaigns map[string]domain.Campai
 	if claimed[item.DropID] {
 		return false, domain.ItemClaimed, "already claimed"
 	}
+	// Complete but never confirmed claimed: the reward is sitting unclaimed on
+	// Twitch (a failed auto-claim, or a tier that finished in the background of
+	// a simultaneous multi-drop campaign). Surface it instead of lying "claimed".
 	if p, ok := progress[item.DropID]; ok && p.Complete() {
-		return false, domain.ItemClaimed, "already claimed"
+		return false, domain.ItemNeedsAction, "watch complete - claim it in the Twitch inventory"
 	}
 
 	if !preconditionsMet(drop.PreconditionIDs, claimed) {

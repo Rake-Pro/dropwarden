@@ -122,6 +122,23 @@ copy (Scanning campaigns... / Validating playback on X...) instead of the idle
 "Press Start" text, and Start/Pause/Skip buttons now follow the actual engine
 state.
 
+First claim attempt happened live (DECAL: GRAFFITI complete!) and exposed the
+claim flow: ClaimVisible hung ~9.5 min in a single click (minimized window,
+drops panel never opened), then "left for retry" with a misleading status.
+Reworked per user decision (2026-08-27): claiming is ONE bounded attempt
+(claimTimeout 60s for the whole state), the window is restored and the drops
+panel toggled open before looking for the in-page button, and on failure the
+item goes to needs_action ("completed - claim it manually in the Twitch
+inventory") with an EvNeedsAction emit - NO automatic retries, engine moves to
+the next drop. EligibilityReason now reports complete-but-unclaimed progress
+as needs_action instead of falsely "already claimed" (also covers tiers that
+finish in the background of simultaneous multi-drop campaigns). Dashboard got
+the needs_action banner (was CSS with no renderer): count + first reasons +
+"Open queue" button. BACKLOG (user asked, deliberately deferred): claim in a
+SECOND TAB so watching is not interrupted, and a claim-all-claimable sweep for
+simultaneous multi-tier campaigns (inventory page shows every claim button;
+current flow only targets the just-completed drop).
+
 Still to confirm on the user's Mac:
 
 1. Does it reach state `watching` and does progress tick? This is the FIRST real
