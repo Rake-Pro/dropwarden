@@ -22,6 +22,18 @@
   --switch-off: rgba(0,0,0,0.17);
   --ok-dim: rgba(52,192,122,0.14); --warn-dim: rgba(255,159,10,0.14); --err-dim: rgba(255,107,107,0.14);
 }
+/* "system" theme sets no data-theme attribute; on a light OS use the light
+   palette (an explicit dark choice still wins via [data-theme="dark"]). */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg-window: #ececec; --bg-sidebar: #e9e9eb; --bg-card: #ffffff; --bg-control: #ffffff; --bg-elev: #f3f3f4;
+    --text-primary: #1d1d1f; --text-secondary: #6e6e73; --text-tertiary: #a1a1a6;
+    --hairline: rgba(0,0,0,0.12); --hairline-card: rgba(0,0,0,0.09);
+    --accent-dim: rgba(10,132,255,0.12); --twitch-dim: rgba(145,71,255,0.12);
+    --switch-off: rgba(0,0,0,0.17);
+    --ok-dim: rgba(52,192,122,0.14); --warn-dim: rgba(255,159,10,0.14); --err-dim: rgba(255,107,107,0.14);
+  }
+}
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -172,3 +184,10 @@ body {
 .qrow .grip { cursor: grab; }
 .qrow.dragging { opacity: 0.5; background: var(--bg-elev); border-radius: 8px; }
 .qlist { position: relative; }
+
+/* Narrow window: drop the progress column so the queue row never overflows. */
+@media (max-width: 560px) {
+  .qrow { grid-template-columns: 22px 1fr auto 44px; }
+  .qrow .qmini { display: none; }
+}
+.input.mono { max-width: 100%; }

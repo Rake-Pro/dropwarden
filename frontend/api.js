@@ -60,13 +60,13 @@ async function post(path, body) {
 export const api = {
   get offline() { return offline; },
   async refreshState() { cache = null; return fetchState(); },
-  async connection() { return (await fetchState()).connection; },
-  async status() { return (await fetchState()).status; },
+  async connection() { return (await fetchState()).connection || {}; },
+  async status() { return (await fetchState()).status || {}; },
   async queue() { return (await fetchState()).queue || []; },
   async claims() { return (await fetchState()).claims || []; },
-  async stats() { return (await fetchState()).stats; },
+  async stats() { return (await fetchState()).stats || {}; },
   async spark() { return (await fetchState()).spark || []; },
-  async config() { return (await fetchState()).config; },
+  async config() { return (await fetchState()).config || {}; },
   async saveConfig(cfg) { return post('/api/config', cfg); },
   async debug() {
     const r = await fetch('/api/debug', { cache: 'no-store' });

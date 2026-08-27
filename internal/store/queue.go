@@ -86,6 +86,27 @@ func (s *Store) SetItemStatus(dropID string, status domain.ItemStatus, reason st
 	return nil
 }
 
+// PruneQueue deletes every queue item whose drop id is not in keep, returning
+// the number removed. Used to drop off-filter/expired/claimed items so the queue
+// only holds current, workable drops.
+func (s *Store) PruneQueue(keep map[string]bool) (int, error) {
+	items, err := s.GetQueue()
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, it := range items {
+		if keep[it.DropID] {
+			continue
+		}
+		if _, err := s.db.Exec(`DELETE FROM queue WHERE drop_id=?`, it.DropID); err != nil {
+			return removed, fmt.Errorf("store: prune queue: %w", err)
+		}
+		removed++
+	}
+	return removed, nil
+}
+
 // NextPosition returns the position to assign to a newly appended queue item.
 func (s *Store) NextPosition() (int, error) {
 	var max sql.NullInt64

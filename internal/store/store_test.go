@@ -127,6 +127,24 @@ func TestQueueOrderAndStatus(t *testing.T) {
 	}
 }
 
+func TestPruneQueue(t *testing.T) {
+	s := newTestStore(t)
+	for _, id := range []string{"a", "b", "c"} {
+		s.UpsertQueueItem(domain.QueueItem{DropID: id, Enabled: true, Status: domain.ItemPending})
+	}
+	removed, err := s.PruneQueue(map[string]bool{"b": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 2 {
+		t.Fatalf("expected 2 removed, got %d", removed)
+	}
+	q, _ := s.GetQueue()
+	if len(q) != 1 || q[0].DropID != "b" {
+		t.Fatalf("expected only b to remain: %+v", q)
+	}
+}
+
 func TestBlacklistExpiry(t *testing.T) {
 	s := newTestStore(t)
 	now := time.Now()

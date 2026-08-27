@@ -207,12 +207,12 @@ func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign)
 	return n
 }
 
-// reconcileQueue adds drops from filtered, active campaigns that are not already
-// queued and not already claimed.
+// reconcileQueue keeps the queue in sync with the current game filter: it prunes
+// items whose campaign no longer matches (e.g. after turning off any_game),
+// expired, or was claimed, and - when auto-enqueue is on - adds drops from
+// matching active campaigns. The queue therefore only ever holds current,
+// workable items; claimed drops live in history.
 func (d *Discoverer) reconcileQueue(ctx context.Context) (int, error) {
-	if !d.cfg.Queue.AutoEnqueueNew {
-		return 0, nil
-	}
 	campaigns, err := d.store.ListCampaigns()
 	if err != nil {
 		return 0, err
@@ -221,50 +221,66 @@ func (d *Discoverer) reconcileQueue(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	queued := make(map[string]bool, len(existing))
-	for _, it := range existing {
-		queued[it.DropID] = true
-	}
+	now := time.Now()
 
-	pos, err := d.store.NextPosition()
-	if err != nil {
-		return 0, err
-	}
-
-	added := 0
+	// desired = unclaimed drops of matching, in-window campaigns.
+	desired := map[string]domain.Campaign{}
 	for _, c := range campaigns {
 		if !d.matchesFilter(c) || c.Status == domain.StatusExpired {
 			continue
 		}
-		for _, drop := range c.Drops {
-			if queued[drop.ID] {
-				continue
-			}
-			claimed, err := d.store.HasClaim(drop.ID)
-			if err != nil {
-				return added, err
-			}
-			if claimed {
-				continue
-			}
-			it := domain.QueueItem{
-				DropID:     drop.ID,
-				CampaignID: c.ID,
-				Position:   pos,
-				Enabled:    true,
-				Status:     domain.ItemPending,
-			}
-			if c.RequiresAccountLink() && d.cfg.Claim.SkipAccountLink {
-				it.Status = domain.ItemNeedsAction
-				it.Reason = "account link required"
-			}
-			if err := d.store.UpsertQueueItem(it); err != nil {
-				return added, err
-			}
-			queued[drop.ID] = true
-			pos++
-			added++
+		if !c.EndAt.IsZero() && !c.EndAt.After(now) {
+			continue
 		}
+		for _, drop := range c.Drops {
+			if has, _ := d.store.HasClaim(drop.ID); has {
+				continue
+			}
+			desired[drop.ID] = c
+		}
+	}
+
+	// Prune anything not desired, but never drop the item being watched right now.
+	keep := make(map[string]bool, len(desired))
+	for id := range desired {
+		keep[id] = true
+	}
+	queued := make(map[string]bool, len(existing))
+	for _, it := range existing {
+		queued[it.DropID] = true
+		if it.Status == domain.ItemActive {
+			keep[it.DropID] = true
+		}
+	}
+	if removed, err := d.store.PruneQueue(keep); err != nil {
+		return 0, err
+	} else if removed > 0 {
+		d.logger.Info().Int("removed", removed).Msg("discovery: pruned stale/off-filter queue items")
+	}
+
+	if !d.cfg.Queue.AutoEnqueueNew {
+		return 0, nil
+	}
+	pos, err := d.store.NextPosition()
+	if err != nil {
+		return 0, err
+	}
+	added := 0
+	for id, c := range desired {
+		if queued[id] {
+			continue
+		}
+		it := domain.QueueItem{DropID: id, CampaignID: c.ID, Position: pos, Enabled: true, Status: domain.ItemPending}
+		if c.RequiresAccountLink() && d.cfg.Claim.SkipAccountLink {
+			it.Status = domain.ItemNeedsAction
+			it.Reason = "account link required"
+		}
+		if err := d.store.UpsertQueueItem(it); err != nil {
+			return added, err
+		}
+		queued[id] = true
+		pos++
+		added++
 	}
 	return added, nil
 }

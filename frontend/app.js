@@ -89,7 +89,8 @@ async function renderDashboard() {
 }
 
 async function renderQueue() {
-  const queue = await api.queue();
+  // Only current, workable items belong here; claimed/expired live in History.
+  const queue = (await api.queue()).filter(q => q.status !== 'claimed' && q.status !== 'expired');
   const v = $('#v-queue');
   v.innerHTML = '';
   v.append(el(`<div class="qhead">
@@ -117,11 +118,15 @@ async function renderQueue() {
       <span class="pill ${esc(q.status)}"><span class="d"></span> ${esc(cap(q.status))}</span>
       <div class="switch ${q.enabled ? 'on' : ''}" role="switch" aria-checked="${q.enabled}" tabindex="0"><i></i></div>
     </div>`);
-    row.querySelector('.switch').addEventListener('click', async (e) => {
-      const on = !e.currentTarget.classList.contains('on');
-      e.currentTarget.classList.toggle('on', on);
+    const sw = row.querySelector('.switch');
+    const flipSwitch = async () => {
+      const on = !sw.classList.contains('on');
+      sw.classList.toggle('on', on);
+      sw.setAttribute('aria-checked', String(on));
       await api.setEnabled(q.dropID, on);
-    });
+    };
+    sw.addEventListener('click', flipSwitch);
+    sw.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flipSwitch(); } });
     list.append(row);
   }
   v.append(list);
@@ -166,6 +171,7 @@ function attachQueueDrag(list) {
   list.addEventListener('dragover', e => {
     e.preventDefault();
     if (!dragRow) return;
+    if (!list.contains(dragRow)) { dragRow = null; return; } // re-rendered mid-drag
     const after = queueDragAfter(list, e.clientY);
     if (after == null) list.appendChild(dragRow);
     else list.insertBefore(dragRow, after);
@@ -276,8 +282,14 @@ function renderSettingsContent() {
   });
   host.querySelectorAll('[data-field]').forEach(inp => inp.addEventListener('input', () => {
     const f = inp.dataset.field;
-    cfg[f] = f === 'volume' ? parseFloat(inp.value) : inp.value;
-    if (f === 'volume') { const p = $('#vol-pct', host); if (p) p.textContent = Math.round((parseFloat(inp.value) || 0) * 100) + '%'; }
+    if (f === 'volume') {
+      const n = parseFloat(inp.value);
+      if (Number.isFinite(n)) cfg.volume = n; // keep last good value if the field is cleared
+      const p = $('#vol-pct', host);
+      if (p) p.textContent = Math.round((Number.isFinite(n) ? n : cfg.volume) * 100) + '%';
+    } else {
+      cfg[f] = inp.value;
+    }
   }));
   const authSel = host.querySelector('select[data-field="authMode"]');
   if (authSel) authSel.value = cfg.authMode;
@@ -366,15 +378,24 @@ async function renderDebug() {
       flashMsg('#dbg-msg', ok ? 'JSON copied' : 'copy failed', ok ? 'var(--ok)' : 'var(--err)');
     });
     const dumpSw = controls.querySelector('[data-toggle="captureGqlBodies"]');
-    if (dumpSw) dumpSw.addEventListener('click', async () => {
-      const on = !dumpSw.classList.contains('on');
-      dumpSw.classList.toggle('on', on);
-      if (!cfg) cfg = await api.config();
-      cfg.captureGqlBodies = on;
-      try { await api.saveConfig(cfg); flashMsg('#dbg-msg', on ? 'dumping enabled' : 'dumping disabled'); }
-      catch (e) { flashMsg('#dbg-msg', 'save failed', 'var(--err)'); }
-    });
+    if (dumpSw) {
+      const flipDump = async () => {
+        const on = !dumpSw.classList.contains('on');
+        dumpSw.classList.toggle('on', on);
+        dumpSw.setAttribute('aria-checked', String(on));
+        if (!cfg) cfg = await api.config();
+        cfg.captureGqlBodies = on;
+        try { await api.saveConfig(cfg); flashMsg('#dbg-msg', on ? 'dumping enabled' : 'dumping disabled'); }
+        catch (e) { flashMsg('#dbg-msg', 'save failed', 'var(--err)'); }
+      };
+      dumpSw.addEventListener('click', flipDump);
+      dumpSw.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flipDump(); } });
+    }
   }
+  // Keep the dump toggle in sync with config (it was built once with the shell).
+  if (!cfg) cfg = await api.config().catch(() => null);
+  const dumpSw = document.querySelector('[data-toggle="captureGqlBodies"]');
+  if (dumpSw && cfg) { dumpSw.classList.toggle('on', !!cfg.captureGqlBodies); dumpSw.setAttribute('aria-checked', String(!!cfg.captureGqlBodies)); }
   await renderDebugPanel();
 }
 
@@ -443,9 +464,12 @@ function init() {
     else document.documentElement.removeAttribute('data-theme');
     refreshAll();
   }).catch(() => refreshAll());
-  // Live updates: re-poll periodically; live builds also get pushed events.
+  // Live updates: re-poll the active view periodically (api.onEvent is a no-op
+  // without pushed events, so polling is the live-update path).
   setInterval(() => {
-    if (isActive('dashboard')) { renderDashboard(); }
+    if (isActive('dashboard')) renderDashboard();
+    else if (isActive('queue') && !dragRow) renderQueue();
+    else if (isActive('history')) renderHistory();
     renderFoot();
   }, 5000);
   // Auto-refresh the debug panel while the Debugging view is active.
