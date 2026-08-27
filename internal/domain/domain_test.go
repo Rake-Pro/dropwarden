@@ -14,7 +14,7 @@ func TestRequiresAccountLink(t *testing.T) {
 		{"unknown signal, url present", "https://x", nil, true},
 		{"connected overrides url", "https://x", &yes, false},
 		{"no link needed reports connected", "", &yes, false},
-		{"unlinked requires link even without url", "", &no, true},
+		{"no url means nothing to link (watch-to-redeem)", "", &no, false},
 		{"unlinked with url", "https://x", &no, true},
 	}
 	for _, tc := range cases {

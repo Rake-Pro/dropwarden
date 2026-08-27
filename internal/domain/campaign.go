@@ -52,15 +52,17 @@ type Campaign struct {
 func (c Campaign) AnyChannel() bool { return len(c.AllowedChannels) == 0 }
 
 // RequiresAccountLink reports whether the campaign needs an external linked
-// account before its drops can be claimed. Twitch's self.isAccountConnected is
-// authoritative when captured (true covers both "linked" and "no link needed");
-// only when it is unknown does a non-empty AccountLinkURL count as requiring
-// one, which over-flags but never watches an unclaimable drop.
+// account before its drops can be claimed: there must be a link page at all
+// (empty AccountLinkURL means there is nothing to connect - watch-to-redeem
+// campaigns report isAccountConnected=false despite requiring no link) and the
+// viewer must not already be connected per Twitch's self.isAccountConnected.
+// An uncaptured signal counts as not connected, which over-flags but never
+// watches an unclaimable drop.
 func (c Campaign) RequiresAccountLink() bool {
-	if c.AccountConnected != nil {
-		return !*c.AccountConnected
+	if c.AccountLinkURL == "" {
+		return false
 	}
-	return c.AccountLinkURL != ""
+	return c.AccountConnected == nil || !*c.AccountConnected
 }
 
 // Benefit is a single reward granted by a drop.
