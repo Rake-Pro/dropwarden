@@ -67,13 +67,19 @@ channel). The next thing to confirm on the user's Mac:
 - Any-channel campaigns (empty ACL) need `game.slug` for the directory. Confirm
   `slug` is populated in a `~/.dropwarden/debug/details-*.json` (turn on the
   dump toggle). If empty, any-channel campaigns can't find a channel.
-- Adversarial UI review was run (general-purpose agent) against the frontend at
-  commit 34ca57d; apply its findings next.
+- Adversarial UI review findings APPLIED (theme/light-OS, switch a11y, live
+  refresh of active view, volume NaN guard, partial-state guards, drag guard,
+  responsive breakpoints).
 - Claim flow, raid handling, stall watchdogs: implemented but NOT yet exercised
   live.
+- UI still un-run in-container (no browser); the JS changes are static-reviewed
+  only. Confirm the new Settings sub-nav, Debugging view, queue drag, and queue
+  prune behave on the user's Mac.
 
 ## Recent commits (newest first)
 
+- 4606ad9 fix: queue prune to filter + apply UI review findings
+- 1163e19 docs: STATUS handoff
 - 34ca57d ui+watcher: settings restructure, Debugging view, queue drag, fall-through
 - 88cc65e debug: consolidated Debugging pane + /api/debug + log ring
 - 428c1fa fix: list upsert clobbering detailed ACL/slug
