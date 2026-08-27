@@ -46,6 +46,17 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 	if err != nil {
 		return res, err
 	}
+	// Diagnostic: what the passive capture actually saw. If gql_responses is 0
+	// the shim did not observe any GraphQL (capture problem); if it is >0 but
+	// campaigns is 0, an operation name or response shape needs updating - the
+	// ops_seen list shows the real names. See docs/NOTES-twitch.md.
+	d.logger.Info().
+		Int("gql_responses", captured.RawCount).
+		Strs("ops_seen", captured.OpsSeen).
+		Int("campaigns_parsed", len(captured.Campaigns)).
+		Int("details_parsed", len(captured.Details)).
+		Msg("discovery: capture diagnostic")
+
 	// List entries first (basic fields), then detail entries (full drops + ACL)
 	// so details win on conflict.
 	for _, c := range captured.Campaigns {

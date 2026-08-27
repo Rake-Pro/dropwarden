@@ -16,7 +16,7 @@ const (
 	OpClaimDropRewards = "ClaimDropRewards"
 )
 
-// AllOps lists every operation name this package recognizes.
+// AllOps lists the canonical operation names this package recognizes.
 var AllOps = []string{
 	OpCampaigns,
 	OpCampaignDetails,
@@ -25,13 +25,45 @@ var AllOps = []string{
 	OpClaimDropRewards,
 }
 
-// Recognized reports whether op is one of the operation names this package
-// knows how to handle.
-func Recognized(op string) bool {
-	for _, o := range AllOps {
-		if o == op {
-			return true
-		}
+// Twitch's real web client uses longer operation names than the short canonical
+// ones above; we accept both so capture keeps working whether Twitch sends the
+// dashboard as "ViewerDropsDashboard" or a future/legacy "Campaigns". Matching is
+// on operationName only - hashes are never sent - so this stays drift-proof.
+// verify live: confirm the exact names in a real capture (see the debug log that
+// discovery prints of every op it observed).
+var (
+	campaignsOps   = set(OpCampaigns, "ViewerDropsDashboard")
+	detailsOps     = set(OpCampaignDetails, "DropCampaignDetails", "DropCampaignDetails_Override")
+	inventoryOps   = set(OpInventory, "Inventory")
+	currentDropOps = set(OpCurrentDrop, "DropCurrentSessionContext")
+	claimOps       = set(OpClaimDropRewards, "DropsPage_ClaimDropRewards")
+)
+
+func set(names ...string) map[string]bool {
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
 	}
-	return false
+	return m
+}
+
+// IsCampaignsOp reports whether op is the drops-dashboard campaigns list.
+func IsCampaignsOp(op string) bool { return campaignsOps[op] }
+
+// IsDetailsOp reports whether op is a single-campaign details query.
+func IsDetailsOp(op string) bool { return detailsOps[op] }
+
+// IsInventoryOp reports whether op is the inventory query.
+func IsInventoryOp(op string) bool { return inventoryOps[op] }
+
+// IsCurrentDropOp reports whether op is the current-watch-session query.
+func IsCurrentDropOp(op string) bool { return currentDropOps[op] }
+
+// IsClaimOp reports whether op is the claim mutation.
+func IsClaimOp(op string) bool { return claimOps[op] }
+
+// Recognized reports whether op is any operation name this package handles
+// (canonical or real-client alias).
+func Recognized(op string) bool {
+	return IsCampaignsOp(op) || IsDetailsOp(op) || IsInventoryOp(op) || IsCurrentDropOp(op) || IsClaimOp(op)
 }

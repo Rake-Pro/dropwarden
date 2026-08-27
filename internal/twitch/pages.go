@@ -8,9 +8,10 @@ import (
 	"github.com/rake-pro/dropwarden/internal/domain"
 )
 
-// settleDelay is a short dwell after load to let the client fire its GQL calls
-// before we drain the capture buffer. verify live: tune against real timings.
-const settleDelay = 3 * time.Second
+// settleDelay is a dwell after load to let the client fire its GQL calls before
+// we drain the capture buffer. The drops dashboard hydrates a bit slowly on a
+// cold navigation, so this is generous. verify live: tune against real timings.
+const settleDelay = 7 * time.Second
 
 // Pages drives the Twitch drop-related pages and returns parsed domain data by
 // draining the passive capture buffer. It never issues synthetic GQL.
