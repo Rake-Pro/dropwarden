@@ -150,6 +150,18 @@ stickiness holds it there as each drop completes until nothing eligible
 remains on it, then move on. "selecting: channel covers multiple eligible
 drops" logs when coverage kicked in.
 
+KICK DROPS: user wants Kick support running in PARALLEL with Twitch. Research
+done + full design written in docs/NOTES-kick.md (read it before starting):
+Kick drops are active and Twitch-shaped (category campaigns, ACL vs
+any-channel, multi-tier simultaneous credit, manual claim, link-at-claim-time,
+inventory page), community precedent (KickDropsMiner) proves real-Chrome +
+persisted profile passes Cloudflare. Plan: Phase 0 platform plumbing (extract
+Controller/Health/PlayerPolicy interfaces, `platform` column, N engines over N
+browser instances), then internal/kick driver, then UI. Key Kick differences:
+refreshes HURT credit tracking (gentler watchdogs, no proactive refresh),
+rewards EXPIRE unclaimed, account link needed at claim not selection. NOT
+STARTED - implementation is its own work session.
+
 Still to confirm on the user's Mac:
 
 1. Does it reach state `watching` and does progress tick? This is the FIRST real
