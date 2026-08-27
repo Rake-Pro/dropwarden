@@ -16,7 +16,8 @@ const settleDelay = 7 * time.Second
 // Pages drives the Twitch drop-related pages and returns parsed domain data by
 // draining the passive capture buffer. It never issues synthetic GQL.
 type Pages struct {
-	ctrl Controller
+	ctrl  Controller
+	login string // cached logged-in user login, for detail queries
 }
 
 // NewPages builds a Pages driver over a Controller.

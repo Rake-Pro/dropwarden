@@ -76,6 +76,11 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 		res.Details++
 	}
 
+	// The dashboard list has no drops or channel ACL; fetch details for the
+	// campaigns we care about (matching the game filter, active) so they become
+	// watchable. Capped per cycle to stay gentle.
+	res.Details += d.fetchDetails(ctx, captured.Campaigns)
+
 	prog, err := d.pages.ReadInventory(ctx)
 	if err != nil {
 		d.logger.Warn().Err(err).Msg("discovery: inventory read failed; continuing with campaign data")
@@ -97,6 +102,59 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 	d.logger.Info().Int("campaigns", res.Campaigns).Int("details", res.Details).
 		Int("progress", res.Progress).Int("enqueued", res.Enqueued).Msg("discovery pass complete")
 	return res, nil
+}
+
+// fetchDetails fetches full campaign details (drops + ACL) for filter-matching
+// active campaigns that do not yet have drops, capped at details_per_cycle. It
+// returns the number of campaigns whose details were fetched and stored.
+func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign) int {
+	limit := d.cfg.Discovery.DetailsPerCycle
+	if limit <= 0 {
+		limit = 8
+	}
+	// Candidates: matching game, active, and not already carrying drops.
+	var targets []domain.Campaign
+	for _, c := range listed {
+		if c.Status == domain.StatusExpired || !d.matchesFilter(c) {
+			continue
+		}
+		if existing, err := d.store.GetCampaign(c.ID); err == nil && existing != nil && len(existing.Drops) > 0 {
+			continue // already have details
+		}
+		targets = append(targets, c)
+		if len(targets) >= limit {
+			break
+		}
+	}
+	if len(targets) == 0 {
+		return 0
+	}
+
+	login, err := d.pages.FetchLogin(ctx)
+	if err != nil {
+		d.logger.Warn().Err(err).Msg("discovery: cannot fetch login; skipping campaign details this cycle")
+		return 0
+	}
+
+	n := 0
+	for _, c := range targets {
+		full, err := d.pages.FetchCampaignDetails(ctx, login, c.ID)
+		if err != nil {
+			d.logger.Warn().Err(err).Str("campaign", c.ID).Msg("discovery: fetch details failed")
+			continue
+		}
+		if full.ID == "" {
+			continue
+		}
+		if err := d.store.UpsertCampaign(full); err != nil {
+			d.logger.Warn().Err(err).Str("campaign", c.ID).Msg("discovery: store details failed")
+			continue
+		}
+		d.logger.Info().Str("campaign", full.Name).Str("game", full.GameName).
+			Int("drops", len(full.Drops)).Int("acl", len(full.AllowedChannels)).Msg("discovery: fetched details")
+		n++
+	}
+	return n
 }
 
 // reconcileQueue adds drops from filtered, active campaigns that are not already
