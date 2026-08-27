@@ -160,8 +160,9 @@ async function renderSettings() {
   const toggle = (id, on) => `<div class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${on}" data-toggle="${id}"><i></i></div>`;
   const wrap = el(`<div>
     <div class="group"><div class="caption">Games</div><div class="card">
-      <div class="row"><div class="lab"><div class="l">Tracked games</div><div class="h">Only campaigns for these games are queued.</div></div>
-        <div class="ctl chips">${cfg.games.map(g => `<span class="chip">${esc(g)}</span>`).join('')}</div></div>
+      <div class="row"><div class="lab"><div class="l">Any game</div><div class="h">Queue drops for every game, ignoring the list below. Good for a quick test.</div></div><div class="ctl">${toggle('anyGame', cfg.anyGame)}</div></div>
+      <div class="row stacked" id="games-row"><div class="lab"><div class="l">Tracked games</div><div class="h">Only campaigns for these games are queued.</div></div>
+        <div class="ctl" id="games-ctl" style="width:100%;margin-top:8px"></div></div>
       <div class="row"><div class="lab"><div class="l">Auto-enqueue new campaigns</div><div class="h">Add newly discovered drops to the bottom of the queue.</div></div><div class="ctl">${toggle('autoEnqueueNew', cfg.autoEnqueueNew)}</div></div>
     </div></div>
 
@@ -193,11 +194,38 @@ async function renderSettings() {
   wrap.querySelectorAll('[data-field]').forEach(inp => inp.addEventListener('input', () => {
     const f = inp.dataset.field; cfg[f] = f === 'volume' ? parseFloat(inp.value) : inp.value;
   }));
+  // Games manager: add/remove chips, dim when Any game is on.
+  const gamesCtl = $('#games-ctl', wrap);
+  function renderGames() {
+    const disabled = cfg.anyGame;
+    gamesCtl.style.opacity = disabled ? '0.45' : '1';
+    gamesCtl.style.pointerEvents = disabled ? 'none' : 'auto';
+    const chips = (cfg.games || []).map((g, i) => `<span class="chip">${esc(g)} <span class="x" data-rm="${i}" style="cursor:pointer">×</span></span>`).join('');
+    gamesCtl.innerHTML = `<div class="chips" style="justify-content:flex-start">${chips || '<span style="color:var(--text-tertiary);font-size:12px">no games — add one or turn on Any game</span>'}</div>
+      <div style="display:flex;gap:8px;margin-top:8px"><input class="input" id="game-add" placeholder="Exact game name, e.g. Special Events" style="flex:1"><button class="btn" id="game-add-btn" type="button">Add</button></div>`;
+    gamesCtl.querySelectorAll('[data-rm]').forEach(x => x.addEventListener('click', () => { cfg.games.splice(+x.dataset.rm, 1); renderGames(); }));
+    const addInput = gamesCtl.querySelector('#game-add');
+    const addGame = () => { const val = addInput.value.trim(); if (val && !cfg.games.includes(val)) cfg.games.push(val); renderGames(); };
+    gamesCtl.querySelector('#game-add-btn').addEventListener('click', addGame);
+    addInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addGame(); } });
+  }
+  renderGames();
+  const anyToggle = wrap.querySelector('[data-toggle="anyGame"]');
+  if (anyToggle) anyToggle.addEventListener('click', renderGames);
+
   $('#save', wrap).addEventListener('click', async () => {
     const msg = $('#savemsg', wrap);
-    try { await api.saveConfig(cfg); msg.textContent = 'Saved.'; msg.style.color = 'var(--ok)'; }
-    catch (e) { msg.textContent = 'Error: ' + (e.message || e); msg.style.color = 'var(--err)'; }
-    setTimeout(() => msg.textContent = '', 3000);
+    try {
+      await api.saveConfig(cfg);
+      msg.textContent = 'Saved. Refreshing campaigns…';
+      msg.style.color = 'var(--ok)';
+      api.refresh().catch(() => {});
+      setTimeout(() => { refreshAll(); }, 500);
+    } catch (e) {
+      msg.textContent = 'Error: ' + (e.message || e);
+      msg.style.color = 'var(--err)';
+    }
+    setTimeout(() => { msg.textContent = ''; }, 4000);
   });
   $('#reset', wrap).addEventListener('click', () => renderSettings());
   v.append(wrap);

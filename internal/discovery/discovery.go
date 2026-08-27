@@ -127,6 +127,8 @@ func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign)
 		}
 	}
 	if len(targets) == 0 {
+		d.logger.Info().Bool("any_game", d.cfg.AnyGame).Strs("games", d.cfg.Games).
+			Msg("discovery: no active campaigns matched the game filter; nothing to detail-fetch")
 		return 0
 	}
 
