@@ -111,9 +111,11 @@ pass. Fixed with engine-managed window state: when start_minimized is on, the
 window restores itself entering Opening/Validating (also covers mid-watch hard
 refreshes, which re-validate) and re-minimizes in beginWatching once playback
 is confirmed. Watch next run: whether playback KEEPS running after the
-re-minimize (expected - a started player continues when hidden) and whether
-un-minimize steals focus (CDP setWindowBounds normal; if macOS activates the
-window on restore, pair it with the never-focus handling). Dashboard card also
+re-minimize (expected - a started player continues when hidden). Un-minimize
+DOES steal focus on macOS - user accepted the tradeoff 2026-08-27 given the
+low frequency (per channel switch / proactive refresh, ~2x/hour steady-state).
+If ACL-offline churn ever makes restores flappy, the fix is the liveness
+pre-check from the open items below, not fighting the focus behavior. Dashboard card also
 polished: state pill no longer overlaps the channel name (flex none + default
 pill style for unmapped states + busy pulse), transitional states show real
 copy (Scanning campaigns... / Validating playback on X...) instead of the idle
