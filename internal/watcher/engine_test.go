@@ -194,6 +194,9 @@ func TestPollProgressUpdatesAndRateLimits(t *testing.T) {
 	if got := e.Status().Current; got != 7 {
 		t.Fatalf("status current = %d want 7", got)
 	}
+	if got := e.Status().SessionMinutes; got != 7 {
+		t.Fatalf("status sessionMinutes = %d want 7 (startMinutes 0)", got)
+	}
 	if emit.count(EvProgress) != 1 {
 		t.Fatalf("expected 1 progress event, got %d", emit.count(EvProgress))
 	}

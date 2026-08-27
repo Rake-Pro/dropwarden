@@ -108,7 +108,11 @@ func (e *Engine) applyProgress(ps []domain.Progress) (minutes int, increased boo
 			DropID: e.cur.drop.ID, Current: best, Required: e.cur.drop.RequiredMinutes,
 			Source: string(src), At: e.deps.Now(),
 		})
-		e.setStatus(func(s *Status) { s.Current = best })
+		session := best - e.cur.startMinutes
+		if session < 0 {
+			session = 0
+		}
+		e.setStatus(func(s *Status) { s.Current = best; s.SessionMinutes = session })
 		return best, true
 	}
 	return best, false
@@ -148,4 +152,6 @@ func (e *Engine) endSession(outcome domain.SessionOutcome, note string) {
 	})
 	success := outcome == domain.OutcomeClaimed || outcome == domain.OutcomeCompleted
 	_ = e.deps.Store.RecordChannelResult(e.cur.login, success)
+	// The session's minutes are in the store now; stop overlaying them live.
+	e.setStatus(func(s *Status) { s.SessionMinutes = 0 })
 }

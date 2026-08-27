@@ -281,5 +281,14 @@ func (s *HistoryService) Stats() (StatsDTO, error) {
 	if len(sessions) > 0 {
 		st.SuccessRate = success * 100 / len(sessions)
 	}
+	// Overlay the in-flight session so totals tick live: recorded sessions only
+	// land in the store when they END, which otherwise freezes the numbers for
+	// hours mid-watch. Success rate stays completed-sessions-only.
+	if eng := s.b.Engine(); eng != nil {
+		if es := eng.Status(); es.State == watcher.StateWatching {
+			st.MinutesWatched += es.SessionMinutes
+			st.Sessions++
+		}
+	}
 	return st, nil
 }

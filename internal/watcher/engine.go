@@ -78,6 +78,11 @@ type Status struct {
 	Required     int       `json:"required"`
 	Paused       bool      `json:"paused"`
 	Since        time.Time `json:"since"`
+
+	// SessionMinutes is the credited watch time accrued by the CURRENT session
+	// (zero when none is active). Stats overlays it on the lifetime totals so
+	// the UI ticks live instead of only moving when a session is recorded.
+	SessionMinutes int `json:"sessionMinutes"`
 }
 
 // activeWatch holds the mutable state of the current watch attempt.
