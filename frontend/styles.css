@@ -51,9 +51,11 @@ body {
 .nav.active { background: var(--accent-dim); color: var(--text-primary); }
 .nav .ic { width: 22px; height: 22px; border-radius: var(--radius-ctl); display: grid; place-items: center; font-size: 13px; background: var(--bg-control); }
 .nav.active .ic { background: var(--accent); color: #fff; }
-.foot { margin-top: auto; padding: 10px 8px; color: var(--text-tertiary); font-size: 11px; border-top: 1px solid var(--hairline); }
-.foot .dot { color: var(--ok); }
-.foot .dot.off { color: var(--err); }
+.foot { margin-top: auto; padding: 12px 10px 8px; font-size: 11.5px; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 7px; }
+.frow { display: flex; align-items: center; gap: 9px; color: var(--text-secondary); font-weight: 500; }
+.fdot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-dim); flex: none; }
+.fdot.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-dim); }
+.fdot.off { background: var(--err); box-shadow: 0 0 0 3px var(--err-dim); }
 
 .content { overflow: auto; padding: 22px 24px; }
 .view { display: none; }
@@ -92,6 +94,7 @@ body {
 .watchdogs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
 .wd { display: flex; align-items: center; gap: 7px; background: rgba(127,127,127,0.08); border: 1px solid var(--hairline-card); border-radius: 8px; padding: 7px 10px; font-size: 11.5px; color: var(--text-secondary); }
 .wd .tick { color: var(--ok); font-weight: 700; }
+.wd .tick.wait { color: var(--warn); }
 .foot-btns { display: flex; gap: 8px; margin-top: 16px; }
 .btn { appearance: none; border: 1px solid var(--hairline); background: var(--bg-control); color: var(--text-primary); font: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 14px; border-radius: var(--radius-ctl); cursor: pointer; }
 .btn:hover { background: var(--bg-elev); }

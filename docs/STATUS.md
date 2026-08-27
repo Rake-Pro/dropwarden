@@ -53,8 +53,21 @@ NULL-preserving upsert), and fetchDetails re-fetches rows missing the signal so
 existing DBs heal. Also split the misleading "no active campaigns matched the
 game filter" log from the "all matched campaigns already detailed" case.
 
-The watcher had reached `selecting_channel` but not yet `watching`. The next
-thing to confirm on the user's Mac:
+2026-08-27 second live run: WATCHING reached (grabbys, Once Human) but progress
+stayed 0/60. Root cause: mid-watch progress relied on passively captured
+fetch/XHR GQL, but Twitch pushes live drop progress over its WebSocket (which
+the fetch/XHR shim cannot see); DropCurrentSessionContext only fires on page
+load/panel toggle. Fixed with an ACTIVE poll: `twitch.FetchCurrentDrop` (full
+dropCurrentSession query via the header-replay page-context fetch, same
+technique as details) called from watchTick at most once per
+`watcher.progress_poll` (default 60s), merged through the same applyProgress
+path as capture. First poll fires on the first health tick (~25s in). UI also
+polished: sidebar footer is now two aligned status rows (Chrome / Watcher,
+ok/warn/off dots), the "Progress ticking" chip is honest (shows "Awaiting first
+tick" until minutes move), and the brand logo is a loot-chest SVG on the purple
+tile (replacing the water-drop emoji).
+
+Still to confirm on the user's Mac:
 
 1. Does it reach state `watching` and does progress tick? This is the FIRST real
    test of the six-point playback validation and its DOM selectors

@@ -35,6 +35,7 @@ watcher:
   proactive_refresh_jitter: 5m
   health_tick: 25s
   health_tick_jitter: 40        # percent
+  progress_poll: 60s            # active current-drop GQL poll while watching
   max_session: 4h
   cooldown: 60s
   cooldown_jitter: 120s

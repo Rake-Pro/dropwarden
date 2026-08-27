@@ -43,6 +43,7 @@ func (c *Config) applyDefaults() {
 	setDuration(&c.Watcher.ProactiveJitter, 5*time.Minute)
 	setDuration(&c.Watcher.HealthTick, 25*time.Second)
 	setInt(&c.Watcher.HealthTickJitter, 40)
+	setDuration(&c.Watcher.ProgressPoll, 60*time.Second)
 	setDuration(&c.Watcher.MaxSession, 4*time.Hour)
 	setDuration(&c.Watcher.Cooldown, 60*time.Second)
 	setDuration(&c.Watcher.CooldownJitter, 120*time.Second)

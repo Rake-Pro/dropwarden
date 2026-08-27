@@ -13,15 +13,18 @@ function switchView(view) {
 }
 
 async function renderFoot() {
-  const c = await api.connection();
+  const [c, st] = await Promise.all([api.connection(), api.status()]);
   const foot = $('#rail-foot');
+  const row = (cls, label) => `<div class="frow"><span class="fdot ${cls}"></span>${label}</div>`;
   if (api.offline) {
-    foot.innerHTML = `<span class="dot off">●</span> preview mode<br>backend not connected`;
-  } else if (c.chrome) {
-    foot.innerHTML = `<span class="dot">●</span> Chrome connected<br>watcher running`;
-  } else {
-    foot.innerHTML = `<span class="dot off">●</span> starting Chrome…`;
+    foot.innerHTML = row('off', 'Preview mode') + row('off', 'Backend not connected');
+    return;
   }
+  const chrome = c.chrome ? row('ok', 'Chrome connected') : row('warn', 'Starting Chrome…');
+  const watcher = !c.chrome ? row('off', 'Watcher waiting')
+    : st.paused ? row('warn', 'Watcher paused')
+    : row('ok', 'Watcher running');
+  foot.innerHTML = chrome + watcher;
 }
 
 async function renderDashboard() {
@@ -53,7 +56,9 @@ async function renderDashboard() {
       <div class="bar"><i style="width:${pct(st.current, st.required)}%"></i></div>
     </div>
     <div class="watchdogs">
-      <span class="wd"><span class="tick">✓</span> Progress ticking</span>
+      ${st.current > 0
+        ? '<span class="wd"><span class="tick">✓</span> Progress ticking</span>'
+        : '<span class="wd"><span class="tick wait">◌</span> Awaiting first tick</span>'}
       <span class="wd"><span class="tick">✓</span> Playback healthy</span>
       <span class="wd"><span class="tick">✓</span> Volume 1%</span>
     </div>` : `<div class="empty">Not watching. Press Start to begin working the queue.</div>`}

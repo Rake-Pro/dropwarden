@@ -95,6 +95,28 @@ func (p *Pages) FetchCampaignDetails(ctx context.Context, login, campaignID stri
 	return c, raw, nil
 }
 
+// currentDropQuery is a full dropCurrentSession query (not a persisted hash).
+// It returns data.currentUser.dropCurrentSession, matching gql.ParseCurrentDrop.
+// The page itself only fires DropCurrentSessionContext on load/panel-open (live
+// updates arrive over a WebSocket the fetch/XHR capture shim cannot see), so
+// the watcher polls this actively while watching.
+const currentDropQuery = `{currentUser{dropCurrentSession{dropID currentMinutesWatched requiredMinutesWatched channel{id login}}}}`
+
+// FetchCurrentDrop fetches the viewer's live drop-watching session via a
+// page-context GraphQL call. It returns (nil, nil) when no session is active.
+func (p *Pages) FetchCurrentDrop(ctx context.Context) (*domain.Progress, error) {
+	body, _ := json.Marshal(map[string]any{"query": currentDropQuery})
+	var raw string
+	if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
+		return nil, fmt.Errorf("twitch: fetch current drop: %w", err)
+	}
+	prog, err := gql.ParseCurrentDrop([]byte(raw))
+	if err != nil {
+		return nil, fmt.Errorf("twitch: parse current drop (%.160s): %w", raw, err)
+	}
+	return prog, nil
+}
+
 // CapturedHeaderKeys returns the names (not values) of the GraphQL request
 // headers captured from the page, so a run can confirm whether the integrity
 // token was picked up without ever logging the secret values.

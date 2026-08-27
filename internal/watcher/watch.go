@@ -171,8 +171,12 @@ func (e *Engine) watchTick(ctx context.Context, lastTime *float64, lastTimeSet *
 		*lastReassert = now
 	}
 
-	// Progress + completion.
+	// Progress + completion: passive capture first (free), then the rate-limited
+	// active poll, which is the only reliable source mid-watch.
 	minutes, _ := e.updateProgressFromCapture(ctx)
+	if m, _ := e.pollProgress(ctx); m > minutes {
+		minutes = m
+	}
 	if e.cur.drop.RequiredMinutes > 0 && minutes >= e.cur.drop.RequiredMinutes {
 		e.endSession(domain.OutcomeCompleted, "required minutes met")
 		return StateClaiming, "drop complete", true

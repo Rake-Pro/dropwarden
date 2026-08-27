@@ -172,3 +172,46 @@ func TestFailChannelBlacklists(t *testing.T) {
 		t.Fatal("expected channel blacklisted")
 	}
 }
+
+func TestPollProgressUpdatesAndRateLimits(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	pager := &fakePager{currentDrop: &domain.Progress{
+		DropID: "d1", RealMinutes: 7, RequiredMinutes: 60, Source: domain.SourceCurrentDrop,
+	}}
+	emit := newRecordingEmitter()
+	e := testEngine(t, st, newFakeController(), pager, &fakeDisco{}, emit)
+	e.cur = &activeWatch{drop: domain.Drop{ID: "d1", RequiredMinutes: 60}}
+
+	m, inc := e.pollProgress(context.Background())
+	if !inc || m != 7 {
+		t.Fatalf("pollProgress = %d,%v want 7,true", m, inc)
+	}
+	if got := e.Status().Current; got != 7 {
+		t.Fatalf("status current = %d want 7", got)
+	}
+	if emit.count(EvProgress) != 1 {
+		t.Fatalf("expected 1 progress event, got %d", emit.count(EvProgress))
+	}
+
+	// Same instant: the interval gate must skip the fetch entirely.
+	pager.currentDrop.RealMinutes = 20
+	m, inc = e.pollProgress(context.Background())
+	if inc || m != 7 || pager.pollCalls != 1 {
+		t.Fatalf("expected rate-limited poll (m=7, 1 call), got m=%d inc=%v calls=%d", m, inc, pager.pollCalls)
+	}
+}
+
+func TestPollProgressIgnoresOtherDrop(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	pager := &fakePager{currentDrop: &domain.Progress{
+		DropID: "other", RealMinutes: 30, RequiredMinutes: 60, Source: domain.SourceCurrentDrop,
+	}}
+	e := testEngine(t, st, newFakeController(), pager, &fakeDisco{}, newRecordingEmitter())
+	e.cur = &activeWatch{drop: domain.Drop{ID: "d1", RequiredMinutes: 60}}
+
+	if m, inc := e.pollProgress(context.Background()); inc || m != 0 {
+		t.Fatalf("progress for another drop must not credit ours; got %d,%v", m, inc)
+	}
+}

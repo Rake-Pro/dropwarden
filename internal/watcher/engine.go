@@ -26,6 +26,7 @@ type Pager interface {
 	OpenChannel(ctx context.Context, login string, policy twitch.PlayerPolicy) error
 	ReadInventory(ctx context.Context) ([]domain.Progress, error)
 	DirectoryChannels(ctx context.Context, gameSlug string) ([]string, error)
+	FetchCurrentDrop(ctx context.Context) (*domain.Progress, error)
 }
 
 // Discoverer is the engine's view of the discovery pass (discovery.Discoverer).
@@ -88,6 +89,7 @@ type activeWatch struct {
 	startMinutes  int
 	lastMinutes   int
 	lastProgress  time.Time
+	lastPoll      time.Time
 	hardRefreshes int
 	stallEvents   int
 	raids         int

@@ -52,6 +52,7 @@ type WatcherConfig struct {
 	ProactiveJitter     time.Duration `yaml:"proactive_refresh_jitter"`
 	HealthTick          time.Duration `yaml:"health_tick"`
 	HealthTickJitter    int           `yaml:"health_tick_jitter"` // percent
+	ProgressPoll        time.Duration `yaml:"progress_poll"`
 	MaxSession          time.Duration `yaml:"max_session"`
 	Cooldown            time.Duration `yaml:"cooldown"`
 	CooldownJitter      time.Duration `yaml:"cooldown_jitter"`

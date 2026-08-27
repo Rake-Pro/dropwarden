@@ -57,8 +57,10 @@ func (f *fakeController) ClaimInInventory(context.Context, string) (bool, error)
 
 // fakePager implements Pager.
 type fakePager struct {
-	channels []string
-	progress []domain.Progress
+	channels    []string
+	progress    []domain.Progress
+	currentDrop *domain.Progress
+	pollCalls   int
 }
 
 func (f *fakePager) OpenChannel(context.Context, string, twitch.PlayerPolicy) error { return nil }
@@ -67,6 +69,10 @@ func (f *fakePager) ReadInventory(context.Context) ([]domain.Progress, error) {
 }
 func (f *fakePager) DirectoryChannels(context.Context, string) ([]string, error) {
 	return f.channels, nil
+}
+func (f *fakePager) FetchCurrentDrop(context.Context) (*domain.Progress, error) {
+	f.pollCalls++
+	return f.currentDrop, nil
 }
 
 // fakeDisco implements Discoverer.

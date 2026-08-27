@@ -27,9 +27,9 @@ func newSessionID(now time.Time, rnd func() float64) string {
 	return fmt.Sprintf("%013d-%04d", now.UnixMilli(), int(rnd()*10000))
 }
 
-// updateProgressFromCapture drains the page's own captured GQL/WS traffic and,
-// for the active drop, updates the store and the in-memory baseline. It returns
-// the current best-known minutes and whether they increased since last time.
+// updateProgressFromCapture drains the page's own captured GQL traffic and, for
+// the active drop, updates the store and the in-memory baseline. It returns the
+// current best-known minutes and whether they increased since last time.
 func (e *Engine) updateProgressFromCapture(ctx context.Context) (minutes int, increased bool) {
 	if e.cur == nil {
 		return 0, false
@@ -38,8 +38,43 @@ func (e *Engine) updateProgressFromCapture(ctx context.Context) (minutes int, in
 	if err != nil {
 		return e.cur.lastMinutes, false
 	}
+	return e.applyProgress(res.Progress)
+}
+
+// pollProgress actively fetches the viewer's current drop session at most once
+// per watcher.progress_poll. It exists because the channel page does not fire
+// progress GQL over fetch/XHR on its own (live updates ride a WebSocket the
+// capture shim cannot see), so passive capture alone leaves the UI frozen at 0.
+func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool) {
+	if e.cur == nil {
+		return 0, false
+	}
+	interval := e.deps.Cfg.Watcher.ProgressPoll
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	now := e.deps.Now()
+	if now.Sub(e.cur.lastPoll) < interval {
+		return e.cur.lastMinutes, false
+	}
+	e.cur.lastPoll = now
+	p, err := e.deps.Pages.FetchCurrentDrop(ctx)
+	if err != nil {
+		e.deps.Log.Warn().Err(err).Msg("progress poll failed")
+		return e.cur.lastMinutes, false
+	}
+	if p == nil {
+		return e.cur.lastMinutes, false
+	}
+	return e.applyProgress([]domain.Progress{*p})
+}
+
+// applyProgress merges progress observations for the active drop into the store
+// and the in-memory baseline, emitting an event when minutes advanced.
+func (e *Engine) applyProgress(ps []domain.Progress) (minutes int, increased bool) {
 	best := e.cur.lastMinutes
-	for _, p := range res.Progress {
+	var src domain.ProgressSource
+	for _, p := range ps {
 		if p.DropID != e.cur.drop.ID {
 			continue
 		}
@@ -49,6 +84,7 @@ func (e *Engine) updateProgressFromCapture(ctx context.Context) (minutes int, in
 		_ = e.deps.Store.SaveProgress(p)
 		if m, _ := p.Effective(); m > best {
 			best = m
+			src = p.Source
 		}
 	}
 	if best > e.cur.lastMinutes {
@@ -56,7 +92,7 @@ func (e *Engine) updateProgressFromCapture(ctx context.Context) (minutes int, in
 		e.cur.lastProgress = e.deps.Now()
 		e.deps.Emit.Emit(EvProgress, ProgressPayload{
 			DropID: e.cur.drop.ID, Current: best, Required: e.cur.drop.RequiredMinutes,
-			Source: string(domain.SourceWebSocket), At: e.deps.Now(),
+			Source: string(src), At: e.deps.Now(),
 		})
 		e.setStatus(func(s *Status) { s.Current = best })
 		return best, true
