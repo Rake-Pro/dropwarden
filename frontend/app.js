@@ -184,6 +184,10 @@ async function renderSettings() {
     </div>
     <div class="warnnote">⚠ Stored credentials are disabled by design and unsupported. Leave off unless manual login stops working.</div></div>
 
+    <div class="group"><div class="caption">Diagnostics</div><div class="card">
+      <div class="row"><div class="lab"><div class="l">Dump GraphQL bodies</div><div class="h">Writes campaign JSON (no auth) to ~/.dropwarden/debug/ on each discovery, for troubleshooting.</div></div><div class="ctl">${toggle('captureGqlBodies', cfg.captureGqlBodies)}</div></div>
+    </div></div>
+
     <div class="foot-btns"><button class="btn primary" id="save">Save changes</button><button class="btn" id="reset">Reset to defaults</button><span id="savemsg" style="align-self:center;color:var(--text-secondary);font-size:12px"></span></div>
   </div>`);
 

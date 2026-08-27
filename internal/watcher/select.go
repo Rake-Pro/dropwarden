@@ -61,10 +61,17 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 		return e.enterBackoff("select: load state: " + err.Error())
 	}
 
-	// Reconcile queue item statuses so the UI reflects why items are not running.
+	// Reconcile queue item statuses so the UI reflects why items are not running,
+	// and tally the reasons so a "nothing eligible" outcome is diagnosable.
 	now := e.deps.Now()
+	tally := map[string]int{}
 	for _, it := range items {
 		eligible, status, reason := queue.EligibilityReason(it, campaigns, progress, claimed, now)
+		if eligible {
+			tally["eligible"]++
+		} else {
+			tally[string(status)]++
+		}
 		if !eligible && it.Status != status {
 			_ = e.deps.Store.SetItemStatus(it.DropID, status, reason)
 			if status == domain.ItemNeedsAction {
@@ -72,6 +79,16 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 				e.deps.Emit.Emit(EvNeedsAction, NeedsActionPayload{DropID: it.DropID, Reason: reason, URL: c.AccountLinkURL})
 			}
 		}
+	}
+	if len(items) > 0 {
+		ev := e.deps.Log.Info().Int("queued", len(items)).Interface("eligibility", tally)
+		// Include one queued campaign's raw window fields to diagnose filtering.
+		if c, ok := campaigns[items[0].CampaignID]; ok {
+			ev = ev.Str("sample_campaign", c.Name).Str("sample_status", string(c.Status)).
+				Time("sample_start", c.StartAt).Time("sample_end", c.EndAt).
+				Bool("sample_account_link", c.RequiresAccountLink())
+		}
+		ev.Msg("selecting: eligibility tally")
 	}
 
 	cand, err := queue.NextDrop(items, campaigns, progress, claimed, domain.PriorityMode(e.deps.Cfg.Queue.PriorityMode), now)

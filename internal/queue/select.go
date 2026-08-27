@@ -24,6 +24,32 @@ func findDrop(c domain.Campaign, dropID string) (domain.Drop, bool) {
 	return domain.Drop{}, false
 }
 
+// isExpired reports whether a campaign's watch window has closed. An explicit
+// EXPIRED status or an end time in the past counts as expired.
+func isExpired(c domain.Campaign, now time.Time) bool {
+	if c.Status == domain.StatusExpired {
+		return true
+	}
+	return !c.EndAt.IsZero() && !c.EndAt.After(now)
+}
+
+// hasStarted reports whether a campaign's watch window has opened. An explicit
+// UPCOMING status or a start time in the future means it has not.
+func hasStarted(c domain.Campaign, now time.Time) bool {
+	if c.Status == domain.StatusUpcoming {
+		return false
+	}
+	return c.StartAt.IsZero() || !c.StartAt.After(now)
+}
+
+// isWatchable reports whether a campaign is currently within its watch window.
+// It derives this from the time window rather than trusting the status string,
+// because Twitch's "open drop campaigns" list does not always tag entries with
+// an explicit ACTIVE status.
+func isWatchable(c domain.Campaign, now time.Time) bool {
+	return !isExpired(c, now) && hasStarted(c, now)
+}
+
 // preconditionsMet reports whether every id in ids is present (true) in claimed.
 func preconditionsMet(ids []string, claimed map[string]bool) bool {
 	for _, id := range ids {
@@ -59,10 +85,7 @@ func eligibleNow(item domain.QueueItem, campaigns map[string]domain.Campaign, pr
 		return domain.Campaign{}, domain.Drop{}, false
 	}
 	campaign, ok := campaigns[item.CampaignID]
-	if !ok || campaign.Status != domain.StatusActive {
-		return domain.Campaign{}, domain.Drop{}, false
-	}
-	if !campaign.EndAt.IsZero() && !campaign.EndAt.After(now) {
+	if !ok || !isWatchable(campaign, now) {
 		return domain.Campaign{}, domain.Drop{}, false
 	}
 	if campaign.RequiresAccountLink() {
@@ -154,11 +177,11 @@ func EligibilityReason(item domain.QueueItem, campaigns map[string]domain.Campai
 	if !ok {
 		return false, domain.ItemUnavailable, "campaign not found"
 	}
-	if campaign.Status == domain.StatusExpired || (!campaign.EndAt.IsZero() && !campaign.EndAt.After(now)) {
+	if isExpired(campaign, now) {
 		return false, domain.ItemExpired, "campaign window has passed"
 	}
-	if campaign.Status != domain.StatusActive {
-		return false, domain.ItemUnavailable, "campaign is not active"
+	if !hasStarted(campaign, now) {
+		return false, domain.ItemUnavailable, "campaign has not started yet"
 	}
 	if campaign.RequiresAccountLink() {
 		return false, domain.ItemNeedsAction, "account link required"

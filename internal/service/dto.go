@@ -83,6 +83,7 @@ type ConfigDTO struct {
 	AuthMode           string   `json:"authMode"`
 	StoredEnabled      bool     `json:"storedEnabled"`
 	LogLevel           string   `json:"logLevel"`
+	CaptureGQLBodies   bool     `json:"captureGqlBodies"`
 }
 
 type LoginDTO struct {
