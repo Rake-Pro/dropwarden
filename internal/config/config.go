@@ -57,6 +57,16 @@ type WatcherConfig struct {
 	CooldownJitter      time.Duration `yaml:"cooldown_jitter"`
 	ChannelBlacklistTTL time.Duration `yaml:"channel_blacklist_ttl"`
 	OfflineBlacklistTTL time.Duration `yaml:"offline_blacklist_ttl"`
+
+	// WaitForTop, when true, makes selection wait on the single highest-priority
+	// drop even if no channel is available for it. The default (false) falls
+	// through to the next available drop in priority order, and returns to the
+	// top one as soon as a channel for it is available again.
+	WaitForTop bool `yaml:"wait_for_top"`
+
+	// MaxSelectAttempts caps how many candidate drops selection will try per
+	// pass when falling through (bounds directory navigations). 0 = default.
+	MaxSelectAttempts int `yaml:"max_select_attempts"`
 }
 
 type ClaimConfig struct {

@@ -48,6 +48,7 @@ func (c *Config) applyDefaults() {
 	setDuration(&c.Watcher.CooldownJitter, 120*time.Second)
 	setDuration(&c.Watcher.ChannelBlacklistTTL, 45*time.Minute)
 	setDuration(&c.Watcher.OfflineBlacklistTTL, 15*time.Minute)
+	setInt(&c.Watcher.MaxSelectAttempts, 6)
 
 	setString(&c.Claim.Strategy, "in_page")
 	setDuration(&c.Claim.RetryBackoff, 5*time.Minute)

@@ -51,6 +51,8 @@ watcher:
   cooldown_jitter: 120s
   channel_blacklist_ttl: 45m
   offline_blacklist_ttl: 15m
+  wait_for_top: false           # false = fall through to the next available drop
+  max_select_attempts: 6        # candidates tried per pass when falling through
 
 claim:
   strategy: in_page            # in_page | in_page_then_gql

@@ -72,6 +72,7 @@ type ConfigDTO struct {
 	AnyGame            bool     `json:"anyGame"`
 	PriorityMode       string   `json:"priorityMode"`
 	AutoEnqueueNew     bool     `json:"autoEnqueueNew"`
+	FallThrough        bool     `json:"fallThrough"`
 	Volume             float64  `json:"volume"`
 	ForceLowestQuality bool     `json:"forceLowestQuality"`
 	NeverFocus         bool     `json:"neverFocus"`

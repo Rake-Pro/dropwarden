@@ -103,18 +103,35 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 		ev.Msg("selecting: eligibility tally")
 	}
 
-	cand, err := queue.NextDrop(items, campaigns, progress, claimed, domain.PriorityMode(e.deps.Cfg.Queue.PriorityMode), now)
-	if err != nil {
-		return e.enterBackoff("select: next drop: " + err.Error())
-	}
-	if cand == nil {
+	cands := queue.EligibleCandidates(items, campaigns, progress, claimed, domain.PriorityMode(e.deps.Cfg.Queue.PriorityMode), now)
+	if len(cands) == 0 {
 		return StateCooldown, "nothing eligible to watch"
 	}
 
-	login, ok := e.pickChannel(ctx, cand.Campaign)
-	if !ok {
-		// No live channel right now: brief cooldown then re-discover.
-		return StateCooldown, "no live channel for " + cand.Campaign.GameName
+	// Try candidates in priority order and take the first with an available
+	// channel. When wait_for_top is set, only the single top drop is tried, so
+	// the watcher waits for its channel instead of falling through.
+	attempts := len(cands)
+	if e.deps.Cfg.Watcher.WaitForTop {
+		attempts = 1
+	} else if max := e.deps.Cfg.Watcher.MaxSelectAttempts; max > 0 && attempts > max {
+		attempts = max
+	}
+	var cand *queue.Candidate
+	var login string
+	for i := 0; i < attempts; i++ {
+		if l, ok := e.pickChannel(ctx, cands[i].Campaign); ok {
+			cand = &cands[i]
+			login = l
+			if i > 0 {
+				e.deps.Log.Info().Int("skipped", i).Str("game", cands[i].Campaign.GameName).
+					Msg("selecting: fell through to next available drop")
+			}
+			break
+		}
+	}
+	if cand == nil {
+		return StateCooldown, "no live channel for the top eligible drops"
 	}
 
 	drop, _ := dropByID(cand.Campaign, cand.Drop.ID)

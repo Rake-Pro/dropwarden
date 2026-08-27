@@ -46,6 +46,7 @@ func toConfigDTO(c *config.Config) ConfigDTO {
 		AnyGame:            c.AnyGame,
 		PriorityMode:       c.Queue.PriorityMode,
 		AutoEnqueueNew:     c.Queue.AutoEnqueueNew,
+		FallThrough:        !c.Watcher.WaitForTop,
 		Volume:             c.Browser.Player.Volume,
 		ForceLowestQuality: c.Browser.Player.ForceLowestQuality,
 		NeverFocus:         c.Browser.Window.NeverFocus,
@@ -69,6 +70,7 @@ func applyConfigDTO(c *config.Config, d ConfigDTO) {
 	c.AnyGame = d.AnyGame
 	c.Queue.PriorityMode = d.PriorityMode
 	c.Queue.AutoEnqueueNew = d.AutoEnqueueNew
+	c.Watcher.WaitForTop = !d.FallThrough
 	c.Browser.Player.Volume = d.Volume
 	c.Browser.Player.ForceLowestQuality = d.ForceLowestQuality
 	c.Browser.Window.NeverFocus = d.NeverFocus

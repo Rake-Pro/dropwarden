@@ -108,9 +108,10 @@ func eligibleNow(item domain.QueueItem, campaigns map[string]domain.Campaign, pr
 	return campaign, drop, true
 }
 
-// NextDrop selects the next drop to watch from items, ordered according to
-// mode. It returns (nil, nil) when nothing is currently eligible.
-func NextDrop(items []domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, mode domain.PriorityMode, now time.Time) (*Candidate, error) {
+// EligibleCandidates returns every currently-eligible drop, ordered according
+// to mode (highest priority first). The watcher uses this to fall through to the
+// next available drop when the top one has no live channel.
+func EligibleCandidates(items []domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, mode domain.PriorityMode, now time.Time) []Candidate {
 	type entry struct {
 		item     domain.QueueItem
 		campaign domain.Campaign
@@ -126,9 +127,8 @@ func NextDrop(items []domain.QueueItem, campaigns map[string]domain.Campaign, pr
 		}
 		survivors = append(survivors, entry{item: item, campaign: campaign, drop: drop, origIdx: i})
 	}
-
 	if len(survivors) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	less := func(i, j int) bool {
@@ -161,8 +161,21 @@ func NextDrop(items []domain.QueueItem, campaigns map[string]domain.Campaign, pr
 	}
 	sort.SliceStable(survivors, less)
 
-	best := survivors[0]
-	return &Candidate{Drop: best.drop, Campaign: best.campaign}, nil
+	out := make([]Candidate, len(survivors))
+	for i, s := range survivors {
+		out[i] = Candidate{Drop: s.drop, Campaign: s.campaign}
+	}
+	return out
+}
+
+// NextDrop returns the single highest-priority eligible drop, or (nil, nil) when
+// nothing is currently eligible.
+func NextDrop(items []domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, mode domain.PriorityMode, now time.Time) (*Candidate, error) {
+	cands := EligibleCandidates(items, campaigns, progress, claimed, mode, now)
+	if len(cands) == 0 {
+		return nil, nil
+	}
+	return &cands[0], nil
 }
 
 // EligibilityReason classifies why item is or is not currently selectable,
