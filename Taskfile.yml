@@ -1,0 +1,84 @@
+version: "3"
+
+# dropwarden task runner. The GUI app (cmd/dropwarden) targets Windows and
+# macOS; on those machines `wails3 dev` gives HMR. The CLI harness
+# (cmd/dropwarden-cli) runs everywhere and is the phase 1-4 development surface.
+
+vars:
+  GOTMPDIR:
+    sh: go env GOTMPDIR
+
+tasks:
+  default:
+    cmds:
+      - task --list
+
+  test:
+    desc: Run all unit tests
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: go vet
+    cmds:
+      - go vet ./...
+
+  fmt-check:
+    desc: Verify gofmt cleanliness
+    cmds:
+      - test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+  build:
+    desc: Build the CLI harness
+    cmds:
+      - go build -o bin/dropwarden-cli ./cmd/dropwarden-cli
+
+  build-win:
+    desc: Cross-compile check of the GUI for Windows (CGO-free)
+    cmds:
+      - GOOS=windows go build ./...
+
+  check:
+    desc: fmt-check + vet + test + windows build + forbidden-call scan
+    cmds:
+      - task: fmt-check
+      - task: vet
+      - task: test
+      - task: build-win
+      - task: forbidden
+
+  forbidden:
+    desc: Guard against focus-stealing browser calls sneaking in
+    cmds:
+      - |
+        if grep -rn --include=*.go -E "bringToFront|\.Activate\(" internal/browser internal/twitch internal/watcher; then
+          echo "forbidden focus-stealing call found"; exit 1
+        fi
+
+  # ---- GUI (run on Windows/macOS) ----
+  generate:
+    desc: Generate Wails bindings (run on Windows/macOS with wails3 installed)
+    cmds:
+      - wails3 generate bindings -d frontend/bindings
+
+  dev:
+    desc: Run the GUI with hot reload (Windows/macOS; needs wails3)
+    cmds:
+      - wails3 dev
+
+  # ---- CLI convenience ----
+  doctor:
+    cmds:
+      - go run ./cmd/dropwarden-cli doctor
+  login:
+    cmds:
+      - go run ./cmd/dropwarden-cli login
+  discover:
+    cmds:
+      - go run ./cmd/dropwarden-cli discover
+  watch:
+    cmds:
+      - go run ./cmd/dropwarden-cli watch
+  report:
+    cmds:
+      - go run ./cmd/dropwarden-cli report

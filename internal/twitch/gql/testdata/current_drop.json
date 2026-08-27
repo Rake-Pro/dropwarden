@@ -1,0 +1,15 @@
+{
+  "data": {
+    "currentUser": {
+      "dropCurrentSession": {
+        "dropID": "drop-1",
+        "currentMinutesWatched": 42,
+        "requiredMinutesWatched": 60,
+        "channel": {
+          "id": "chan-1",
+          "login": "somestreamer"
+        }
+      }
+    }
+  }
+}

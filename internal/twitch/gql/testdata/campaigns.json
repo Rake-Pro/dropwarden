@@ -1,0 +1,35 @@
+{
+  "data": {
+    "currentUser": {
+      "dropCampaigns": [
+        {
+          "id": "camp-1",
+          "name": "Test Campaign One",
+          "status": "ACTIVE",
+          "startAt": "2026-08-01T00:00:00Z",
+          "endAt": "2026-09-01T00:00:00Z",
+          "game": {
+            "id": "game-1",
+            "displayName": "Test Game",
+            "slug": "test-game"
+          },
+          "self": {
+            "isAccountConnected": true
+          }
+        },
+        {
+          "id": "camp-2",
+          "name": "Upcoming Campaign",
+          "status": "UPCOMING",
+          "startAt": "2026-09-15T00:00:00Z",
+          "endAt": "2026-10-15T00:00:00Z",
+          "game": {
+            "id": "game-2",
+            "displayName": "Another Game",
+            "slug": "another-game"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,12 @@
+[
+  {
+    "operationName": "Campaigns",
+    "variables": {},
+    "extensions": {}
+  },
+  {
+    "operationName": "Inventory",
+    "variables": {},
+    "extensions": {}
+  }
+]

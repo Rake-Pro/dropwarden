@@ -1,0 +1,12 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="cli report" type="GoApplicationRunConfiguration" factoryName="Go Application">
+    <module name="dropwarden" />
+    <working_directory value="$PROJECT_DIR$" />
+    <parameters value="report" />
+    <kind value="PACKAGE" />
+    <package value="github.com/rake-pro/dropwarden/cmd/dropwarden-cli" />
+    <directory value="$PROJECT_DIR$" />
+    <filePath value="$PROJECT_DIR$" />
+    <method v="2" />
+  </configuration>
+</component>

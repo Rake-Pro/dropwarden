@@ -1,0 +1,86 @@
+# dropwarden configuration (example).
+# On first run the app writes this to ~/.dropwarden/config.yaml (macOS/Linux) or
+# %USERPROFILE%\dropwarden\config.yaml (Windows). Copy/edit there, not here.
+
+theme: dark            # dark | light | system  (dashboard UI)
+
+# Campaigns for games outside this list are cached but never queued.
+games:
+  - Rust
+  - Halo Infinite
+  - Halo Campaign Evolved
+  - "Halo: The Master Chief Collection"
+  - Once Human
+any_game: false        # future: queue every drops-enabled campaign
+
+queue:
+  priority_mode: top_down   # top_down | ending_soonest | closest_to_complete | shortest_first
+  auto_enqueue_new: true    # new campaigns for listed games join the bottom of the queue
+
+discovery:
+  interval: 45m
+  jitter: 30m
+  details_per_cycle: 8
+  directory_poll: 5m
+  directory_jitter: 3m
+
+watcher:
+  enabled_on_start: true
+  stream_up_delay: 90s
+  validate_timeout: 60s
+  soft_stall: 6m
+  hard_stall: 12m
+  hard_stall_max_retries: 2
+  proactive_refresh: 30m
+  proactive_refresh_jitter: 5m
+  health_tick: 25s
+  health_tick_jitter: 40        # percent
+  max_session: 4h
+  cooldown: 60s
+  cooldown_jitter: 120s
+  channel_blacklist_ttl: 45m
+  offline_blacklist_ttl: 15m
+
+claim:
+  strategy: in_page            # in_page | in_page_then_gql
+  allow_gql_fallback: false    # OFF: replaying ClaimDropRewards has triggered bot blocks
+  retry_backoff: 5m
+  skip_account_link_drops: true
+
+browser:
+  chrome_path: ""              # blank = auto-detect
+  profile_dir: ""              # blank = <approot>/chrome-profile
+  extra_flags: []
+  window:
+    width: 640
+    height: 400
+    x: 40
+    y: 40
+    monitor: 0
+    always_on_bottom: true
+    never_focus: true
+  burnin:
+    dim_opacity: 0.55          # 0 disables the overlay
+    shift_interval: 20m
+    shift_pixels: 8
+  player:
+    volume: 0.01               # NOT 0 - Chrome 145 pauses muted background video
+    force_lowest_quality: true
+    reassert_interval: 30s
+
+auth:
+  mode: manual                 # manual | stored (stored is unsupported and ships OFF)
+  stored:
+    enabled: false
+    username: ""
+    password_file: ""
+
+logging:
+  level: info                  # trace | debug | info | warn | error
+  file: true
+  max_size_mb: 5
+  capture_gql_bodies: false
+
+ui:
+  start_minimized: true
+  show_debug_pane: false

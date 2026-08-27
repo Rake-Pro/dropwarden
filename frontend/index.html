@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dropwarden</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail">
+    <div class="brand"><span class="logo">💧</span> dropwarden</div>
+    <div class="nav active" data-view="dashboard"><span class="ic">◧</span> Dashboard</div>
+    <div class="nav" data-view="queue"><span class="ic">≡</span> Queue</div>
+    <div class="nav" data-view="history"><span class="ic">🎁</span> History</div>
+    <div class="grp">Setup</div>
+    <div class="nav" data-view="settings"><span class="ic">⚙</span> Settings</div>
+    <div class="foot" id="rail-foot"><span class="dot">●</span> connecting…</div>
+  </nav>
+  <main class="content" id="content">
+    <section class="view active" data-view="dashboard" id="v-dashboard"></section>
+    <section class="view" data-view="queue" id="v-queue"></section>
+    <section class="view" data-view="history" id="v-history"></section>
+    <section class="view" data-view="settings" id="v-settings"></section>
+  </main>
+</div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

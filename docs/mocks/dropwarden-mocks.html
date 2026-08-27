@@ -1,0 +1,607 @@
+<title>dropwarden</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* dropwarden mocks - dark-committed, GoShareIt token palette.
+     Single visual world (dark-first desktop app); all colors painted explicitly. */
+  :root {
+    --bg-window:   #1e1e1e;
+    --bg-sidebar:  #262629;
+    --bg-bar:      #262629;
+    --bg-content:  #1e1e1e;
+    --bg-card:     #2c2c2e;
+    --bg-control:  #3a3a3c;
+    --bg-elev:     #333336;
+    --text-primary:   #f5f5f7;
+    --text-secondary: #98989d;
+    --text-tertiary:  #6e6e73;
+    --hairline:      rgba(255,255,255,0.13);
+    --hairline-card: rgba(255,255,255,0.10);
+    --accent:      #0a84ff;
+    --accent-dim:  rgba(10,132,255,0.16);
+    --twitch:      #9147ff;
+    --twitch-dim:  rgba(145,71,255,0.18);
+    --switch-off:  rgba(255,255,255,0.18);
+    --focus-ring:  rgba(10,132,255,0.65);
+    --ok:   #34c07a;
+    --ok-dim: rgba(52,192,122,0.16);
+    --warn: #ff9f0a;
+    --warn-dim: rgba(255,159,10,0.16);
+    --err:  #ff6b6b;
+    --err-dim: rgba(255,107,107,0.16);
+    --keycap-bg: linear-gradient(180deg,#48484a,#3a3a3c);
+    --radius-card: 10px;
+    --radius-ctl: 6px;
+    --shadow: 0 12px 40px rgba(0,0,0,0.55);
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 700px at 78% -10%, rgba(145,71,255,0.10), transparent 60%),
+      radial-gradient(900px 600px at 0% 110%, rgba(10,132,255,0.08), transparent 55%),
+      #141416;
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.45;
+    padding: 34px 20px 80px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1120px; margin: 0 auto; }
+
+  /* Intro */
+  .intro { margin: 0 auto 26px; max-width: 1120px; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+  .intro h1 {
+    font-size: 30px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 6px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .intro h1 .logo {
+    width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+    background: linear-gradient(150deg, var(--twitch), #6d3bd6); font-size: 19px;
+    box-shadow: 0 4px 16px rgba(145,71,255,0.4);
+  }
+  .intro p { margin: 0; color: var(--text-secondary); max-width: 56ch; }
+  .intro .meta { text-align: right; color: var(--text-tertiary); font-size: 11px; line-height: 1.7; }
+  .intro .meta b { color: var(--text-secondary); font-weight: 600; }
+
+  /* View switcher */
+  .switcher { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 auto 16px; align-items: center; }
+  .seg { display: inline-flex; background: var(--bg-card); border: 1px solid var(--hairline); border-radius: 9px; padding: 3px; gap: 2px; }
+  .seg button {
+    appearance: none; border: 0; background: transparent; color: var(--text-secondary);
+    font: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 14px; border-radius: 7px; cursor: pointer;
+    transition: background .12s, color .12s;
+  }
+  .seg button:hover { color: var(--text-primary); }
+  .seg button[aria-selected="true"] { background: var(--accent); color: #fff; }
+  .seg.states button[aria-selected="true"] { background: var(--bg-control); color: var(--text-primary); }
+  .switcher .spacer { flex: 1; }
+  .switcher .hint { color: var(--text-tertiary); font-size: 11px; }
+
+  /* Window chrome */
+  .window {
+    background: var(--bg-window); border: 1px solid var(--hairline); border-radius: 12px;
+    overflow: hidden; box-shadow: var(--shadow); position: relative;
+  }
+  .titlebar {
+    height: 40px; background: var(--bg-bar); border-bottom: 1px solid var(--hairline);
+    display: flex; align-items: center; padding: 0 14px; gap: 12px; user-select: none;
+  }
+  .traffic { display: flex; gap: 8px; }
+  .traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .traffic .r { background: #ff5f57; } .traffic .y { background: #febc2e; } .traffic .g { background: #28c840; }
+  .titlebar .ttl { font-size: 12.5px; color: var(--text-secondary); font-weight: 600; letter-spacing: .01em; }
+  .titlebar .state-pill { margin-left: auto; }
+
+  .app { display: grid; grid-template-columns: 210px 1fr; min-height: 560px; }
+  @media (max-width: 720px){ .app { grid-template-columns: 1fr; } .rail { display: none; } }
+
+  /* Nav rail */
+  .rail { background: var(--bg-sidebar); border-right: 1px solid var(--hairline); padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; }
+  .rail .grp { color: var(--text-tertiary); font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 12px 10px 6px; }
+  .nav {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-ctl);
+    color: var(--text-secondary); cursor: pointer; font-size: 13px; font-weight: 500;
+  }
+  .nav:hover { background: rgba(255,255,255,0.05); color: var(--text-primary); }
+  .nav.active { background: var(--accent-dim); color: var(--text-primary); }
+  .nav .ic { width: 22px; height: 22px; border-radius: var(--radius-ctl); display: grid; place-items: center; font-size: 13px; background: var(--bg-control); }
+  .nav.active .ic { background: var(--accent); color: #fff; }
+  .rail .foot { margin-top: auto; padding: 10px; color: var(--text-tertiary); font-size: 11px; border-top: 1px solid var(--hairline); }
+  .rail .foot .dot { color: var(--ok); }
+
+  /* Content */
+  .content { padding: 22px 24px; overflow: auto; }
+  .view { display: none; }
+  .view.active { display: block; animation: fade .18s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce){ .view.active { animation: none; } }
+  h2.title { font-size: 18px; font-weight: 700; margin: 0 0 2px; letter-spacing: -0.01em; }
+  .sub { color: var(--text-secondary); font-size: 12.5px; margin: 0 0 18px; }
+
+  /* Pills / chips */
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: .02em;
+    padding: 3px 9px; border-radius: 999px; text-transform: uppercase; }
+  .pill .d { width: 6px; height: 6px; border-radius: 50%; }
+  .pill.watching { background: var(--ok-dim); color: #6ee7a8; } .pill.watching .d { background: var(--ok); box-shadow: 0 0 0 3px rgba(52,192,122,0.2); }
+  .pill.pending { background: rgba(255,255,255,0.08); color: var(--text-secondary); } .pill.pending .d { background: var(--text-tertiary); }
+  .pill.blocked { background: var(--warn-dim); color: #ffcc73; } .pill.blocked .d { background: var(--warn); }
+  .pill.needs { background: var(--warn-dim); color: #ffcc73; } .pill.needs .d { background: var(--warn); }
+  .pill.claimed { background: var(--accent-dim); color: #7cc0ff; } .pill.claimed .d { background: var(--accent); }
+  .pill.offline { background: var(--err-dim); color: #ff9a9a; } .pill.offline .d { background: var(--err); }
+  .pill.idle { background: rgba(255,255,255,0.08); color: var(--text-secondary); } .pill.idle .d { background: var(--text-tertiary); }
+
+  /* Cards */
+  .card { background: var(--bg-card); border: 1px solid var(--hairline-card); border-radius: var(--radius-card); }
+  .grid2 { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; }
+  @media (max-width: 860px){ .grid2 { grid-template-columns: 1fr; } }
+
+  /* Now watching hero */
+  .now { padding: 18px; position: relative; overflow: hidden; }
+  .now::after { content:""; position:absolute; inset:0; background: radial-gradient(400px 180px at 90% -20%, var(--twitch-dim), transparent 70%); pointer-events:none; }
+  .now .head { display: flex; align-items: center; gap: 13px; position: relative; }
+  .avatar { width: 46px; height: 46px; border-radius: 11px; background: linear-gradient(140deg,#3a3a3c,#4a4a4d); display: grid; place-items: center; font-size: 18px; font-weight: 700; color: #cfcfd4; border: 1px solid var(--hairline); }
+  .now .who { flex: 1; min-width: 0; }
+  .now .who .ch { font-size: 15px; font-weight: 700; display:flex; align-items:center; gap:8px; }
+  .now .who .ch .live { font-size: 9.5px; font-weight: 800; letter-spacing: .06em; color:#fff; background: var(--err); padding: 2px 6px; border-radius: 4px; }
+  .now .who .game { color: var(--text-secondary); font-size: 12px; }
+  .drop-row { margin-top: 16px; position: relative; }
+  .drop-row .lbl { display:flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; }
+  .drop-row .lbl .name { font-weight: 600; font-size: 13.5px; }
+  .drop-row .lbl .mins { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--text-secondary); }
+  .bar { height: 10px; border-radius: 999px; background: var(--bg-control); overflow: hidden; }
+  .bar > i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg,#a86bff,var(--twitch)); box-shadow: 0 0 12px rgba(145,71,255,0.5); }
+  .now .watchdogs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; position: relative; }
+  .wd { display: flex; align-items: center; gap: 7px; background: rgba(255,255,255,0.04); border: 1px solid var(--hairline-card); border-radius: 8px; padding: 7px 10px; font-size: 11.5px; color: var(--text-secondary); }
+  .wd .tick { color: var(--ok); font-weight: 700; }
+  .now .foot { display:flex; gap: 8px; margin-top: 16px; position: relative; }
+  .btn { appearance: none; border: 1px solid var(--hairline); background: var(--bg-control); color: var(--text-primary); font: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 14px; border-radius: var(--radius-ctl); cursor: pointer; }
+  .btn:hover { background: var(--bg-elev); }
+  .btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+  .btn.ghost { background: transparent; }
+  .btn.danger { color: #ff9a9a; }
+
+  /* Up next / small cards */
+  .stack { display: flex; flex-direction: column; gap: 16px; }
+  .mini { padding: 15px 16px; }
+  .mini h3 { margin: 0 0 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-tertiary); }
+  .upnext { display: flex; flex-direction: column; gap: 10px; }
+  .up { display: flex; align-items: center; gap: 11px; }
+  .up .idx { width: 20px; height: 20px; border-radius: 6px; background: var(--bg-control); display: grid; place-items: center; font-size: 11px; color: var(--text-secondary); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .up .t { flex: 1; min-width: 0; }
+  .up .t .n { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .up .t .g { font-size: 11px; color: var(--text-tertiary); }
+  .up .m { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 11.5px; color: var(--text-secondary); }
+  .kv { display:flex; justify-content: space-between; padding: 7px 0; border-top: 1px solid var(--hairline-card); font-size: 12.5px; }
+  .kv:first-of-type { border-top: 0; }
+  .kv .k { color: var(--text-secondary); } .kv .v { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* Queue table */
+  .qhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
+  .popup { appearance: none; background: var(--bg-control) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'><path d='M1 1l4 4 4-4' stroke='%2398989d' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>") no-repeat right 10px center;
+    border: 1px solid var(--hairline); color: var(--text-primary); font: inherit; font-size: 12.5px; padding: 7px 30px 7px 11px; border-radius: var(--radius-ctl); }
+  .qlist { display: flex; flex-direction: column; }
+  .qrow { display: grid; grid-template-columns: 22px 1fr 150px 120px 44px; align-items: center; gap: 12px; padding: 12px 14px; border-top: 1px solid var(--hairline-card); }
+  .qrow:first-child { border-top: 0; }
+  .qrow.active { background: var(--ok-dim); border-radius: 8px; }
+  .grip { color: var(--text-tertiary); cursor: grab; font-size: 15px; line-height: 1; letter-spacing: -2px; }
+  .qname .n { font-weight: 600; font-size: 13px; }
+  .qname .meta { color: var(--text-tertiary); font-size: 11.5px; }
+  .qmini { }
+  .qmini .bar { height: 6px; }
+  .qmini .bar > i.blue { background: linear-gradient(90deg,#5aa9ff,var(--accent)); box-shadow:none; }
+  .qmini .mm { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 11px; color: var(--text-tertiary); margin-top: 5px; }
+  /* Switch */
+  .switch { width: 34px; height: 20px; border-radius: 999px; background: var(--switch-off); position: relative; cursor: pointer; transition: background .15s; justify-self: end; }
+  .switch.on { background: var(--ok); }
+  .switch i { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .switch.on i { transform: translateX(14px); }
+  .switch.off { opacity: .55; }
+
+  /* History */
+  .stat-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 16px; }
+  @media (max-width: 720px){ .stat-row { grid-template-columns: repeat(2,1fr);} }
+  .stat { padding: 14px 15px; }
+  .stat .big { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .stat .cap { color: var(--text-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-top: 2px; }
+  .stat .big.ok { color: #6ee7a8; }
+  .spark { display: flex; align-items: flex-end; gap: 4px; height: 46px; margin-top: 10px; }
+  .spark i { flex: 1; background: linear-gradient(180deg,var(--twitch),#6d3bd6); border-radius: 3px 3px 0 0; min-height: 3px; opacity: .85; }
+  .claimlist { display: flex; flex-direction: column; }
+  .clm { display: grid; grid-template-columns: 34px 1fr auto; gap: 12px; align-items: center; padding: 11px 14px; border-top: 1px solid var(--hairline-card); }
+  .clm:first-child { border-top: 0; }
+  .clm .gift { width: 34px; height: 34px; border-radius: 8px; background: var(--twitch-dim); display: grid; place-items: center; font-size: 15px; }
+  .clm .n { font-weight: 600; font-size: 13px; }
+  .clm .g { color: var(--text-tertiary); font-size: 11.5px; }
+  .clm .when { color: var(--text-secondary); font-size: 11.5px; font-variant-numeric: tabular-nums; text-align: right; }
+
+  /* Settings */
+  .set-wrap { display: grid; grid-template-columns: 172px 1fr; gap: 20px; }
+  @media (max-width: 720px){ .set-wrap { grid-template-columns: 1fr; } }
+  .set-nav { display: flex; flex-direction: column; gap: 2px; }
+  .set-nav .sn { display:flex; align-items:center; gap:10px; padding: 7px 9px; border-radius: var(--radius-ctl); color: var(--text-secondary); font-size: 12.5px; cursor: pointer; }
+  .set-nav .sn.active { background: rgba(255,255,255,0.06); color: var(--text-primary); }
+  .set-nav .sn .sq { width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center; font-size: 11px; }
+  .group { margin-bottom: 18px; }
+  .caption { color: var(--text-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin: 0 0 8px 3px; }
+  .rows { }
+  .row { display: flex; align-items: center; gap: 14px; padding: 12px 15px; border-top: 1px solid var(--hairline-card); }
+  .row:first-child { border-top: 0; }
+  .row .lab { flex: 1; }
+  .row .lab .l { font-size: 13px; font-weight: 500; }
+  .row .lab .h { color: var(--text-tertiary); font-size: 11.5px; margin-top: 1px; }
+  .row .ctl { flex-shrink: 0; }
+  .input { background: var(--bg-control); border: 1px solid var(--hairline); border-radius: var(--radius-ctl); color: var(--text-primary); font: inherit; font-size: 12.5px; padding: 7px 10px; }
+  .input.mono { font-family: ui-monospace, monospace; min-width: 240px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .chip { background: var(--bg-control); border: 1px solid var(--hairline); border-radius: 999px; padding: 4px 11px; font-size: 11.5px; display:flex; align-items:center; gap: 6px; }
+  .chip .x { color: var(--text-tertiary); }
+  .slider { width: 150px; height: 6px; border-radius: 999px; background: var(--bg-control); position: relative; }
+  .slider i { position:absolute; left: 4%; top: 50%; transform: translate(-50%,-50%); width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  .slider b { position:absolute; left:0; top:0; bottom:0; width: 4%; background: var(--accent); border-radius: 999px; }
+  .warnnote { display:flex; gap: 9px; padding: 10px 12px; background: var(--warn-dim); border: 1px solid rgba(255,159,10,0.3); border-radius: 8px; font-size: 11.5px; color: #ffcc73; margin-top: 10px; }
+
+  /* Banners */
+  .banner { display: flex; align-items: center; gap: 13px; padding: 13px 15px; border-radius: var(--radius-card); margin-bottom: 16px; }
+  .banner .ic { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; font-size: 16px; flex-shrink: 0; }
+  .banner .tx { flex: 1; } .banner .tx .t { font-weight: 600; font-size: 13px; } .banner .tx .d { font-size: 12px; color: var(--text-secondary); }
+  .banner.needs { background: var(--warn-dim); border: 1px solid rgba(255,159,10,0.3); } .banner.needs .ic { background: var(--warn); color:#3a2600; }
+  .banner.err { background: var(--err-dim); border: 1px solid rgba(255,107,107,0.3); } .banner.err .ic { background: var(--err); color:#3a0000; }
+
+  /* Overlays */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+  .overlay.show { display: flex; animation: fade .15s ease; }
+  .over-close { position: absolute; top: 18px; right: 22px; color: #fff; font-size: 26px; cursor: pointer; opacity: .7; background: none; border: 0; }
+  .over-close:hover { opacity: 1; }
+  /* Tray menu */
+  .tray { width: 300px; background: rgba(40,40,43,0.98); border: 1px solid var(--hairline); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; backdrop-filter: blur(20px); }
+  .tray .status { padding: 12px 14px; border-bottom: 1px solid var(--hairline); }
+  .tray .status .s1 { font-size: 12.5px; font-weight: 700; display:flex; align-items:center; gap: 8px; }
+  .tray .status .s2 { font-size: 11.5px; color: var(--text-secondary); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tray .mi { padding: 8px 14px; font-size: 12.5px; display: flex; justify-content: space-between; cursor: pointer; }
+  .tray .mi:hover { background: var(--accent); color: #fff; }
+  .tray .mi .kb { color: var(--text-tertiary); font-size: 11px; }
+  .tray .mi:hover .kb { color: rgba(255,255,255,0.7); }
+  .tray .sep { height: 1px; background: var(--hairline); margin: 4px 0; }
+  .tray .mi.quit:hover { background: var(--err); }
+  /* Watcher window */
+  .wwin { width: 340px; }
+  .wwin .cap { text-align:center; color: var(--text-secondary); font-size: 12px; margin-top: 12px; max-width: 340px; }
+  .miniwin { width: 340px; height: 214px; background: #0d0d0f; border: 1px solid var(--hairline); border-radius: 8px; box-shadow: var(--shadow); overflow: hidden; position: relative; }
+  .miniwin .bar2 { height: 22px; background: #161618; display:flex; align-items:center; padding: 0 8px; gap: 6px; }
+  .miniwin .bar2 i { width: 8px; height: 8px; border-radius: 50%; }
+  .miniwin .scr { position:absolute; inset: 22px 0 0; background: radial-gradient(500px 300px at 50% 40%, #201830, #0d0d0f); display: grid; place-items: center; }
+  .miniwin .dim { position:absolute; inset: 22px 0 0; background: #000; opacity: .55; }
+  .miniwin .badge { position: relative; z-index: 2; text-align:center; }
+  .miniwin .badge .p { font-size: 11px; color: #b98cff; font-weight: 700; letter-spacing: .04em; }
+  .miniwin .badge .mm { font-family: ui-monospace,monospace; font-size: 12px; color: #d9c8ff; margin-top: 3px; }
+
+  .footnote { max-width: 1120px; margin: 22px auto 0; color: var(--text-tertiary); font-size: 11.5px; line-height: 1.7; }
+  .footnote b { color: var(--text-secondary); }
+  a.link { color: #7cc0ff; text-decoration: none; }
+</style>
+
+<div class="page">
+  <div class="intro">
+    <div>
+      <h1><span class="logo">💧</span> dropwarden</h1>
+      <p>MVP interface mocks. A tray-first watcher that drives one real Chrome window to collect Twitch drops. Settings borrow the GoShareIt visual language; the drop-progress bar uses Twitch purple, everything else the shared blue accent.</p>
+    </div>
+    <div class="meta">
+      <div><b>Review target</b> · layout, hierarchy, wording</div>
+      <div><b>Not final</b> · copy + spacing will refine</div>
+      <div><b>Theme</b> · dark-first (light/system later)</div>
+    </div>
+  </div>
+
+  <div class="switcher">
+    <div class="seg" role="tablist" id="viewseg">
+      <button role="tab" aria-selected="true" data-view="dashboard">Dashboard</button>
+      <button role="tab" aria-selected="false" data-view="queue">Queue</button>
+      <button role="tab" aria-selected="false" data-view="history">History</button>
+      <button role="tab" aria-selected="false" data-view="settings">Settings</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="seg states" role="group" aria-label="States and overlays">
+      <button data-overlay="tray">Tray menu</button>
+      <button data-overlay="wwin">Watcher window</button>
+      <button data-state="needs">Needs action</button>
+      <button data-state="error">Error</button>
+    </div>
+  </div>
+
+  <div class="window">
+    <div class="titlebar">
+      <div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+      <span class="ttl">dropwarden</span>
+      <span class="state-pill pill watching" id="topstate"><span class="d"></span> Watching</span>
+    </div>
+    <div class="app">
+      <nav class="rail">
+        <div class="nav active" data-view="dashboard"><span class="ic">◧</span> Dashboard</div>
+        <div class="nav" data-view="queue"><span class="ic">≡</span> Queue</div>
+        <div class="nav" data-view="history"><span class="ic">🎁</span> History</div>
+        <div class="grp">Setup</div>
+        <div class="nav" data-view="settings"><span class="ic">⚙</span> Settings</div>
+        <div class="foot"><span class="dot">●</span> Chrome connected · logged in<br>Discovery in 34 min</div>
+      </nav>
+
+      <main class="content">
+        <!-- DASHBOARD -->
+        <section class="view active" data-view="dashboard" id="v-dashboard">
+          <div id="banner-slot"></div>
+          <h2 class="title">Now watching</h2>
+          <p class="sub">One channel at a time. The watcher keeps this window unfocused and dimmed while progress ticks.</p>
+          <div class="grid2">
+            <div class="card now">
+              <div class="head">
+                <div class="avatar">SH</div>
+                <div class="who">
+                  <div class="ch">shroud <span class="live">LIVE</span></div>
+                  <div class="game">Rust · 18,240 viewers · Drops enabled</div>
+                </div>
+                <span class="pill watching"><span class="d"></span> Watching</span>
+              </div>
+              <div class="drop-row">
+                <div class="lbl"><span class="name">Rust Twitch Drops — Wooden Barricade</span><span class="mins">42 / 60 min</span></div>
+                <div class="bar"><i style="width:70%"></i></div>
+              </div>
+              <div class="watchdogs">
+                <span class="wd"><span class="tick">✓</span> Progress ticking</span>
+                <span class="wd"><span class="tick">✓</span> Playback healthy</span>
+                <span class="wd"><span class="tick">✓</span> Volume 1%</span>
+                <span class="wd">Next refresh 6 min</span>
+              </div>
+              <div class="foot">
+                <button class="btn">Skip drop</button>
+                <button class="btn ghost">Show window</button>
+                <button class="btn ghost danger">Pause</button>
+              </div>
+            </div>
+            <div class="stack">
+              <div class="card mini">
+                <h3>Up next</h3>
+                <div class="upnext">
+                  <div class="up"><span class="idx">1</span><div class="t"><div class="n">Elite Wooden Door Skin</div><div class="g">Rust · @posty</div></div><span class="m">0/120</span></div>
+                  <div class="up"><span class="idx">2</span><div class="t"><div class="n">Cradle Whisperer Bundle</div><div class="g">Once Human · any channel</div></div><span class="m">0/180</span></div>
+                  <div class="up"><span class="idx">3</span><div class="t"><div class="n">HCS 2026 Emblem</div><div class="g">Halo Infinite · @formal</div></div><span class="m">0/60</span></div>
+                </div>
+              </div>
+              <div class="card mini">
+                <h3>Today</h3>
+                <div class="kv"><span class="k">Drops claimed</span><span class="v">3</span></div>
+                <div class="kv"><span class="k">Minutes watched</span><span class="v">318</span></div>
+                <div class="kv"><span class="k">Channels used</span><span class="v">4</span></div>
+                <div class="kv"><span class="k">Hard refreshes</span><span class="v">2</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- QUEUE -->
+        <section class="view" data-view="queue" id="v-queue">
+          <div class="qhead">
+            <div><h2 class="title">Queue</h2><p class="sub" style="margin:0">Drag to reorder. The watcher works top to bottom.</p></div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <span style="color:var(--text-tertiary);font-size:11.5px">Priority</span>
+              <select class="popup"><option>Queue order (top-down)</option><option>Ending soonest</option><option>Closest to complete</option><option>Shortest first</option></select>
+            </div>
+          </div>
+          <div class="card qlist">
+            <div class="qrow active">
+              <span class="grip">⁝⁝</span>
+              <div class="qname"><div class="n">Wooden Barricade</div><div class="meta">Rust · @shroud · watching now</div></div>
+              <div class="qmini"><div class="bar"><i style="width:70%"></i></div><div class="mm">42 / 60 min</div></div>
+              <span class="pill watching"><span class="d"></span> Active</span>
+              <div class="switch on"><i></i></div>
+            </div>
+            <div class="qrow">
+              <span class="grip">⁝⁝</span>
+              <div class="qname"><div class="n">Elite Wooden Door Skin</div><div class="meta">Rust · @posty, @spoonkid +6</div></div>
+              <div class="qmini"><div class="bar"><i class="blue" style="width:0%"></i></div><div class="mm">0 / 120 min</div></div>
+              <span class="pill pending"><span class="d"></span> Pending</span>
+              <div class="switch on"><i></i></div>
+            </div>
+            <div class="qrow">
+              <span class="grip">⁝⁝</span>
+              <div class="qname"><div class="n">Cradle Whisperer Bundle</div><div class="meta">Once Human · any drops channel</div></div>
+              <div class="qmini"><div class="bar"><i class="blue" style="width:22%"></i></div><div class="mm">40 / 180 min</div></div>
+              <span class="pill pending"><span class="d"></span> Pending</span>
+              <div class="switch on"><i></i></div>
+            </div>
+            <div class="qrow">
+              <span class="grip">⁝⁝</span>
+              <div class="qname"><div class="n">Master Chief Armor Coating</div><div class="meta">Halo MCC · requires linked Halo Waypoint</div></div>
+              <div class="qmini"><div class="bar"><i class="blue" style="width:0%"></i></div><div class="mm">needs account link</div></div>
+              <span class="pill needs"><span class="d"></span> Needs action</span>
+              <div class="switch off"><i></i></div>
+            </div>
+            <div class="qrow">
+              <span class="grip">⁝⁝</span>
+              <div class="qname"><div class="n">Tier 2 — Reinforced Door</div><div class="meta">Rust · unlocks after Tier 1</div></div>
+              <div class="qmini"><div class="bar"><i class="blue" style="width:0%"></i></div><div class="mm">waiting on prerequisite</div></div>
+              <span class="pill blocked"><span class="d"></span> Blocked</span>
+              <div class="switch on"><i></i></div>
+            </div>
+            <div class="qrow">
+              <span class="grip">⁝⁝</span>
+              <div class="qname"><div class="n">HCS 2026 Weapon Charm</div><div class="meta">Halo Infinite · @formal, @lucid +3</div></div>
+              <div class="qmini"><div class="bar"><i class="blue" style="width:100%"></i></div><div class="mm">60 / 60 min</div></div>
+              <span class="pill claimed"><span class="d"></span> Claimed</span>
+              <div class="switch off"><i></i></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- HISTORY -->
+        <section class="view" data-view="history" id="v-history">
+          <h2 class="title">History &amp; report</h2>
+          <p class="sub">Everything the watcher has collected. Backed by the local SQLite database.</p>
+          <div class="stat-row">
+            <div class="card stat"><div class="big ok">27</div><div class="cap">Drops claimed</div></div>
+            <div class="card stat"><div class="big">31.4h</div><div class="cap">Watch time</div></div>
+            <div class="card stat"><div class="big">92%</div><div class="cap">Session success</div></div>
+            <div class="card stat"><div class="big">14</div><div class="cap">Channels used</div></div>
+          </div>
+          <div class="grid2">
+            <div class="card mini">
+              <h3>Recent claims</h3>
+              <div class="claimlist" style="margin:0 -16px -15px">
+                <div class="clm"><span class="gift">🎁</span><div><div class="n">HCS 2026 Weapon Charm</div><div class="g">Halo Infinite</div></div><div class="when">Today · 11:20</div></div>
+                <div class="clm"><span class="gift">🎁</span><div><div class="n">Nightfall Rifle Skin</div><div class="g">Once Human</div></div><div class="when">Today · 09:04</div></div>
+                <div class="clm"><span class="gift">🎁</span><div><div class="n">Wooden Window Bars</div><div class="g">Rust</div></div><div class="when">Today · 07:48</div></div>
+                <div class="clm"><span class="gift">🎁</span><div><div class="n">Reinforced Barricade</div><div class="g">Rust</div></div><div class="when">Yesterday · 23:31</div></div>
+              </div>
+            </div>
+            <div class="stack">
+              <div class="card mini">
+                <h3>Minutes watched · last 14 days</h3>
+                <div class="spark">
+                  <i style="height:40%"></i><i style="height:62%"></i><i style="height:31%"></i><i style="height:78%"></i><i style="height:55%"></i><i style="height:90%"></i><i style="height:48%"></i><i style="height:70%"></i><i style="height:35%"></i><i style="height:82%"></i><i style="height:60%"></i><i style="height:95%"></i><i style="height:52%"></i><i style="height:68%"></i>
+                </div>
+              </div>
+              <div class="card mini">
+                <h3>Session outcomes</h3>
+                <div class="kv"><span class="k">Claimed</span><span class="v">27</span></div>
+                <div class="kv"><span class="k">Completed (claim deferred)</span><span class="v">2</span></div>
+                <div class="kv"><span class="k">Aborted — raid / offline</span><span class="v">5</span></div>
+                <div class="kv"><span class="k">Recovered from stall</span><span class="v">9</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- SETTINGS -->
+        <section class="view" data-view="settings" id="v-settings">
+          <h2 class="title">Settings</h2>
+          <p class="sub">Written to <span style="font-family:ui-monospace,monospace">config.yaml</span>. Browser changes prompt a Chrome restart.</p>
+          <div class="set-wrap">
+            <nav class="set-nav">
+              <div class="sn active"><span class="sq" style="background:var(--ok-dim);color:#6ee7a8">▸</span> Watching</div>
+              <div class="sn"><span class="sq" style="background:var(--accent-dim);color:#7cc0ff">◎</span> Discovery</div>
+              <div class="sn"><span class="sq" style="background:var(--twitch-dim);color:#b98cff">◱</span> Browser</div>
+              <div class="sn"><span class="sq" style="background:var(--warn-dim);color:#ffcc73">🎁</span> Claiming</div>
+              <div class="sn"><span class="sq" style="background:rgba(255,255,255,0.1);color:#ccc">◐</span> Account</div>
+              <div class="sn"><span class="sq" style="background:rgba(255,255,255,0.08);color:#aaa">≣</span> Logging</div>
+            </nav>
+            <div>
+              <div class="group">
+                <div class="caption">Games</div>
+                <div class="card rows">
+                  <div class="row"><div class="lab"><div class="l">Tracked games</div><div class="h">Only campaigns for these games are queued.</div></div>
+                    <div class="ctl chips"><span class="chip">Rust <span class="x">×</span></span><span class="chip">Halo Infinite <span class="x">×</span></span><span class="chip">Halo MCC <span class="x">×</span></span><span class="chip">Once Human <span class="x">×</span></span><span class="chip" style="border-style:dashed;color:var(--text-tertiary)">+ add</span></div>
+                  </div>
+                  <div class="row"><div class="lab"><div class="l">Auto-enqueue new campaigns</div><div class="h">Add newly discovered drops to the bottom of the queue.</div></div><div class="ctl"><div class="switch on"><i></i></div></div></div>
+                </div>
+              </div>
+              <div class="group">
+                <div class="caption">Player</div>
+                <div class="card rows">
+                  <div class="row"><div class="lab"><div class="l">Watch volume</div><div class="h">Kept low, never muted — a muted background tab stops crediting on Chrome 145+.</div></div><div class="ctl" style="display:flex;align-items:center;gap:10px"><div class="slider"><b></b><i></i></div><span style="font-family:ui-monospace,monospace;font-size:12px;color:var(--text-secondary)">1%</span></div></div>
+                  <div class="row"><div class="lab"><div class="l">Force lowest quality</div><div class="h">Saves bandwidth and CPU; does not affect drop credit.</div></div><div class="ctl"><div class="switch on"><i></i></div></div></div>
+                  <div class="row"><div class="lab"><div class="l">Never focus the window</div><div class="h">The watcher window stays in the background, dimmed, to avoid burn-in.</div></div><div class="ctl"><div class="switch on"><i></i></div></div></div>
+                </div>
+              </div>
+              <div class="group">
+                <div class="caption">Browser</div>
+                <div class="card rows">
+                  <div class="row"><div class="lab"><div class="l">Chrome path</div><div class="h">Blank = auto-detect. Override for Chrome Beta or an unusual install.</div></div><div class="ctl"><input class="input mono" value="auto-detected" readonly></div></div>
+                  <div class="row"><div class="lab"><div class="l">Priority mode</div><div class="h">How the next drop is chosen.</div></div><div class="ctl"><select class="popup"><option>Queue order (top-down)</option><option>Ending soonest</option></select></div></div>
+                </div>
+              </div>
+              <div class="group">
+                <div class="caption">Account</div>
+                <div class="card rows">
+                  <div class="row"><div class="lab"><div class="l">Login</div><div class="h">Logged in as <b style="color:var(--text-secondary)">greg</b> · session saved in the profile.</div></div><div class="ctl"><button class="btn">Re-open login</button></div></div>
+                  <div class="row"><div class="lab"><div class="l">Store credentials</div><div class="h">Off. Typing credentials trips Twitch bot checks; manual login is safer.</div></div><div class="ctl"><div class="switch off"><i></i></div></div></div>
+                </div>
+                <div class="warnnote">⚠ Stored credentials are disabled by design and unsupported. Leave off unless a manual login flow stops working.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="footnote">
+    <b>What to react to:</b> screen layout, what belongs on the dashboard vs. behind a tab, the wording of statuses and settings, and how the queue communicates each state (pending / active / blocked / needs-action / claimed). <b>Styling</b> follows GoShareIt so the two apps feel related. Toggle the <b>Tray menu</b>, <b>Watcher window</b>, and <b>Needs action / Error</b> states above to see those surfaces. Not yet designed: onboarding/first-run and the light theme.
+  </div>
+</div>
+
+<!-- Overlays -->
+<div class="overlay" id="ov-tray">
+  <button class="over-close" data-close>×</button>
+  <div class="tray">
+    <div class="status">
+      <div class="s1"><span class="pill watching" style="padding:2px 7px"><span class="d"></span></span> Watching Rust</div>
+      <div class="s2">Wooden Barricade · 42/60 min · @shroud</div>
+    </div>
+    <div class="mi">Pause watching</div>
+    <div class="mi">Skip current drop</div>
+    <div class="mi">Refresh campaigns now</div>
+    <div class="sep"></div>
+    <div class="mi">Show browser window</div>
+    <div class="mi">Open dashboard <span class="kb">⌘D</span></div>
+    <div class="mi">Open logs folder</div>
+    <div class="sep"></div>
+    <div class="mi quit">Quit dropwarden <span class="kb">⌘Q</span></div>
+  </div>
+</div>
+
+<div class="overlay" id="ov-wwin">
+  <button class="over-close" data-close>×</button>
+  <div class="wwin">
+    <div class="miniwin">
+      <div class="bar2" style="background:#161618"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+      <div class="scr"></div>
+      <div class="dim"></div>
+      <div class="scr"><div class="badge"><div class="p">DROPS ENABLED · shroud</div><div class="mm">42 / 60 min · volume 1%</div></div></div>
+    </div>
+    <div class="cap">The actual watcher window: 640×400, forced dark, dimmed, positioned in a corner and never given focus. It shifts a few pixels every 20 minutes to avoid burn-in.</div>
+  </div>
+</div>
+
+<script>
+  const views = document.querySelectorAll('.view');
+  const segBtns = document.querySelectorAll('#viewseg button');
+  const navs = document.querySelectorAll('.rail .nav');
+  function show(view){
+    views.forEach(v => v.classList.toggle('active', v.dataset.view === view));
+    segBtns.forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === view)));
+    navs.forEach(n => n.classList.toggle('active', n.dataset.view === view));
+  }
+  segBtns.forEach(b => b.addEventListener('click', () => show(b.dataset.view)));
+  navs.forEach(n => n.addEventListener('click', () => show(n.dataset.view)));
+
+  // Overlays
+  document.querySelectorAll('[data-overlay]').forEach(b => b.addEventListener('click', () => {
+    document.getElementById('ov-' + b.dataset.overlay).classList.add('show');
+  }));
+  document.querySelectorAll('.overlay').forEach(o => {
+    o.addEventListener('click', e => { if (e.target === o || e.target.hasAttribute('data-close')) o.classList.remove('show'); });
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.overlay.show').forEach(o => o.classList.remove('show')); });
+
+  // Dashboard state banners + top pill
+  const bannerSlot = document.getElementById('banner-slot');
+  const topstate = document.getElementById('topstate');
+  const banners = {
+    needs: '<div class="banner needs"><div class="ic">⚠</div><div class="tx"><div class="t">Master Chief Armor Coating needs a linked account</div><div class="d">Connect Halo Waypoint to your Twitch account, then this drop resumes automatically.</div></div><button class="btn">Open link page</button></div>',
+    error: '<div class="banner err"><div class="ic">⚠</div><div class="tx"><div class="t">Playback stalled — recovering</div><div class="d">Progress has not advanced for 12 min. Hard-refreshing and re-validating the stream. Retry 2 of 3.</div></div><button class="btn">Skip channel</button></div>'
+  };
+  document.querySelectorAll('[data-state]').forEach(b => b.addEventListener('click', () => {
+    const on = b.getAttribute('aria-selected') !== 'true';
+    document.querySelectorAll('[data-state]').forEach(x => x.setAttribute('aria-selected','false'));
+    show('dashboard');
+    if (on) {
+      b.setAttribute('aria-selected','true');
+      bannerSlot.innerHTML = banners[b.dataset.state];
+      if (b.dataset.state === 'error') { topstate.className = 'state-pill pill blocked'; topstate.innerHTML = '<span class="d"></span> Recovering'; }
+      if (b.dataset.state === 'needs') { topstate.className = 'state-pill pill needs'; topstate.innerHTML = '<span class="d"></span> Needs action'; }
+    } else {
+      bannerSlot.innerHTML = '';
+      topstate.className = 'state-pill pill watching'; topstate.innerHTML = '<span class="d"></span> Watching';
+    }
+  }));
+</script>

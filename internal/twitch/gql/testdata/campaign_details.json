@@ -1,0 +1,60 @@
+{
+  "data": {
+    "user": {
+      "dropCampaign": {
+        "id": "camp-1",
+        "name": "Test Campaign One",
+        "status": "ACTIVE",
+        "startAt": "2026-08-01T00:00:00Z",
+        "endAt": "2026-09-01T00:00:00Z",
+        "accountLinkURL": "",
+        "game": {
+          "id": "game-1",
+          "displayName": "Test Game",
+          "slug": "test-game"
+        },
+        "allow": {
+          "channels": []
+        },
+        "timeBasedDrops": [
+          {
+            "id": "drop-1",
+            "name": "Tier 1",
+            "requiredMinutesWatched": 60,
+            "benefitEdges": [
+              {
+                "benefit": {
+                  "id": "benefit-1",
+                  "name": "Cool Hat",
+                  "imageAssetURL": "https://example.com/hat.png"
+                }
+              }
+            ],
+            "preconditionDrops": [],
+            "startAt": "2026-08-01T00:00:00Z",
+            "endAt": "2026-09-01T00:00:00Z"
+          },
+          {
+            "id": "drop-2",
+            "name": "Tier 2",
+            "requiredMinutesWatched": 120,
+            "benefitEdges": [
+              {
+                "benefit": {
+                  "id": "benefit-2",
+                  "name": "Cooler Hat",
+                  "imageAssetURL": "https://example.com/hat2.png"
+                }
+              }
+            ],
+            "preconditionDrops": [
+              { "id": "drop-1" }
+            ],
+            "startAt": "2026-08-01T00:00:00Z",
+            "endAt": "2026-09-01T00:00:00Z"
+          }
+        ]
+      }
+    }
+  }
+}

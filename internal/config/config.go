@@ -1,0 +1,197 @@
+// Package config defines dropwarden's on-disk YAML configuration, its defaults,
+// and validation. The load path mirrors GoShareIt: read -> applyDefaults ->
+// validate, with an atomic validate-into-temp-then-rename save.
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Config is the root configuration document.
+type Config struct {
+	Theme     string          `yaml:"theme"`    // dark|light|system (dashboard UI)
+	Games     []string        `yaml:"games"`    // campaigns for these games are queued
+	AnyGame   bool            `yaml:"any_game"` // future: queue every drops-enabled campaign
+	Queue     QueueConfig     `yaml:"queue"`
+	Discovery DiscoveryConfig `yaml:"discovery"`
+	Watcher   WatcherConfig   `yaml:"watcher"`
+	Claim     ClaimConfig     `yaml:"claim"`
+	Browser   BrowserConfig   `yaml:"browser"`
+	Auth      AuthConfig      `yaml:"auth"`
+	Logging   LoggingConfig   `yaml:"logging"`
+	UI        UIConfig        `yaml:"ui"`
+}
+
+type QueueConfig struct {
+	PriorityMode   string `yaml:"priority_mode"` // top_down|ending_soonest|closest_to_complete|shortest_first
+	AutoEnqueueNew bool   `yaml:"auto_enqueue_new"`
+}
+
+type DiscoveryConfig struct {
+	Interval        time.Duration `yaml:"interval"`
+	Jitter          time.Duration `yaml:"jitter"`
+	DetailsPerCycle int           `yaml:"details_per_cycle"`
+	DirectoryPoll   time.Duration `yaml:"directory_poll"`
+	DirectoryJitter time.Duration `yaml:"directory_jitter"`
+}
+
+type WatcherConfig struct {
+	EnabledOnStart      bool          `yaml:"enabled_on_start"`
+	StreamUpDelay       time.Duration `yaml:"stream_up_delay"`
+	ValidateTimeout     time.Duration `yaml:"validate_timeout"`
+	SoftStall           time.Duration `yaml:"soft_stall"`
+	HardStall           time.Duration `yaml:"hard_stall"`
+	HardStallMaxRetries int           `yaml:"hard_stall_max_retries"`
+	ProactiveRefresh    time.Duration `yaml:"proactive_refresh"`
+	ProactiveJitter     time.Duration `yaml:"proactive_refresh_jitter"`
+	HealthTick          time.Duration `yaml:"health_tick"`
+	HealthTickJitter    int           `yaml:"health_tick_jitter"` // percent
+	MaxSession          time.Duration `yaml:"max_session"`
+	Cooldown            time.Duration `yaml:"cooldown"`
+	CooldownJitter      time.Duration `yaml:"cooldown_jitter"`
+	ChannelBlacklistTTL time.Duration `yaml:"channel_blacklist_ttl"`
+	OfflineBlacklistTTL time.Duration `yaml:"offline_blacklist_ttl"`
+}
+
+type ClaimConfig struct {
+	Strategy         string        `yaml:"strategy"`           // in_page|in_page_then_gql
+	AllowGQLFallback bool          `yaml:"allow_gql_fallback"` // OFF: ClaimDropRewards replay risks a bot block
+	RetryBackoff     time.Duration `yaml:"retry_backoff"`
+	SkipAccountLink  bool          `yaml:"skip_account_link_drops"`
+}
+
+type BrowserConfig struct {
+	ChromePath string       `yaml:"chrome_path"` // blank = auto-detect
+	ProfileDir string       `yaml:"profile_dir"` // blank = <approot>/chrome-profile
+	ExtraFlags []string     `yaml:"extra_flags"`
+	Window     WindowConfig `yaml:"window"`
+	Burnin     BurninConfig `yaml:"burnin"`
+	Player     PlayerConfig `yaml:"player"`
+}
+
+type WindowConfig struct {
+	Width          int  `yaml:"width"`
+	Height         int  `yaml:"height"`
+	X              int  `yaml:"x"`
+	Y              int  `yaml:"y"`
+	Monitor        int  `yaml:"monitor"`
+	AlwaysOnBottom bool `yaml:"always_on_bottom"`
+	NeverFocus     bool `yaml:"never_focus"`
+}
+
+type BurninConfig struct {
+	DimOpacity    float64       `yaml:"dim_opacity"`
+	ShiftInterval time.Duration `yaml:"shift_interval"`
+	ShiftPixels   int           `yaml:"shift_pixels"`
+}
+
+type PlayerConfig struct {
+	Volume             float64       `yaml:"volume"` // NOT 0: Chrome 145 pauses muted background video
+	ForceLowestQuality bool          `yaml:"force_lowest_quality"`
+	ReassertInterval   time.Duration `yaml:"reassert_interval"`
+}
+
+type AuthConfig struct {
+	Mode   string            `yaml:"mode"` // manual|stored
+	Stored StoredCredentials `yaml:"stored"`
+}
+
+// StoredCredentials is implemented but ships disabled: typing credentials into
+// the real login form is exactly the behavior that has triggered login blocks
+// and lockouts for other drop bots.
+type StoredCredentials struct {
+	Enabled      bool   `yaml:"enabled"`
+	Username     string `yaml:"username"`
+	PasswordFile string `yaml:"password_file"` // 0600 file; never inline
+}
+
+type LoggingConfig struct {
+	Level            string `yaml:"level"`
+	File             bool   `yaml:"file"`
+	MaxSizeMB        int    `yaml:"max_size_mb"`
+	CaptureGQLBodies bool   `yaml:"capture_gql_bodies"` // debug only
+}
+
+type UIConfig struct {
+	StartMinimized bool `yaml:"start_minimized"`
+	ShowDebugPane  bool `yaml:"show_debug_pane"`
+}
+
+// Load reads, defaults, and validates the config at path.
+func Load(path string) (*Config, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("config: read %s: %w", path, err)
+	}
+	return parse(b)
+}
+
+func parse(b []byte) (*Config, error) {
+	var cfg Config
+	if err := yaml.Unmarshal(b, &cfg); err != nil {
+		return nil, fmt.Errorf("config: parse: %w", err)
+	}
+	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+// Save validates cfg, writes it to a temp file in the same directory, re-reads
+// that temp file through the full validator, and only then atomically renames
+// it into place. An invalid config can never reach the live path.
+func Save(path string, cfg *Config) error {
+	if err := cfg.validate(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("config: mkdir: %w", err)
+	}
+	out, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("config: marshal: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.yaml.tmp")
+	if err != nil {
+		return fmt.Errorf("config: temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(out); err != nil {
+		tmp.Close()
+		return fmt.Errorf("config: write temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("config: close temp: %w", err)
+	}
+	if _, err := Load(tmpName); err != nil {
+		return fmt.Errorf("config: validate temp: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		return fmt.Errorf("config: chmod temp: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("config: rename: %w", err)
+	}
+	return nil
+}
+
+// ExpandPath resolves a leading ~ to the user's home directory.
+func ExpandPath(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			if p == "~" {
+				return home
+			}
+			return filepath.Join(home, p[2:])
+		}
+	}
+	return p
+}

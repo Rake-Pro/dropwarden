@@ -1,0 +1,45 @@
+{
+  "data": {
+    "currentUser": {
+      "inventory": {
+        "dropCampaignsInProgress": [
+          {
+            "id": "camp-1",
+            "timeBasedDrops": [
+              {
+                "id": "drop-1",
+                "requiredMinutesWatched": 60,
+                "self": {
+                  "currentMinutesWatched": 60,
+                  "isClaimed": false,
+                  "dropInstanceID": "user1#camp-1#drop-1",
+                  "hasPreconditionsMet": true
+                }
+              },
+              {
+                "id": "drop-2",
+                "requiredMinutesWatched": 120,
+                "self": {
+                  "currentMinutesWatched": 45,
+                  "isClaimed": false,
+                  "dropInstanceID": null,
+                  "hasPreconditionsMet": false
+                }
+              },
+              {
+                "id": "drop-3",
+                "requiredMinutesWatched": 30,
+                "self": {
+                  "currentMinutesWatched": 30,
+                  "isClaimed": true,
+                  "dropInstanceID": "user1#camp-1#drop-3"
+                }
+              }
+            ]
+          }
+        ],
+        "gameEventDrops": []
+      }
+    }
+  }
+}
