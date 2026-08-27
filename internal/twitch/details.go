@@ -117,6 +117,28 @@ func (p *Pages) FetchCurrentDrop(ctx context.Context) (*domain.Progress, error) 
 	return prog, nil
 }
 
+// inventoryQuery is a full inventory query (not a persisted hash). It returns
+// data.currentUser.inventory.dropCampaignsInProgress, matching
+// gql.ParseInventory, and exists so the watcher can refresh per-drop server
+// progress mid-watch without navigating away from the channel page (the
+// inventory PAGE cannot be read while watching).
+const inventoryQuery = `{currentUser{inventory{dropCampaignsInProgress{id timeBasedDrops{id requiredMinutesWatched self{currentMinutesWatched isClaimed dropInstanceID hasPreconditionsMet}}}}}}`
+
+// FetchInventoryProgress fetches server-confirmed progress for every
+// in-progress drop via a page-context GraphQL call.
+func (p *Pages) FetchInventoryProgress(ctx context.Context) ([]domain.Progress, error) {
+	body, _ := json.Marshal(map[string]any{"query": inventoryQuery})
+	var raw string
+	if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
+		return nil, fmt.Errorf("twitch: fetch inventory progress: %w", err)
+	}
+	ps, err := gql.ParseInventory([]byte(raw))
+	if err != nil {
+		return nil, fmt.Errorf("twitch: parse inventory progress (%.160s): %w", raw, err)
+	}
+	return ps, nil
+}
+
 // CapturedHeaderKeys returns the names (not values) of the GraphQL request
 // headers captured from the page, so a run can confirm whether the integrity
 // token was picked up without ever logging the secret values.

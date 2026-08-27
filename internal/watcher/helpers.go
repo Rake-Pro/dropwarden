@@ -41,10 +41,14 @@ func (e *Engine) updateProgressFromCapture(ctx context.Context) (minutes int, in
 	return e.applyProgress(res.Progress)
 }
 
-// pollProgress actively fetches the viewer's current drop session at most once
-// per watcher.progress_poll. It exists because the channel page does not fire
-// progress GQL over fetch/XHR on its own (live updates ride a WebSocket the
-// capture shim cannot see), so passive capture alone leaves the UI frozen at 0.
+// pollProgress actively fetches server-side progress at most once per
+// watcher.progress_poll: the viewer's current drop session plus the full
+// inventory. It exists because the channel page does not fire progress GQL over
+// fetch/XHR on its own (live updates ride a WebSocket the capture shim cannot
+// see), so passive capture alone leaves the UI frozen at 0. The inventory read
+// matters for simultaneous multi-tier campaigns: dropCurrentSession names only
+// ONE drop, which need not be the tier we queued, while the inventory carries
+// per-drop minutes for everything in progress (up-next rows included).
 func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool) {
 	if e.cur == nil {
 		return 0, false
@@ -58,30 +62,37 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 		return e.cur.lastMinutes, false
 	}
 	e.cur.lastPoll = now
-	p, err := e.deps.Pages.FetchCurrentDrop(ctx)
-	if err != nil {
-		e.deps.Log.Warn().Err(err).Msg("progress poll failed")
+	var ps []domain.Progress
+	if p, err := e.deps.Pages.FetchCurrentDrop(ctx); err != nil {
+		e.deps.Log.Warn().Err(err).Msg("current-drop poll failed")
+	} else if p != nil {
+		ps = append(ps, *p)
+	}
+	if inv, err := e.deps.Pages.FetchInventoryProgress(ctx); err != nil {
+		e.deps.Log.Warn().Err(err).Msg("inventory poll failed")
+	} else {
+		ps = append(ps, inv...)
+	}
+	if len(ps) == 0 {
 		return e.cur.lastMinutes, false
 	}
-	if p == nil {
-		return e.cur.lastMinutes, false
-	}
-	return e.applyProgress([]domain.Progress{*p})
+	return e.applyProgress(ps)
 }
 
-// applyProgress merges progress observations for the active drop into the store
-// and the in-memory baseline, emitting an event when minutes advanced.
+// applyProgress stores every progress observation (other drops' rows keep the
+// queue/up-next display current) and advances the in-memory baseline for the
+// active drop, emitting an event when its minutes moved.
 func (e *Engine) applyProgress(ps []domain.Progress) (minutes int, increased bool) {
 	best := e.cur.lastMinutes
 	var src domain.ProgressSource
 	for _, p := range ps {
-		if p.DropID != e.cur.drop.ID {
-			continue
-		}
-		if p.RequiredMinutes == 0 {
+		if p.RequiredMinutes == 0 && p.DropID == e.cur.drop.ID {
 			p.RequiredMinutes = e.cur.drop.RequiredMinutes
 		}
 		_ = e.deps.Store.SaveProgress(p)
+		if p.DropID != e.cur.drop.ID {
+			continue
+		}
 		if m, _ := p.Effective(); m > best {
 			best = m
 			src = p.Source

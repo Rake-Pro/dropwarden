@@ -87,6 +87,7 @@ func (e *Engine) beginWatching(ctx context.Context) (State, string) {
 	e.cur.startMinutes = base
 	e.cur.lastMinutes = base
 	e.cur.lastProgress = now
+	e.setStatus(func(s *Status) { s.Current = base })
 	e.cur.session = domain.WatchSession{
 		ID:           newSessionID(now, e.deps.Rand),
 		DropID:       e.cur.drop.ID,

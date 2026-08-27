@@ -202,7 +202,7 @@ func TestPollProgressUpdatesAndRateLimits(t *testing.T) {
 	}
 }
 
-func TestPollProgressIgnoresOtherDrop(t *testing.T) {
+func TestPollProgressStoresButDoesNotCreditOtherDrop(t *testing.T) {
 	st, _ := store.OpenMemory()
 	defer st.Close()
 	pager := &fakePager{currentDrop: &domain.Progress{
@@ -213,5 +213,32 @@ func TestPollProgressIgnoresOtherDrop(t *testing.T) {
 
 	if m, inc := e.pollProgress(context.Background()); inc || m != 0 {
 		t.Fatalf("progress for another drop must not credit ours; got %d,%v", m, inc)
+	}
+	if p, _ := st.GetProgress("other"); p == nil || p.RealMinutes != 30 {
+		t.Fatalf("other drop's progress should still be stored, got %+v", p)
+	}
+}
+
+func TestPollProgressCreditsActiveDropFromInventory(t *testing.T) {
+	// Simultaneous multi-tier campaigns: dropCurrentSession names another tier,
+	// but the inventory carries per-drop minutes including the one we watch.
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	pager := &fakePager{
+		currentDrop: &domain.Progress{DropID: "tier2", RealMinutes: 18, RequiredMinutes: 120, Source: domain.SourceCurrentDrop},
+		inventory: []domain.Progress{
+			{DropID: "d1", RealMinutes: 18, RequiredMinutes: 60, Source: domain.SourceInventory},
+			{DropID: "tier2", RealMinutes: 18, RequiredMinutes: 120, Source: domain.SourceInventory},
+		},
+	}
+	e := testEngine(t, st, newFakeController(), pager, &fakeDisco{}, newRecordingEmitter())
+	e.cur = &activeWatch{drop: domain.Drop{ID: "d1", RequiredMinutes: 60}}
+
+	m, inc := e.pollProgress(context.Background())
+	if !inc || m != 18 {
+		t.Fatalf("inventory minutes should credit the active drop; got %d,%v", m, inc)
+	}
+	if got := e.Status().Current; got != 18 {
+		t.Fatalf("status current = %d want 18", got)
 	}
 }

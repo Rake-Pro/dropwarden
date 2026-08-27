@@ -27,6 +27,7 @@ type Pager interface {
 	ReadInventory(ctx context.Context) ([]domain.Progress, error)
 	DirectoryChannels(ctx context.Context, gameSlug string) ([]string, error)
 	FetchCurrentDrop(ctx context.Context) (*domain.Progress, error)
+	FetchInventoryProgress(ctx context.Context) ([]domain.Progress, error)
 }
 
 // Discoverer is the engine's view of the discovery pass (discovery.Discoverer).

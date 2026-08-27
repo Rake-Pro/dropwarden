@@ -60,6 +60,7 @@ type fakePager struct {
 	channels    []string
 	progress    []domain.Progress
 	currentDrop *domain.Progress
+	inventory   []domain.Progress
 	pollCalls   int
 }
 
@@ -73,6 +74,9 @@ func (f *fakePager) DirectoryChannels(context.Context, string) ([]string, error)
 func (f *fakePager) FetchCurrentDrop(context.Context) (*domain.Progress, error) {
 	f.pollCalls++
 	return f.currentDrop, nil
+}
+func (f *fakePager) FetchInventoryProgress(context.Context) ([]domain.Progress, error) {
+	return f.inventory, nil
 }
 
 // fakeDisco implements Discoverer.

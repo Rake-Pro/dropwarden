@@ -67,6 +67,17 @@ ok/warn/off dots), the "Progress ticking" chip is honest (shows "Awaiting first
 tick" until minutes move), and the brand logo is a loot-chest SVG on the purple
 tile (replacing the water-drop emoji).
 
+Third live report (screenshot from the 4335cad build, PRE-poll): active card
+stuck 0/60 while up-next rows showed 18/120, 18/240 - server-confirmed minutes
+from inventory reads between sessions, invisible to the active card because
+Status.Current was never refreshed mid-watch. Two follow-ups shipped: the poll
+now ALSO fetches the full inventory via page-context GQL (dropCurrentSession
+names only ONE drop, which for simultaneous multi-tier campaigns need not be
+the tier we queued; the inventory carries per-drop minutes for everything, so
+up-next rows stay live too), and beginWatching seeds Status.Current from the
+stored baseline. Totals (Minutes watched/Sessions) still only move at session
+END - that is by design (sessions table), not a progress bug.
+
 Still to confirm on the user's Mac:
 
 1. Does it reach state `watching` and does progress tick? This is the FIRST real
