@@ -56,6 +56,10 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 		Int("campaigns_parsed", len(captured.Campaigns)).
 		Int("details_parsed", len(captured.Details)).
 		Msg("discovery: capture diagnostic")
+	if len(captured.Campaigns) == 0 && captured.DebugSample != "" {
+		d.logger.Warn().Str("campaigns_body_sample", captured.DebugSample).
+			Msg("discovery: campaigns op captured but parsed 0 - response shape sample follows")
+	}
 
 	// List entries first (basic fields), then detail entries (full drops + ACL)
 	// so details win on conflict.
