@@ -114,6 +114,19 @@ func (e *Engine) applyProgress(ps []domain.Progress) (minutes int, increased boo
 	return best, false
 }
 
+// setWindowMinimized applies the start_minimized policy: no-op unless the user
+// runs minimized, best-effort otherwise. The engine restores the window while a
+// channel is opened and validated (a minimized/hidden window can suppress the
+// player's autoplay) and re-minimizes once playback is confirmed.
+func (e *Engine) setWindowMinimized(ctx context.Context, minimized bool) {
+	if !e.deps.Cfg.Browser.Window.StartMinimized {
+		return
+	}
+	if err := e.deps.Ctrl.Session().SetMinimized(ctx, minimized); err != nil {
+		e.deps.Log.Warn().Err(err).Bool("minimized", minimized).Msg("set window state failed")
+	}
+}
+
 // endSession records the current watch session with an outcome.
 func (e *Engine) endSession(outcome domain.SessionOutcome, note string) {
 	if e.cur == nil {

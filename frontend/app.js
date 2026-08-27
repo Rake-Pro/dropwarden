@@ -32,7 +32,22 @@ async function renderDashboard() {
   const queue = await api.queue();
   const stats = await api.stats();
   const upnext = queue.filter(q => q.status === 'pending').slice(0, 3);
-  const watching = st.state === 'watching';
+  const state = st.state || 'idle';
+  const watching = state === 'watching';
+  // Transitional engine states get real copy instead of the idle empty-state.
+  const busyCopy = {
+    discovering: 'Scanning campaigns and inventory…',
+    selecting_channel: 'Choosing a channel to watch…',
+    opening: `Opening ${st.channelLogin || 'channel'}…`,
+    validating_playback: `Validating playback on ${st.channelLogin || 'the channel'}…`,
+    claiming: 'Claiming completed drop…',
+    cooldown: 'Cooling down before the next attempt…',
+    backoff: 'Recovering — backing off before the next retry…',
+    needs_user_action: 'Action needed — check the queue for details.',
+  };
+  const busy = Object.prototype.hasOwnProperty.call(busyCopy, state);
+  const showChannel = watching || state === 'opening' || state === 'validating_playback';
+  const headName = showChannel && st.channelLogin ? st.channelLogin : 'idle';
 
   const v = $('#v-dashboard');
   v.innerHTML = '';
@@ -44,12 +59,12 @@ async function renderDashboard() {
   const grid = el(`<div class="grid2"></div>`);
   const nowCard = el(`<div class="card now">
     <div class="head">
-      <div class="avatar">${esc((st.channelLogin || '--').slice(0, 2).toUpperCase())}</div>
+      <div class="avatar">${esc((showChannel && st.channelLogin ? st.channelLogin : '--').slice(0, 2).toUpperCase())}</div>
       <div class="who">
-        <div class="ch">${esc(st.channelLogin || 'idle')} ${watching ? '<span class="live">LIVE</span>' : ''}</div>
+        <div class="ch"><span class="nm">${esc(headName)}</span> ${watching ? '<span class="live">LIVE</span>' : ''}</div>
         <div class="game">${esc(st.game || '')}${st.viewers ? ' · ' + st.viewers.toLocaleString() + ' viewers' : ''}</div>
       </div>
-      <span class="pill ${esc(st.state)}"><span class="d"></span> ${esc(cap(st.state))}</span>
+      <span class="pill ${esc(state)} ${busy ? 'busy' : ''}"><span class="d"></span> ${esc(cap(state))}</span>
     </div>
     ${watching ? `<div class="drop-row">
       <div class="lbl"><span class="name">${esc(st.dropName)}</span><span class="mins mono">${st.current} / ${st.required} min</span></div>
@@ -61,11 +76,14 @@ async function renderDashboard() {
         : '<span class="wd"><span class="tick wait">◌</span> Awaiting first tick</span>'}
       <span class="wd"><span class="tick">✓</span> Playback healthy</span>
       <span class="wd"><span class="tick">✓</span> Volume 1%</span>
-    </div>` : `<div class="empty">Not watching. Press Start to begin working the queue.</div>`}
+    </div>` : busy
+      ? `<div class="empty">${esc(busyCopy[state])}</div>`
+      : `<div class="empty">Not watching. Press Start to begin working the queue.</div>`}
     <div class="foot-btns">
-      ${watching ? '<button class="btn" data-act="skip">Skip drop</button>' : '<button class="btn primary" data-act="start">Start</button>'}
+      ${watching ? '<button class="btn" data-act="skip">Skip drop</button>' : ''}
+      ${state === 'idle' ? '<button class="btn primary" data-act="start">Start</button>' : ''}
       <button class="btn ghost" data-act="refresh">Refresh campaigns</button>
-      ${watching ? '<button class="btn ghost danger" data-act="stop">Pause</button>' : ''}
+      ${state !== 'idle' ? '<button class="btn ghost danger" data-act="stop">Pause</button>' : ''}
     </div>
   </div>`);
 
@@ -245,7 +263,7 @@ function settingsPaneHTML() {
         <div class="row"><div class="lab"><div class="l">Force lowest quality</div><div class="h">Saves bandwidth and CPU; does not affect drop credit.</div></div><div class="ctl">${toggleHTML('forceLowestQuality', cfg.forceLowestQuality)}</div></div>
         <div class="row"><div class="lab"><div class="l">Never focus the window</div><div class="h">Keep the watcher window in the background, dimmed, to avoid burn-in.</div></div><div class="ctl">${toggleHTML('neverFocus', cfg.neverFocus)}</div></div>
         <div class="row"><div class="lab"><div class="l">Mute Chrome audio</div><div class="h">Tab-level: silences the watcher Chrome at the sink while the player stays unmuted at 1%, so crediting is unaffected. Needs a Chrome restart.</div></div><div class="ctl">${toggleHTML('muteAudio', cfg.muteAudio)}</div></div>
-        <div class="row"><div class="lab"><div class="l">Start Chrome minimized</div><div class="h">Minimizes only the watcher window (via CDP) right after launch. The stall watchdogs verify progress keeps ticking. Needs a Chrome restart.</div></div><div class="ctl">${toggleHTML('startMinimized', cfg.startMinimized)}</div></div>
+        <div class="row"><div class="lab"><div class="l">Keep Chrome minimized</div><div class="h">Minimizes only the watcher window (via CDP). It restores itself briefly while a channel is opened and validated — a hidden player will not autoplay — then re-minimizes once watching. Needs a Chrome restart.</div></div><div class="ctl">${toggleHTML('startMinimized', cfg.startMinimized)}</div></div>
       </div></div>`;
     case 'browser': return `
       <div class="group"><div class="caption">Browser &amp; claiming</div><div class="card">

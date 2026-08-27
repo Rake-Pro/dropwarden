@@ -104,6 +104,22 @@ media clock running, and validation/stall watchdogs will surface it if not
 (look for validation timeouts right after "watcher window minimized" in the
 log; the fallback is un-toggling it).
 
+Minimized-start CONFIRMED WORKING live, with one follow-up found the same run:
+channels would not open until the window was manually restored - a minimized
+(hidden) window suppresses the player's autoplay, so validation could never
+pass. Fixed with engine-managed window state: when start_minimized is on, the
+window restores itself entering Opening/Validating (also covers mid-watch hard
+refreshes, which re-validate) and re-minimizes in beginWatching once playback
+is confirmed. Watch next run: whether playback KEEPS running after the
+re-minimize (expected - a started player continues when hidden) and whether
+un-minimize steals focus (CDP setWindowBounds normal; if macOS activates the
+window on restore, pair it with the never-focus handling). Dashboard card also
+polished: state pill no longer overlaps the channel name (flex none + default
+pill style for unmapped states + busy pulse), transitional states show real
+copy (Scanning campaigns... / Validating playback on X...) instead of the idle
+"Press Start" text, and Start/Pause/Skip buttons now follow the actual engine
+state.
+
 Still to confirm on the user's Mac:
 
 1. Does it reach state `watching` and does progress tick? This is the FIRST real

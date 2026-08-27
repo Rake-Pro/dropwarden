@@ -20,6 +20,7 @@ func (e *Engine) runOpening(ctx context.Context) (State, string) {
 	if e.cur == nil {
 		return StateSelectingChannel, "no active watch"
 	}
+	e.setWindowMinimized(ctx, false)
 	if err := e.deps.Pages.OpenChannel(ctx, e.cur.login, e.playerPolicy()); err != nil {
 		return e.enterBackoff("open channel: " + err.Error())
 	}
@@ -32,6 +33,9 @@ func (e *Engine) runValidating(ctx context.Context) (State, string) {
 	if e.cur == nil {
 		return StateSelectingChannel, "no active watch"
 	}
+	// Also covers mid-watch hard refreshes, which re-enter this state while the
+	// window is minimized - the player must be visible to (re)start playback.
+	e.setWindowMinimized(ctx, false)
 	deadline := e.deps.Now().Add(e.deps.Cfg.Watcher.ValidateTimeout)
 	var prevTime float64
 	var prevSet bool
@@ -96,7 +100,8 @@ func (e *Engine) beginWatching(ctx context.Context) (State, string) {
 		StartedAt:    now,
 		StartMinutes: base,
 	}
-	_ = ctx
+	// Playback is confirmed; tuck the window away again if running minimized.
+	e.setWindowMinimized(ctx, true)
 	return StateWatching, "playback validated"
 }
 

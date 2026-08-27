@@ -63,8 +63,11 @@ body {
 .title { font-size: 18px; font-weight: 700; margin: 0 0 2px; letter-spacing: -0.01em; }
 .sub { color: var(--text-secondary); font-size: 12.5px; margin: 0 0 18px; }
 
-.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: .02em; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; }
-.pill .d { width: 6px; height: 6px; border-radius: 50%; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: .02em; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; flex: none; white-space: nowrap; background: rgba(127,127,127,0.16); color: var(--text-secondary); }
+.pill .d { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--text-tertiary); }
+.pill.busy { background: var(--accent-dim); color: var(--accent); }
+.pill.busy .d { background: var(--accent); animation: pillpulse 1.2s ease-in-out infinite; }
+@keyframes pillpulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
 .pill.watching, .pill.active { background: var(--ok-dim); color: #4bbd85; } .pill.watching .d, .pill.active .d { background: var(--ok); }
 .pill.pending, .pill.idle { background: rgba(127,127,127,0.16); color: var(--text-secondary); } .pill.pending .d, .pill.idle .d { background: var(--text-tertiary); }
 .pill.blocked, .pill.needs_action, .pill.needs { background: var(--warn-dim); color: #d98a00; } .pill.blocked .d, .pill.needs_action .d, .pill.needs .d { background: var(--warn); }
@@ -80,7 +83,8 @@ body {
 .now .head { display: flex; align-items: center; gap: 13px; }
 .avatar { width: 46px; height: 46px; border-radius: 11px; background: linear-gradient(140deg,#3a3a3c,#4a4a4d); display: grid; place-items: center; font-size: 17px; font-weight: 700; color: #cfcfd4; border: 1px solid var(--hairline); }
 .now .who { flex: 1; min-width: 0; }
-.now .who .ch { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.now .who .ch { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.now .who .ch .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .now .who .ch .live { font-size: 9.5px; font-weight: 800; letter-spacing: .06em; color: #fff; background: var(--err); padding: 2px 6px; border-radius: 4px; }
 .now .who .game { color: var(--text-secondary); font-size: 12px; }
 .drop-row { margin-top: 16px; }
