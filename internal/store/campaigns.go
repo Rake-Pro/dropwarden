@@ -44,9 +44,13 @@ func (s *Store) UpsertCampaign(c domain.Campaign) error {
 		VALUES (?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			name=excluded.name, game_id=excluded.game_id, game_name=excluded.game_name,
-			game_slug=excluded.game_slug, status=excluded.status, start_at=excluded.start_at,
-			end_at=excluded.end_at, account_link_url=excluded.account_link_url,
-			allowed_channels=excluded.allowed_channels, details_fetched=excluded.details_fetched`,
+			status=excluded.status, start_at=excluded.start_at, end_at=excluded.end_at,
+			details_fetched=excluded.details_fetched,
+			-- Preserve detail-only fields when the incoming row lacks them, so the
+			-- basic list upsert (no ACL/slug/link) never clobbers a detailed campaign.
+			game_slug=CASE WHEN excluded.game_slug='' THEN campaigns.game_slug ELSE excluded.game_slug END,
+			account_link_url=CASE WHEN excluded.account_link_url='' THEN campaigns.account_link_url ELSE excluded.account_link_url END,
+			allowed_channels=CASE WHEN excluded.allowed_channels IN ('','[]','null') THEN campaigns.allowed_channels ELSE excluded.allowed_channels END`,
 		c.ID, c.Name, c.GameID, c.GameName, c.GameSlug, string(c.Status),
 		unixPtr(c.StartAt), unixPtr(c.EndAt), c.AccountLinkURL, string(aclJSON), unixPtr(c.DetailsFetched))
 	if err != nil {

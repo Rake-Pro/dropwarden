@@ -160,8 +160,11 @@ func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign)
 		if c.Status == domain.StatusExpired || !d.matchesFilter(c) {
 			continue
 		}
-		if existing, err := d.store.GetCampaign(c.ID); err == nil && existing != nil && len(existing.Drops) > 0 {
-			continue // already have details
+		// Skip only when we already have COMPLETE details: drops plus a game slug
+		// (needed for any-channel directory lookups). A campaign with drops but no
+		// slug was left incomplete (e.g. an older row), so re-fetch it.
+		if existing, err := d.store.GetCampaign(c.ID); err == nil && existing != nil && len(existing.Drops) > 0 && existing.GameSlug != "" {
+			continue
 		}
 		targets = append(targets, c)
 		if len(targets) >= limit {

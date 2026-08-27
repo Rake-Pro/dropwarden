@@ -48,6 +48,41 @@ func TestCampaignRoundTrip(t *testing.T) {
 	}
 }
 
+func TestListUpsertPreservesDetails(t *testing.T) {
+	s := newTestStore(t)
+	// Detailed campaign: has slug, ACL, drops.
+	detailed := domain.Campaign{
+		ID: "c1", Name: "NBPL", GameName: "NARAKA", GameSlug: "naraka",
+		Status: domain.StatusActive, AccountLinkURL: "https://link",
+		AllowedChannels: []domain.Channel{{Login: "chan1"}, {Login: "chan2"}},
+		Drops:           []domain.Drop{{ID: "d1", CampaignID: "c1", RequiredMinutes: 60}},
+	}
+	if err := s.UpsertCampaign(detailed); err != nil {
+		t.Fatal(err)
+	}
+	// List-style re-upsert: same id, no slug/ACL/link/drops.
+	listOnly := domain.Campaign{ID: "c1", Name: "NBPL", GameName: "NARAKA", Status: domain.StatusActive}
+	if err := s.UpsertCampaign(listOnly); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetCampaign("c1")
+	if got == nil {
+		t.Fatal("campaign missing")
+	}
+	if got.GameSlug != "naraka" {
+		t.Fatalf("slug clobbered: %q", got.GameSlug)
+	}
+	if len(got.AllowedChannels) != 2 {
+		t.Fatalf("ACL clobbered: %+v", got.AllowedChannels)
+	}
+	if got.AccountLinkURL != "https://link" {
+		t.Fatalf("account link clobbered: %q", got.AccountLinkURL)
+	}
+	if len(got.Drops) != 1 {
+		t.Fatalf("drops clobbered: %+v", got.Drops)
+	}
+}
+
 func TestProgressRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	p := domain.Progress{DropID: "d1", RealMinutes: 30, RequiredMinutes: 60, Source: domain.SourceInventory, ObservedAt: time.Now()}
