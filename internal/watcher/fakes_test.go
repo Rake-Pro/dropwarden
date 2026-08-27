@@ -25,6 +25,7 @@ func (f *fakeSession) Click(context.Context, string) (bool, error)     { return 
 func (f *fakeSession) SeedOnNewDocument(context.Context, string) error { return nil }
 func (f *fakeSession) Events() <-chan browser.Event                    { return f.events }
 func (f *fakeSession) ShiftWindow(int, int) error                      { return nil }
+func (f *fakeSession) SetMinimized(context.Context, bool) error        { return nil }
 func (f *fakeSession) Alive() bool                                     { return true }
 func (f *fakeSession) Close() error                                    { return nil }
 

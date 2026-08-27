@@ -95,6 +95,7 @@ type WindowConfig struct {
 	Monitor        int  `yaml:"monitor"`
 	AlwaysOnBottom bool `yaml:"always_on_bottom"`
 	NeverFocus     bool `yaml:"never_focus"`
+	StartMinimized bool `yaml:"start_minimized"` // minimize the watcher Chrome window after launch (CDP)
 }
 
 type BurninConfig struct {

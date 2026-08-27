@@ -76,6 +76,7 @@ type ConfigDTO struct {
 	Volume             float64  `json:"volume"`
 	ForceLowestQuality bool     `json:"forceLowestQuality"`
 	NeverFocus         bool     `json:"neverFocus"`
+	StartMinimized     bool     `json:"startMinimized"`
 	DimOpacity         float64  `json:"dimOpacity"`
 	ChromePath         string   `json:"chromePath"`
 	MuteAudio          bool     `json:"muteAudio"`

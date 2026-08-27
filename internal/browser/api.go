@@ -60,6 +60,11 @@ type Session interface {
 	// without activating it.
 	ShiftWindow(dx, dy int) error
 
+	// SetMinimized minimizes (or restores) the watcher window via CDP
+	// (Browser.setWindowBounds), so only the dedicated instance is affected and
+	// no OS accessibility permissions are needed.
+	SetMinimized(ctx context.Context, minimized bool) error
+
 	// Alive reports whether the underlying Chrome/CDP connection is still up.
 	Alive() bool
 

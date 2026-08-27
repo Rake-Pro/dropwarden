@@ -445,6 +445,27 @@ func (s *session) ShiftWindow(dx, dy int) error {
 	return shiftWindow(s.chrome.pid, dx, dy)
 }
 
+func (s *session) SetMinimized(ctx context.Context, minimized bool) error {
+	p := s.page.Context(ctx)
+	// Called on the page session, getWindowForTarget resolves our own window.
+	win, err := proto.BrowserGetWindowForTarget{}.Call(p)
+	if err != nil {
+		return fmt.Errorf("browser: get window for target: %w", err)
+	}
+	state := proto.BrowserWindowStateMinimized
+	if !minimized {
+		state = proto.BrowserWindowStateNormal
+	}
+	err = proto.BrowserSetWindowBounds{
+		WindowID: win.WindowID,
+		Bounds:   &proto.BrowserBounds{WindowState: state},
+	}.Call(p)
+	if err != nil {
+		return fmt.Errorf("browser: set window state %s: %w", state, err)
+	}
+	return nil
+}
+
 func (s *session) Alive() bool { return s.alive.Load() }
 
 func (s *session) Close() error {

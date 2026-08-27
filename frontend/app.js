@@ -245,6 +245,7 @@ function settingsPaneHTML() {
         <div class="row"><div class="lab"><div class="l">Force lowest quality</div><div class="h">Saves bandwidth and CPU; does not affect drop credit.</div></div><div class="ctl">${toggleHTML('forceLowestQuality', cfg.forceLowestQuality)}</div></div>
         <div class="row"><div class="lab"><div class="l">Never focus the window</div><div class="h">Keep the watcher window in the background, dimmed, to avoid burn-in.</div></div><div class="ctl">${toggleHTML('neverFocus', cfg.neverFocus)}</div></div>
         <div class="row"><div class="lab"><div class="l">Mute Chrome audio</div><div class="h">Tab-level: silences the watcher Chrome at the sink while the player stays unmuted at 1%, so crediting is unaffected. Needs a Chrome restart.</div></div><div class="ctl">${toggleHTML('muteAudio', cfg.muteAudio)}</div></div>
+        <div class="row"><div class="lab"><div class="l">Start Chrome minimized</div><div class="h">Minimizes only the watcher window (via CDP) right after launch. The stall watchdogs verify progress keeps ticking. Needs a Chrome restart.</div></div><div class="ctl">${toggleHTML('startMinimized', cfg.startMinimized)}</div></div>
       </div></div>`;
     case 'browser': return `
       <div class="group"><div class="caption">Browser &amp; claiming</div><div class="card">

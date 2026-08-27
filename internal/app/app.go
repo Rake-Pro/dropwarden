@@ -76,6 +76,13 @@ func (a *App) StartRuntime(ctx context.Context, emit watcher.Emitter) error {
 		return fmt.Errorf("app: launch browser: %w", err)
 	}
 	a.Session = sess
+	if a.Cfg.Browser.Window.StartMinimized {
+		if err := sess.SetMinimized(ctx, true); err != nil {
+			a.Log.Warn().Err(err).Msg("app: minimize watcher window failed")
+		} else {
+			a.Log.Info().Msg("app: watcher window minimized")
+		}
+	}
 	if err := twitch.InstallCapture(ctx, sess); err != nil {
 		a.Log.Warn().Err(err).Msg("app: install capture shim failed")
 	}

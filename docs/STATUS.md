@@ -94,6 +94,16 @@ capped retries) is the "auto refresh on cooldown" behavior - tune
 watcher.soft_stall / hard_stall if a faster reload is wanted now that the poll
 confirms stalls within a minute.
 
+(3) `browser.window.start_minimized` (Settings > Player > "Start Chrome
+minimized", default off, app restart to apply): minimizes the watcher window
+right after launch via CDP Browser.setWindowBounds (windowState minimized) -
+targets only the dedicated instance, no macOS accessibility/TCC prompt, never
+touches the user's personal Chrome. verify live: whether a minimized window
+keeps crediting on macOS - the backgrounding launch flags should keep the
+media clock running, and validation/stall watchdogs will surface it if not
+(look for validation timeouts right after "watcher window minimized" in the
+log; the fallback is un-toggling it).
+
 Still to confirm on the user's Mac:
 
 1. Does it reach state `watching` and does progress tick? This is the FIRST real
