@@ -65,15 +65,26 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 	// and tally the reasons so a "nothing eligible" outcome is diagnosable.
 	now := e.deps.Now()
 	tally := map[string]int{}
-	for _, it := range items {
+	for i := range items {
+		it := items[i]
 		eligible, status, reason := queue.EligibilityReason(it, campaigns, progress, claimed, now)
 		if eligible {
 			tally["eligible"]++
+			// Preserve an actively-watched item; otherwise it is selectable now.
+			if it.Status == domain.ItemActive {
+				status = domain.ItemActive
+			} else {
+				status = domain.ItemPending
+			}
 		} else {
 			tally[string(status)]++
 		}
-		if !eligible && it.Status != status {
+		// Always sync the stored/in-memory status so a stale label (e.g. a prior
+		// run's "unavailable") self-heals and the UI reflects reality.
+		if it.Status != status {
 			_ = e.deps.Store.SetItemStatus(it.DropID, status, reason)
+			items[i].Status = status
+			items[i].Reason = reason
 			if status == domain.ItemNeedsAction {
 				c := campaigns[it.CampaignID]
 				e.deps.Emit.Emit(EvNeedsAction, NeedsActionPayload{DropID: it.DropID, Reason: reason, URL: c.AccountLinkURL})

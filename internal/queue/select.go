@@ -81,9 +81,10 @@ func eligibleNow(item domain.QueueItem, campaigns map[string]domain.Campaign, pr
 	if !item.Enabled {
 		return domain.Campaign{}, domain.Drop{}, false
 	}
-	if item.Status != domain.ItemPending && item.Status != domain.ItemActive {
-		return domain.Campaign{}, domain.Drop{}, false
-	}
+	// Eligibility is fully determined by the campaign/drop/progress/precondition
+	// checks below; we deliberately do NOT gate on item.Status here. Status is a
+	// derived UI label that can lag behind (e.g. a stale "unavailable" from a
+	// prior run), and gating on it would wrongly skip a now-eligible drop.
 	campaign, ok := campaigns[item.CampaignID]
 	if !ok || !isWatchable(campaign, now) {
 		return domain.Campaign{}, domain.Drop{}, false
