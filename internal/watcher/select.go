@@ -121,7 +121,7 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 	var cand *queue.Candidate
 	var login string
 	for i := 0; i < attempts; i++ {
-		if l, ok := e.pickChannel(ctx, cands[i].Campaign); ok {
+		if l, ok := e.pickChannel(ctx, cands[i].Campaign, cands); ok {
 			cand = &cands[i]
 			login = l
 			if i > 0 {
@@ -155,8 +155,11 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 }
 
 // pickChannel builds the candidate channel set and returns the top-ranked live
-// login, or ok=false when none is available.
-func (e *Engine) pickChannel(ctx context.Context, c domain.Campaign) (string, bool) {
+// login, or ok=false when none is available. cands (the full eligible-drop
+// list) feeds the coverage ranking: among channels valid for this campaign,
+// prefer the one that credits the most other eligible drops too, so drop SETS
+// (e.g. Rivals global + team-specific) drain on one channel before moving on.
+func (e *Engine) pickChannel(ctx context.Context, c domain.Campaign, cands []queue.Candidate) (string, bool) {
 	now := e.deps.Now()
 	var live []domain.Channel
 	if c.AnyChannel() {
@@ -191,9 +194,14 @@ func (e *Engine) pickChannel(ctx context.Context, c domain.Campaign) (string, bo
 	if e.cur != nil {
 		current = e.cur.login
 	}
-	ranked := queue.RankChannels(c, live, current, stats, blacklisted, e.deps.Cfg.Watcher.StreamUpDelay, now)
+	coverage := func(login string) int { return queue.ChannelCoverage(login, c, cands) }
+	ranked := queue.RankChannels(c, live, current, coverage, stats, blacklisted, e.deps.Cfg.Watcher.StreamUpDelay, now)
 	if len(ranked) == 0 {
 		return "", false
+	}
+	if n := coverage(ranked[0].Login); n > 1 {
+		e.deps.Log.Info().Str("login", ranked[0].Login).Int("covers_drops", n).
+			Msg("selecting: channel covers multiple eligible drops")
 	}
 	return ranked[0].Login, true
 }

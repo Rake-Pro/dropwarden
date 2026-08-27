@@ -139,6 +139,17 @@ SECOND TAB so watching is not interrupted, and a claim-all-claimable sweep for
 simultaneous multi-tier campaigns (inventory page shows every claim button;
 current flow only targets the just-completed drop).
 
+Channel selection upgraded to SET COVERAGE (user design, Twitch Rivals as the
+template: "global" drops creditable on any participating channel + team drops
+locked to channel subsets). queue.ChannelCoverage counts how many eligible
+drops a login can credit (ACL membership, or same-game any-channel campaigns -
+the drops-indicator validation stays the hard gate for the any-channel
+heuristic), and RankChannels ranks current-channel > coverage > stats >
+viewers. Net behavior: pick the channel serving the biggest drop set, and
+stickiness holds it there as each drop completes until nothing eligible
+remains on it, then move on. "selecting: channel covers multiple eligible
+drops" logs when coverage kicked in.
+
 Still to confirm on the user's Mac:
 
 1. Does it reach state `watching` and does progress tick? This is the FIRST real
