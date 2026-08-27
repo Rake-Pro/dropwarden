@@ -110,6 +110,7 @@ async function renderDashboard() {
     <div class="card mini"><h3>Up next</h3><div class="upnext">${upnext.length ? upnext.map((q, i) => `
       <div class="up"><span class="idx">${i + 1}</span><div class="t"><div class="n">${esc(q.dropName)}</div><div class="g">${esc(q.game)} · ${esc(q.reason || '')}</div></div><span class="m mono">${q.currentMinutes}/${q.requiredMinutes}</span></div>`).join('') : '<div class="empty">Queue is empty.</div>'}</div></div>
     <div class="card mini"><h3>Totals</h3>
+      <div class="kv"><span class="k">Drops earned</span><span class="v">${stats.dropsEarned}</span></div>
       <div class="kv"><span class="k">Drops claimed</span><span class="v">${stats.dropsClaimed}</span></div>
       <div class="kv"><span class="k">Minutes watched</span><span class="v">${stats.minutesWatched}</span></div>
       <div class="kv"><span class="k">Sessions</span><span class="v">${stats.sessions}</span></div>
@@ -227,6 +228,7 @@ async function renderHistory() {
   v.innerHTML = '';
   v.append(el(`<div><h2 class="title">History &amp; report</h2><p class="sub">Everything the watcher has collected. Backed by the local SQLite database.</p></div>`));
   v.append(el(`<div class="stat-row">
+    <div class="card stat"><div class="big ok">${stats.dropsEarned}</div><div class="cap">Drops earned</div></div>
     <div class="card stat"><div class="big ok">${stats.dropsClaimed}</div><div class="cap">Drops claimed</div></div>
     <div class="card stat"><div class="big">${hours}h</div><div class="cap">Watch time</div></div>
     <div class="card stat"><div class="big">${stats.successRate}%</div><div class="cap">Session success</div></div>

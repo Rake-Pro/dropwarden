@@ -15,7 +15,7 @@ const SAMPLE = {
     { dropID: 'd4', dropName: 'Master Chief Armor Coating', game: 'Halo MCC', status: 'needs_action', enabled: false, currentMinutes: 0, requiredMinutes: 90, reason: 'account link required' },
   ],
   claims: [{ dropName: 'HCS 2026 Weapon Charm', game: 'Halo Infinite', claimedAt: 'sample' }],
-  stats: { dropsClaimed: 0, minutesWatched: 0, successRate: 0, sessions: 0, outcomeCounts: {} },
+  stats: { dropsEarned: 0, dropsClaimed: 0, minutesWatched: 0, successRate: 0, sessions: 0, outcomeCounts: {} },
   spark: [],
   config: {
     theme: 'dark', games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'], anyGame: false,

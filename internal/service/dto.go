@@ -57,6 +57,10 @@ type SessionDTO struct {
 }
 
 type StatsDTO struct {
+	// DropsEarned counts drops whose watch requirement is met, whether or not
+	// the claim is confirmed; DropsClaimed counts confirmed claims only. All
+	// totals are lifetime (read from the store), not per-session.
+	DropsEarned    int            `json:"dropsEarned"`
 	DropsClaimed   int            `json:"dropsClaimed"`
 	MinutesWatched int            `json:"minutesWatched"`
 	Sessions       int            `json:"sessions"`

@@ -255,6 +255,21 @@ func (s *HistoryService) Stats() (StatsDTO, error) {
 		return StatsDTO{}, err
 	}
 	st := StatsDTO{DropsClaimed: len(claims), Sessions: len(sessions), OutcomeCounts: map[string]int{}}
+	// Earned = confirmed claims plus watch-complete drops still awaiting a
+	// claim (failed auto-claim, or completed in the background of a
+	// simultaneous multi-drop campaign).
+	st.DropsEarned = len(claims)
+	claimedSet := make(map[string]bool, len(claims))
+	for _, c := range claims {
+		claimedSet[c.DropID] = true
+	}
+	if progress, err := s.b.Store.ListProgress(); err == nil {
+		for _, p := range progress {
+			if !claimedSet[p.DropID] && p.ClaimedAt == nil && p.Complete() {
+				st.DropsEarned++
+			}
+		}
+	}
 	success := 0
 	for _, ws := range sessions {
 		st.MinutesWatched += ws.MinutesWatched()

@@ -142,7 +142,7 @@ body {
 .switch i { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
 .switch.on i { transform: translateX(14px); }
 
-.stat-row { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit,minmax(130px,1fr)); gap: 12px; margin-bottom: 16px; }
 @media (max-width: 720px){ .stat-row { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 .stat { padding: 14px 15px; }
 .stat .big { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
