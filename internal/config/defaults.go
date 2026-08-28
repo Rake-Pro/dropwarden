@@ -44,6 +44,12 @@ func (c *Config) applyDefaults() {
 	setDuration(&c.Watcher.HealthTick, 25*time.Second)
 	setInt(&c.Watcher.HealthTickJitter, 40)
 	setDuration(&c.Watcher.ProgressPoll, 60*time.Second)
+
+	// Kick's dedicated browser window; offset from the Twitch one by default.
+	setInt(&c.Kick.Browser.Window.Width, 640)
+	setInt(&c.Kick.Browser.Window.Height, 400)
+	setInt(&c.Kick.Browser.Window.X, 700)
+	setInt(&c.Kick.Browser.Window.Y, 40)
 	setDuration(&c.Watcher.MaxSession, 4*time.Hour)
 	setDuration(&c.Watcher.Cooldown, 60*time.Second)
 	setDuration(&c.Watcher.CooldownJitter, 120*time.Second)

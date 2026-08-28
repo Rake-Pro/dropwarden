@@ -23,9 +23,22 @@ type Config struct {
 	Watcher   WatcherConfig   `yaml:"watcher"`
 	Claim     ClaimConfig     `yaml:"claim"`
 	Browser   BrowserConfig   `yaml:"browser"`
+	Kick      KickConfig      `yaml:"kick"`
 	Auth      AuthConfig      `yaml:"auth"`
 	Logging   LoggingConfig   `yaml:"logging"`
 	UI        UIConfig        `yaml:"ui"`
+}
+
+// KickConfig enables the parallel Kick runtime: its own Chrome instance and
+// watcher engine over the shared store/queue. The game filter is shared with
+// the top-level Games/AnyGame settings.
+type KickConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// Browser configures Kick's dedicated Chrome instance. A blank profile_dir
+	// resolves to <approot>/chrome-profile-kick so the Twitch and Kick
+	// sessions never share cookies or a profile lock.
+	Browser BrowserConfig `yaml:"browser"`
 }
 
 type QueueConfig struct {

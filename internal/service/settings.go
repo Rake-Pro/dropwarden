@@ -54,6 +54,7 @@ func toConfigDTO(c *config.Config) ConfigDTO {
 		DimOpacity:         c.Browser.Burnin.DimOpacity,
 		ChromePath:         c.Browser.ChromePath,
 		MuteAudio:          c.Browser.MuteAudio,
+		KickEnabled:        c.Kick.Enabled,
 		ClaimStrategy:      c.Claim.Strategy,
 		AllowGQLFallback:   c.Claim.AllowGQLFallback,
 		SkipAccountLink:    c.Claim.SkipAccountLink,
@@ -80,6 +81,7 @@ func applyConfigDTO(c *config.Config, d ConfigDTO) {
 	c.Browser.Burnin.DimOpacity = d.DimOpacity
 	c.Browser.ChromePath = d.ChromePath
 	c.Browser.MuteAudio = d.MuteAudio
+	c.Kick.Enabled = d.KickEnabled
 	c.Claim.Strategy = d.ClaimStrategy
 	c.Claim.AllowGQLFallback = d.AllowGQLFallback
 	c.Claim.SkipAccountLink = d.SkipAccountLink

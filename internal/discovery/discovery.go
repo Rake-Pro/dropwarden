@@ -219,45 +219,51 @@ func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign)
 	return n
 }
 
-// reconcileQueue keeps the queue in sync with the current game filter: it prunes
-// items whose campaign no longer matches (e.g. after turning off any_game),
-// expired, or was claimed, and - when auto-enqueue is on - adds drops from
-// matching active campaigns. The queue therefore only ever holds current,
-// workable items; claimed drops live in history.
+// reconcileQueue applies the shared platform-scoped reconciliation for Twitch.
 func (d *Discoverer) reconcileQueue(ctx context.Context) (int, error) {
-	campaigns, err := d.store.ListCampaigns()
+	_ = ctx
+	return ReconcileQueue(d.store, d.cfg, domain.PlatformTwitch, d.logger)
+}
+
+// ReconcileQueue keeps ONE platform's slice of the shared queue in sync with
+// the current game filter: it prunes items whose campaign no longer matches
+// (e.g. after turning off any_game), expired, or was claimed, and - when
+// auto-enqueue is on - adds drops from matching active campaigns. Other
+// platforms' campaigns and queue items are invisible to the call, so parallel
+// discoverers never prune or enqueue across platforms. The queue therefore
+// only ever holds current, workable items; claimed drops live in history.
+func ReconcileQueue(st *store.Store, cfg *config.Config, pf domain.Platform, logger zerolog.Logger) (int, error) {
+	campaigns, err := st.ListCampaigns()
 	if err != nil {
 		return 0, err
 	}
-	existing, err := d.store.GetQueue()
+	existing, err := st.GetQueue()
 	if err != nil {
 		return 0, err
 	}
 	now := time.Now()
 
-	// desired = unclaimed drops of matching, in-window campaigns OF THIS
-	// PLATFORM. Other platforms' campaigns and queue items are invisible to
-	// this discoverer so it never prunes or enqueues across platforms.
 	desired := map[string]domain.Campaign{}
 	for _, c := range campaigns {
-		if c.Platform.OrTwitch() != domain.PlatformTwitch {
+		if c.Platform.OrTwitch() != pf.OrTwitch() {
 			continue
 		}
-		if !d.matchesFilter(c) || c.Status == domain.StatusExpired {
+		if !MatchesGameFilter(cfg, c) || c.Status == domain.StatusExpired {
 			continue
 		}
 		if !c.EndAt.IsZero() && !c.EndAt.After(now) {
 			continue
 		}
 		for _, drop := range c.Drops {
-			if has, _ := d.store.HasClaim(drop.ID); has {
+			if has, _ := st.HasClaim(drop.ID); has {
 				continue
 			}
 			desired[drop.ID] = c
 		}
 	}
 
-	// Prune anything not desired, but never drop the item being watched right now.
+	// Prune anything not desired, but never drop the item being watched right
+	// now or another platform's items.
 	keep := make(map[string]bool, len(desired))
 	for id := range desired {
 		keep[id] = true
@@ -268,20 +274,21 @@ func (d *Discoverer) reconcileQueue(ctx context.Context) (int, error) {
 		if it.Status == domain.ItemActive {
 			keep[it.DropID] = true
 		}
-		if it.Platform.OrTwitch() != domain.PlatformTwitch {
-			keep[it.DropID] = true // another platform's item; not ours to prune
+		if it.Platform.OrTwitch() != pf.OrTwitch() {
+			keep[it.DropID] = true
 		}
 	}
-	if removed, err := d.store.PruneQueue(keep); err != nil {
+	if removed, err := st.PruneQueue(keep); err != nil {
 		return 0, err
 	} else if removed > 0 {
-		d.logger.Info().Int("removed", removed).Msg("discovery: pruned stale/off-filter queue items")
+		logger.Info().Int("removed", removed).Str("platform", string(pf.OrTwitch())).
+			Msg("discovery: pruned stale/off-filter queue items")
 	}
 
-	if !d.cfg.Queue.AutoEnqueueNew {
+	if !cfg.Queue.AutoEnqueueNew {
 		return 0, nil
 	}
-	pos, err := d.store.NextPosition()
+	pos, err := st.NextPosition()
 	if err != nil {
 		return 0, err
 	}
@@ -291,11 +298,11 @@ func (d *Discoverer) reconcileQueue(ctx context.Context) (int, error) {
 			continue
 		}
 		it := domain.QueueItem{DropID: id, CampaignID: c.ID, Platform: c.Platform.OrTwitch(), Position: pos, Enabled: true, Status: domain.ItemPending}
-		if c.RequiresAccountLink() && d.cfg.Claim.SkipAccountLink {
+		if c.RequiresAccountLink() && cfg.Claim.SkipAccountLink {
 			it.Status = domain.ItemNeedsAction
 			it.Reason = "account link required"
 		}
-		if err := d.store.UpsertQueueItem(it); err != nil {
+		if err := st.UpsertQueueItem(it); err != nil {
 			return added, err
 		}
 		queued[id] = true
@@ -340,11 +347,17 @@ func safeName(s string) string {
 // matchesFilter reports whether a campaign's game is in the configured set (or
 // any_game is on).
 func (d *Discoverer) matchesFilter(c domain.Campaign) bool {
-	if d.cfg.AnyGame {
+	return MatchesGameFilter(d.cfg, c)
+}
+
+// MatchesGameFilter reports whether a campaign's game is in the configured set
+// (or any_game is on). The filter is shared across platforms.
+func MatchesGameFilter(cfg *config.Config, c domain.Campaign) bool {
+	if cfg.AnyGame {
 		return true
 	}
 	name := strings.ToLower(strings.TrimSpace(c.GameName))
-	for _, g := range d.cfg.Games {
+	for _, g := range cfg.Games {
 		if strings.ToLower(strings.TrimSpace(g)) == name {
 			return true
 		}

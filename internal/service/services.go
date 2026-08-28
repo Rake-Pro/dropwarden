@@ -20,10 +20,11 @@ type Backend struct {
 	Store      *store.Store
 	ConfigPath string
 
-	mu     sync.RWMutex
-	cfg    *config.Config
-	engine *watcher.Engine
-	disco  *discovery.Discoverer
+	mu         sync.RWMutex
+	cfg        *config.Config
+	engine     *watcher.Engine
+	kickEngine *watcher.Engine
+	disco      *discovery.Discoverer
 }
 
 // NewBackend builds a Backend.
@@ -43,6 +44,20 @@ func (b *Backend) Engine() *watcher.Engine {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.engine
+}
+
+// SetKickEngine attaches the Kick engine when the kick runtime is enabled.
+func (b *Backend) SetKickEngine(e *watcher.Engine) {
+	b.mu.Lock()
+	b.kickEngine = e
+	b.mu.Unlock()
+}
+
+// KickEngine returns the Kick engine, or nil when kick is disabled/not up.
+func (b *Backend) KickEngine() *watcher.Engine {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.kickEngine
 }
 
 // SetDiscoverer attaches the discoverer once the runtime is up.
@@ -147,7 +162,8 @@ func (s *QueueService) Get() ([]QueueItemDTO, error) {
 	for _, it := range items {
 		d := dmap[it.DropID]
 		dto := QueueItemDTO{
-			DropID: it.DropID, CampaignID: it.CampaignID, DropName: d.Name,
+			DropID: it.DropID, CampaignID: it.CampaignID, Platform: string(it.Platform.OrTwitch()),
+			DropName: d.Name,
 			Game: cmap[it.CampaignID].GameName, Position: it.Position, Enabled: it.Enabled,
 			Status: string(it.Status), Reason: it.Reason, RequiredMinutes: d.RequiredMinutes,
 		}
@@ -225,7 +241,7 @@ func (s *HistoryService) Claims() ([]ClaimDTO, error) {
 	}
 	out := make([]ClaimDTO, 0, len(claims))
 	for _, c := range claims {
-		out = append(out, ClaimDTO{DropID: c.DropID, DropName: c.DropName, Game: c.GameName, ClaimedAt: c.ClaimedAt})
+		out = append(out, ClaimDTO{DropID: c.DropID, Platform: string(c.Platform.OrTwitch()), DropName: c.DropName, Game: c.GameName, ClaimedAt: c.ClaimedAt})
 	}
 	return out, nil
 }
@@ -286,7 +302,10 @@ func (s *HistoryService) Stats() (StatsDTO, error) {
 	// Overlay the in-flight session so totals tick live: recorded sessions only
 	// land in the store when they END, which otherwise freezes the numbers for
 	// hours mid-watch. Success rate stays completed-sessions-only.
-	if eng := s.b.Engine(); eng != nil {
+	for _, eng := range []*watcher.Engine{s.b.Engine(), s.b.KickEngine()} {
+		if eng == nil {
+			continue
+		}
 		if es := eng.Status(); es.State == watcher.StateWatching && !es.SessionStartedAt.IsZero() {
 			st.MinutesWatched += int(time.Since(es.SessionStartedAt).Minutes())
 			st.Sessions++

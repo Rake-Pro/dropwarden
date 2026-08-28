@@ -65,9 +65,23 @@ func startRuntime(ctx context.Context, a *app.App, backend *service.Backend, emi
 	}
 	backend.SetEngine(a.Engine)
 	backend.SetDiscoverer(a.Disco)
-	a.Log.Info().Msg("runtime up; watcher engine attached")
-	if err := a.Engine.Run(ctx); err != nil && ctx.Err() == nil {
-		a.Log.Error().Err(err).Msg("engine loop exited")
+	if a.KickEngine != nil {
+		backend.SetKickEngine(a.KickEngine)
+	}
+	a.Log.Info().Int("engines", len(a.Engines())).Msg("runtime up; watcher engine(s) attached")
+	// Run every platform engine; block until all exit (ctx cancellation).
+	done := make(chan struct{})
+	for _, e := range a.Engines() {
+		e := e
+		go func() {
+			if err := e.Run(ctx); err != nil && ctx.Err() == nil {
+				a.Log.Error().Err(err).Msg("engine loop exited")
+			}
+			done <- struct{}{}
+		}()
+	}
+	for range a.Engines() {
+		<-done
 	}
 }
 

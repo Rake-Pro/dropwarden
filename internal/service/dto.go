@@ -29,6 +29,7 @@ type DropDTO struct {
 type QueueItemDTO struct {
 	DropID          string `json:"dropID"`
 	CampaignID      string `json:"campaignID"`
+	Platform        string `json:"platform"`
 	DropName        string `json:"dropName"`
 	Game            string `json:"game"`
 	Position        int    `json:"position"`
@@ -41,6 +42,7 @@ type QueueItemDTO struct {
 
 type ClaimDTO struct {
 	DropID    string    `json:"dropID"`
+	Platform  string    `json:"platform"`
 	DropName  string    `json:"dropName"`
 	Game      string    `json:"game"`
 	ClaimedAt time.Time `json:"claimedAt"`
@@ -84,6 +86,7 @@ type ConfigDTO struct {
 	DimOpacity         float64  `json:"dimOpacity"`
 	ChromePath         string   `json:"chromePath"`
 	MuteAudio          bool     `json:"muteAudio"`
+	KickEnabled        bool     `json:"kickEnabled"`
 	ClaimStrategy      string   `json:"claimStrategy"`
 	AllowGQLFallback   bool     `json:"allowGqlFallback"`
 	SkipAccountLink    bool     `json:"skipAccountLink"`

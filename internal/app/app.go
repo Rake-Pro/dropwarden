@@ -13,6 +13,8 @@ import (
 	"github.com/rake-pro/dropwarden/internal/browser"
 	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rake-pro/dropwarden/internal/discovery"
+	"github.com/rake-pro/dropwarden/internal/domain"
+	"github.com/rake-pro/dropwarden/internal/kick"
 	"github.com/rake-pro/dropwarden/internal/logging"
 	"github.com/rake-pro/dropwarden/internal/store"
 	"github.com/rake-pro/dropwarden/internal/twitch"
@@ -32,6 +34,10 @@ type App struct {
 	Pages   *twitch.Pages
 	Disco   *discovery.Discoverer
 	Engine  *watcher.Engine
+
+	// Kick runtime (nil unless kick.enabled).
+	KickSession browser.Session
+	KickEngine  *watcher.Engine
 }
 
 // Options tune assembly.
@@ -92,14 +98,63 @@ func (a *App) StartRuntime(ctx context.Context, emit watcher.Emitter) error {
 	a.Engine = watcher.New(watcher.Deps{
 		Store: a.Store, Ctrl: a.Ctrl, Pages: a.Pages, Disco: a.Disco,
 		Cfg: a.Cfg, Emit: emit, Log: a.Log,
+		Platform: domain.PlatformTwitch, ChannelHost: "twitch.tv",
 	})
+
+	if a.Cfg.Kick.Enabled {
+		if err := a.startKickRuntime(ctx, emit); err != nil {
+			// Kick is additive: a Kick launch failure must never take down the
+			// working Twitch runtime.
+			a.Log.Error().Err(err).Msg("app: kick runtime failed to start; continuing twitch-only")
+		}
+	}
 	return nil
+}
+
+// startKickRuntime launches the second Chrome instance and the Kick engine.
+func (a *App) startKickRuntime(ctx context.Context, emit watcher.Emitter) error {
+	kcfg := a.Cfg.KickRuntimeConfig()
+	profileDir, err := a.Cfg.KickProfileDir()
+	if err != nil {
+		return err
+	}
+	klog := a.Log.With().Str("platform", "kick").Logger()
+	sess, err := browser.LaunchWith(ctx, kcfg.Browser, profileDir, kcfg.Browser.Burnin.DimOpacity, klog)
+	if err != nil {
+		return fmt.Errorf("app: launch kick browser: %w", err)
+	}
+	a.KickSession = sess
+	ctrl := kick.NewController(sess)
+	pages := kick.NewPages(ctrl)
+	disco := kick.NewDiscoverer(a.Store, pages, kcfg, klog)
+	a.KickEngine = watcher.New(watcher.Deps{
+		Store: a.Store, Ctrl: ctrl, Pages: pages, Disco: disco,
+		Cfg: kcfg, Emit: emit, Log: klog,
+		Platform: domain.PlatformKick, ChannelHost: "kick.com",
+	})
+	a.Log.Info().Msg("app: kick runtime up")
+	return nil
+}
+
+// Engines returns every engine that should run (twitch first, then kick).
+func (a *App) Engines() []*watcher.Engine {
+	var out []*watcher.Engine
+	if a.Engine != nil {
+		out = append(out, a.Engine)
+	}
+	if a.KickEngine != nil {
+		out = append(out, a.KickEngine)
+	}
+	return out
 }
 
 // Close releases runtime and eager resources.
 func (a *App) Close() {
 	if a.Session != nil {
 		_ = a.Session.Close()
+	}
+	if a.KickSession != nil {
+		_ = a.KickSession.Close()
 	}
 	if a.Store != nil {
 		_ = a.Store.Close()

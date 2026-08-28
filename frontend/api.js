@@ -9,6 +9,7 @@
 const SAMPLE = {
   connection: { chrome: false, loggedIn: false },
   status: { state: 'idle', channelLogin: '', dropName: '', current: 0, required: 0, game: '' },
+  kickStatus: null,
   queue: [
     { dropID: 'd1', dropName: 'Wooden Barricade', game: 'Rust', status: 'active', enabled: true, currentMinutes: 42, requiredMinutes: 60, reason: '@shroud · watching now' },
     { dropID: 'd2', dropName: 'Elite Wooden Door Skin', game: 'Rust', status: 'pending', enabled: true, currentMinutes: 0, requiredMinutes: 120, reason: '@posty +6' },
@@ -20,7 +21,7 @@ const SAMPLE = {
   config: {
     theme: 'dark', games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'], anyGame: false,
     priorityMode: 'top_down', autoEnqueueNew: true, volume: 0.01, forceLowestQuality: true,
-    neverFocus: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, claimStrategy: 'in_page',
+    neverFocus: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, kickEnabled: false, claimStrategy: 'in_page',
     allowGqlFallback: false, skipAccountLink: true, authMode: 'manual', storedEnabled: false, logLevel: 'info',
   },
 };
@@ -62,6 +63,8 @@ export const api = {
   async refreshState() { cache = null; return fetchState(); },
   async connection() { return (await fetchState()).connection || {}; },
   async status() { return (await fetchState()).status || {}; },
+  // Kick engine status, or null when the kick runtime is disabled/not up.
+  async kickStatus() { return (await fetchState()).kickStatus || null; },
   async queue() { return (await fetchState()).queue || []; },
   async claims() { return (await fetchState()).claims || []; },
   async stats() { return (await fetchState()).stats || {}; },
@@ -78,6 +81,13 @@ export const api = {
   stop() { return post('/api/watch/stop'); },
   skip() { return post('/api/watch/skip'); },
   refresh() { return post('/api/watch/refresh'); },
+  // Kick engine controls (mirror of the Twitch ones).
+  kick: {
+    start() { return post('/api/kick/start'); },
+    stop() { return post('/api/kick/stop'); },
+    skip() { return post('/api/kick/skip'); },
+    refresh() { return post('/api/kick/refresh'); },
+  },
   setEnabled(dropID, on) { return post('/api/queue/enabled', { dropID, on }); },
   setOrder(ids) { return post('/api/queue/order', { ids }); },
   setPriority(mode) { return post('/api/queue/priority', { mode }); },

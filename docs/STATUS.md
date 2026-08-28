@@ -150,7 +150,31 @@ stickiness holds it there as each drop completes until nothing eligible
 remains on it, then move on. "selecting: channel covers multiple eligible
 drops" logs when coverage kicked in.
 
-KICK DROPS: user wants Kick support running in PARALLEL with Twitch. Research
+KICK DROPS BUILT 2026-08-28 (phases 0-2 of the plan below; behind
+kick.enabled, default OFF, so Twitch behavior is unchanged until flipped).
+What shipped: internal/platform owns the engine-facing interfaces (twitch
+aliases them); platform column across the store (campaigns/queue/sessions/
+claims + rebuilt channel_stats/blacklist with (platform,login) keys); the
+engine is per-platform (Deps.Platform/ChannelHost, queue filtered, shared
+discovery.ReconcileQueue scoped so parallel discoverers never cross-prune);
+internal/kick implements Controller/Pages/Discoverer with VERIFY-LIVE
+selectors, campaigns fetched from page context via the unofficial
+web.kick.com endpoint (tolerant parser, kick-campaigns.json debug dump),
+inventory text dumped for shape discovery; app launches a second Chrome
+(chrome-profile-kick, offset window) + second engine when enabled - a kick
+launch failure logs and leaves Twitch running; UI has a second Now watching
+card with its own controls (/api/kick/*), KICK badges in queue rows, a Kick
+footer row, and a Settings toggle. Kick engine runs with gentler watchdogs
+(KickRuntimeConfig: no proactive refresh, longer stalls) because Kick's FAQ
+says refreshes hurt credit tracking. FIRST LIVE RUN PROTOCOL: enable the
+toggle, restart, log into Kick in the second window, turn on the GraphQL
+dump toggle, and send back ~/.dropwarden/debug/kick-campaigns.json +
+kick-inventory.txt - those dumps are what turn the guessed parser/selectors
+into verified ones. KNOWN GAPS until then: no Kick progress source (stall
+aborts are effectively disabled; drops will not complete on Kick yet),
+claim/play/offline selectors unverified, Cloudflare behavior unverified.
+
+Original research/design note: user wants Kick support running in PARALLEL with Twitch. Research
 done + full design written in docs/NOTES-kick.md (read it before starting):
 Kick drops are active and Twitch-shaped (category campaigns, ACL vs
 any-channel, multi-tier simultaneous credit, manual claim, link-at-claim-time,

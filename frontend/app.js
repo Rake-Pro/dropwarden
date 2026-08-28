@@ -13,7 +13,7 @@ function switchView(view) {
 }
 
 async function renderFoot() {
-  const [c, st] = await Promise.all([api.connection(), api.status()]);
+  const [c, st, kst] = await Promise.all([api.connection(), api.status(), api.kickStatus()]);
   const foot = $('#rail-foot');
   const row = (cls, label) => `<div class="frow"><span class="fdot ${cls}"></span>${label}</div>`;
   if (api.offline) {
@@ -24,14 +24,15 @@ async function renderFoot() {
   const watcher = !c.chrome ? row('off', 'Watcher waiting')
     : st.paused ? row('warn', 'Watcher paused')
     : row('ok', 'Watcher running');
-  foot.innerHTML = chrome + watcher;
+  const kick = !kst ? ''
+    : kst.paused ? row('warn', 'Kick paused')
+    : row('ok', 'Kick running');
+  foot.innerHTML = chrome + watcher + kick;
 }
 
-async function renderDashboard() {
-  const st = await api.status();
-  const queue = await api.queue();
-  const stats = await api.stats();
-  const upnext = queue.filter(q => q.status === 'pending').slice(0, 3);
+// nowCardEl renders one platform's "Now watching" card. plat is '' for Twitch
+// (default API routes) or 'kick' (routes under /api/kick).
+function nowCardEl(st, plat) {
   const state = st.state || 'idle';
   const watching = state === 'watching';
   // Transitional engine states get real copy instead of the idle empty-state.
@@ -48,6 +49,54 @@ async function renderDashboard() {
   const busy = Object.prototype.hasOwnProperty.call(busyCopy, state);
   const showChannel = watching || state === 'opening' || state === 'validating_playback';
   const headName = showChannel && st.channelLogin ? st.channelLogin : 'idle';
+
+  const card = el(`<div class="card now">
+    <div class="head">
+      <div class="avatar">${esc((showChannel && st.channelLogin ? st.channelLogin : '--').slice(0, 2).toUpperCase())}</div>
+      <div class="who">
+        <div class="ch"><span class="nm">${esc(headName)}</span> ${plat === 'kick' ? '<span class="pfk">KICK</span>' : ''} ${watching ? '<span class="live">LIVE</span>' : ''}</div>
+        <div class="game">${esc(st.game || '')}${st.viewers ? ' · ' + st.viewers.toLocaleString() + ' viewers' : ''}</div>
+      </div>
+      <span class="pill ${esc(state)} ${busy ? 'busy' : ''}"><span class="d"></span> ${esc(cap(state))}</span>
+    </div>
+    ${watching ? `<div class="drop-row">
+      <div class="lbl"><span class="name">${esc(st.dropName)}</span><span class="mins mono">${st.current} / ${st.required} min</span></div>
+      <div class="bar"><i style="width:${pct(st.current, st.required)}%"></i></div>
+    </div>
+    <div class="watchdogs">
+      ${st.current > 0
+        ? '<span class="wd"><span class="tick">✓</span> Progress ticking</span>'
+        : '<span class="wd"><span class="tick wait">◌</span> Awaiting first tick</span>'}
+      <span class="wd"><span class="tick">✓</span> Playback healthy</span>
+      <span class="wd"><span class="tick">✓</span> Volume 1%</span>
+    </div>` : busy
+      ? `<div class="empty">${esc(busyCopy[state])}</div>`
+      : `<div class="empty">Not watching. Press Start to begin working the queue.</div>`}
+    <div class="foot-btns">
+      ${watching ? '<button class="btn" data-act="skip">Skip drop</button>' : ''}
+      ${state === 'idle' ? '<button class="btn primary" data-act="start">Start</button>' : ''}
+      <button class="btn ghost" data-act="refresh">Refresh campaigns</button>
+      ${state !== 'idle' ? '<button class="btn ghost danger" data-act="stop">Pause</button>' : ''}
+    </div>
+  </div>`);
+  card.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', async () => {
+    const act = b.dataset.act;
+    const a = plat === 'kick' ? api.kick : api;
+    if (act === 'start') await a.start();
+    if (act === 'stop') await a.stop();
+    if (act === 'skip') await a.skip();
+    if (act === 'refresh') await a.refresh();
+    refreshAll();
+  }));
+  return card;
+}
+
+async function renderDashboard() {
+  const st = await api.status();
+  const kickSt = await api.kickStatus();
+  const queue = await api.queue();
+  const stats = await api.stats();
+  const upnext = queue.filter(q => q.status === 'pending').slice(0, 3);
 
   const v = $('#v-dashboard');
   v.innerHTML = '';
@@ -76,35 +125,11 @@ async function renderDashboard() {
   }
 
   const grid = el(`<div class="grid2"></div>`);
-  const nowCard = el(`<div class="card now">
-    <div class="head">
-      <div class="avatar">${esc((showChannel && st.channelLogin ? st.channelLogin : '--').slice(0, 2).toUpperCase())}</div>
-      <div class="who">
-        <div class="ch"><span class="nm">${esc(headName)}</span> ${watching ? '<span class="live">LIVE</span>' : ''}</div>
-        <div class="game">${esc(st.game || '')}${st.viewers ? ' · ' + st.viewers.toLocaleString() + ' viewers' : ''}</div>
-      </div>
-      <span class="pill ${esc(state)} ${busy ? 'busy' : ''}"><span class="d"></span> ${esc(cap(state))}</span>
-    </div>
-    ${watching ? `<div class="drop-row">
-      <div class="lbl"><span class="name">${esc(st.dropName)}</span><span class="mins mono">${st.current} / ${st.required} min</span></div>
-      <div class="bar"><i style="width:${pct(st.current, st.required)}%"></i></div>
-    </div>
-    <div class="watchdogs">
-      ${st.current > 0
-        ? '<span class="wd"><span class="tick">✓</span> Progress ticking</span>'
-        : '<span class="wd"><span class="tick wait">◌</span> Awaiting first tick</span>'}
-      <span class="wd"><span class="tick">✓</span> Playback healthy</span>
-      <span class="wd"><span class="tick">✓</span> Volume 1%</span>
-    </div>` : busy
-      ? `<div class="empty">${esc(busyCopy[state])}</div>`
-      : `<div class="empty">Not watching. Press Start to begin working the queue.</div>`}
-    <div class="foot-btns">
-      ${watching ? '<button class="btn" data-act="skip">Skip drop</button>' : ''}
-      ${state === 'idle' ? '<button class="btn primary" data-act="start">Start</button>' : ''}
-      <button class="btn ghost" data-act="refresh">Refresh campaigns</button>
-      ${state !== 'idle' ? '<button class="btn ghost danger" data-act="stop">Pause</button>' : ''}
-    </div>
-  </div>`);
+  const left = el(`<div class="stack"></div>`);
+  left.append(nowCardEl(st, ''));
+  if (kickSt) {
+    left.append(nowCardEl(kickSt, 'kick'));
+  }
 
   const side = el(`<div class="stack">
     <div class="card mini"><h3>Up next</h3><div class="upnext">${upnext.length ? upnext.map((q, i) => `
@@ -118,17 +143,8 @@ async function renderDashboard() {
     </div>
   </div>`);
 
-  grid.append(nowCard, side);
+  grid.append(left, side);
   v.append(grid);
-
-  v.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', async () => {
-    const act = b.dataset.act;
-    if (act === 'start') await api.start();
-    if (act === 'stop') await api.stop();
-    if (act === 'skip') await api.skip();
-    if (act === 'refresh') await api.refresh();
-    refreshAll();
-  }));
 }
 
 async function renderQueue() {
@@ -156,7 +172,7 @@ async function renderQueue() {
   for (const q of queue) {
     const row = el(`<div class="qrow ${q.status === 'active' ? 'active' : ''}" data-id="${esc(q.dropID)}" draggable="true">
       <span class="grip" title="drag to reorder">⁝⁝</span>
-      <div class="qname"><div class="n">${esc(q.dropName || q.dropID)}</div><div class="meta">${esc(q.game)}${q.reason ? ' · ' + esc(q.reason) : ''}</div></div>
+      <div class="qname"><div class="n">${q.platform === 'kick' ? '<span class="pfk">KICK</span> ' : ''}${esc(q.dropName || q.dropID)}</div><div class="meta">${esc(q.game)}${q.reason ? ' · ' + esc(q.reason) : ''}</div></div>
       <div class="qmini"><div class="bar"><i class="${q.status === 'active' ? '' : 'blue'}" style="width:${pct(q.currentMinutes, q.requiredMinutes)}%"></i></div><div class="mm mono">${q.requiredMinutes ? q.currentMinutes + ' / ' + q.requiredMinutes + ' min' : '—'}</div></div>
       <span class="pill ${esc(q.status)}"><span class="d"></span> ${esc(cap(q.status))}</span>
       <div class="switch ${q.enabled ? 'on' : ''}" role="switch" aria-checked="${q.enabled}" tabindex="0"><i></i></div>
@@ -292,6 +308,9 @@ function settingsPaneHTML() {
           <div class="ctl"><input class="input mono" data-field="chromePath" value="${esc(cfg.chromePath)}" placeholder="auto-detected" style="width:100%"></div></div>
         <div class="row"><div class="lab"><div class="l">Skip account-link drops</div><div class="h">Surface drops that need a linked account instead of failing on them.</div></div><div class="ctl">${toggleHTML('skipAccountLink', cfg.skipAccountLink)}</div></div>
         <div class="row"><div class="lab"><div class="l">Allow GQL claim fallback</div><div class="h">Off by design — replaying the claim mutation has triggered bot blocks.</div></div><div class="ctl">${toggleHTML('allowGqlFallback', cfg.allowGqlFallback)}</div></div>
+      </div></div>
+      <div class="group"><div class="caption">Kick</div><div class="card">
+        <div class="row"><div class="lab"><div class="l">Enable Kick drops</div><div class="h">Runs a second dedicated Chrome and watcher engine for Kick, in parallel with Twitch. Log in once in the Kick window on first run. Needs an app restart.</div></div><div class="ctl">${toggleHTML('kickEnabled', cfg.kickEnabled)}</div></div>
       </div></div>`;
     case 'account': return `
       <div class="group"><div class="caption">Account</div><div class="card">

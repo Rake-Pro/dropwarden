@@ -61,11 +61,17 @@ type session struct {
 // single page. ctx bounds the startup handshake only: once Launch returns, the
 // session owns the browser until Close, independent of ctx.
 func Launch(ctx context.Context, cfg *config.Config, logger zerolog.Logger) (Session, error) {
-	chromePath, err := FindChrome(cfg.Browser.ChromePath)
+	profileDir, err := cfg.ProfileDir()
 	if err != nil {
 		return nil, err
 	}
-	profileDir, err := cfg.ProfileDir()
+	return LaunchWith(ctx, cfg.Browser, profileDir, cfg.Browser.Burnin.DimOpacity, logger)
+}
+
+// LaunchWith starts a dedicated Chrome for one platform instance, with its own
+// browser config and profile directory (Twitch and Kick each get one).
+func LaunchWith(ctx context.Context, bcfg config.BrowserConfig, profileDir string, dimOpacity float64, logger zerolog.Logger) (Session, error) {
+	chromePath, err := FindChrome(bcfg.ChromePath)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +79,7 @@ func Launch(ctx context.Context, cfg *config.Config, logger zerolog.Logger) (Ses
 		return nil, err
 	}
 
-	flags := chromeFlags(cfg.Browser, profileDir, cfg.Browser.Window)
+	flags := chromeFlags(bcfg, profileDir, bcfg.Window)
 	logger.Info().Str("chrome", chromePath).Str("profile", profileDir).Msg("launching chrome")
 
 	proc, err := launchChrome(chromePath, flags)
@@ -122,7 +128,7 @@ func Launch(ctx context.Context, cfg *config.Config, logger zerolog.Logger) (Ses
 	if err := s.applyDarkEmulation(); err != nil {
 		logger.Warn().Err(err).Msg("could not force dark color scheme")
 	}
-	if op := cfg.Browser.Burnin.DimOpacity; op > 0 {
+	if op := dimOpacity; op > 0 {
 		script := dimOverlayScript(op)
 		if err := s.SeedOnNewDocument(ctx, script); err != nil {
 			logger.Warn().Err(err).Msg("could not install dim overlay")

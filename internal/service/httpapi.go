@@ -2,12 +2,14 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rake-pro/dropwarden/internal/logging"
+	"github.com/rake-pro/dropwarden/internal/watcher"
 )
 
 // NewHTTPHandler builds an http.Handler exposing the services as a small JSON
@@ -30,9 +32,14 @@ func NewHTTPHandler(b *Backend) http.Handler {
 		stats, _ := history.Stats()
 		camps, _ := campaigns.List()
 		engineUp := b.Engine() != nil
+		var kickStatus any
+		if ke := b.KickEngine(); ke != nil {
+			kickStatus = ke.Status()
+		}
 		writeJSON(w, map[string]any{
 			"connection": map[string]any{"chrome": engineUp, "loggedIn": engineUp},
 			"status":     watch.Status(),
+			"kickStatus": kickStatus,
 			"queue":      nonNilQueue(q),
 			"claims":     claims,
 			"stats":      stats,
@@ -75,6 +82,23 @@ func NewHTTPHandler(b *Backend) http.Handler {
 	mux.HandleFunc("POST /api/watch/stop", action(watch.Stop))
 	mux.HandleFunc("POST /api/watch/skip", action(watch.SkipCurrent))
 	mux.HandleFunc("POST /api/watch/refresh", action(watch.ForceRefresh))
+
+	// Kick engine controls (present only while the kick runtime is up).
+	kickAction := func(f func(e *watcher.Engine)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			e := b.KickEngine()
+			if e == nil {
+				writeErr(w, fmt.Errorf("kick runtime is not running"))
+				return
+			}
+			f(e)
+			writeJSON(w, map[string]any{"ok": true})
+		}
+	}
+	mux.HandleFunc("POST /api/kick/start", kickAction(func(e *watcher.Engine) { e.Start() }))
+	mux.HandleFunc("POST /api/kick/stop", kickAction(func(e *watcher.Engine) { e.Stop() }))
+	mux.HandleFunc("POST /api/kick/skip", kickAction(func(e *watcher.Engine) { e.SkipCurrent() }))
+	mux.HandleFunc("POST /api/kick/refresh", kickAction(func(e *watcher.Engine) { e.RefreshNow() }))
 
 	// Queue actions.
 	mux.HandleFunc("POST /api/queue/order", func(w http.ResponseWriter, r *http.Request) {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 )
 
 // StarterConfig is written on first run so the app never fails merely for being
@@ -83,6 +84,20 @@ browser:
     volume: 0.01               # NOT 0 - Chrome 145 pauses muted background video
     force_lowest_quality: true
     reassert_interval: 30s
+
+kick:
+  enabled: false               # parallel Kick drops runtime (its own Chrome instance + engine)
+  browser:
+    profile_dir: ""            # blank = <approot>/chrome-profile-kick (never shared with Twitch)
+    mute_audio: false
+    window:
+      width: 640
+      height: 400
+      x: 700                   # offset so the two watcher windows do not stack
+      y: 40
+      always_on_bottom: true
+      never_focus: true
+      start_minimized: false
 
 auth:
   mode: manual                 # manual | stored
@@ -168,6 +183,39 @@ func (c *Config) ProfileDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "chrome-profile"), nil
+}
+
+// KickProfileDir resolves the Kick instance's Chrome profile directory.
+func (c *Config) KickProfileDir() (string, error) {
+	if c.Kick.Browser.ProfileDir != "" {
+		return ExpandPath(c.Kick.Browser.ProfileDir), nil
+	}
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "chrome-profile-kick"), nil
+}
+
+// KickRuntimeConfig builds the config the KICK engine runs with: a copy of the
+// shared config with Browser swapped for the Kick instance's and the watchdog
+// cadence retuned. Kick's own FAQ warns that frequent refreshes hurt watch
+// credit, so stalls get longer fuses and the proactive refresh is disabled.
+func (c *Config) KickRuntimeConfig() *Config {
+	kc := *c
+	kc.Browser = c.Kick.Browser
+	// Inherit the shared player policy unless Kick overrides it.
+	if kc.Browser.Player.Volume == 0 {
+		kc.Browser.Player = c.Browser.Player
+	}
+	if kc.Watcher.SoftStall < 10*time.Minute {
+		kc.Watcher.SoftStall = 10 * time.Minute
+	}
+	if kc.Watcher.HardStall < 20*time.Minute {
+		kc.Watcher.HardStall = 20 * time.Minute
+	}
+	kc.Watcher.ProactiveRefresh = 0 // 0 = disabled (see watch.go guard)
+	return &kc
 }
 
 // StarterDefaults parses the starter template into a Config: the canonical

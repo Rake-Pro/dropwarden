@@ -21,7 +21,12 @@ func (e *Engine) runWatching(ctx context.Context) (State, string) {
 	w := e.deps.Cfg.Watcher
 	now := e.deps.Now()
 
-	proactiveAt := now.Add(e.jittered(w.ProactiveRefresh, w.ProactiveJitter))
+	// ProactiveRefresh <= 0 disables the periodic refresh entirely (Kick: the
+	// platform's own FAQ says frequent refreshes hurt watch-credit tracking).
+	proactiveAt := now.Add(100 * 365 * 24 * time.Hour)
+	if w.ProactiveRefresh > 0 {
+		proactiveAt = now.Add(e.jittered(w.ProactiveRefresh, w.ProactiveJitter))
+	}
 	maxSessionAt := e.cur.sessionStart.Add(w.MaxSession)
 	lastReassert := now
 	frozenTicks := 0
