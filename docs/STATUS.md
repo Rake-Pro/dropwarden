@@ -196,6 +196,12 @@ Watching button first (selContentGateAccept, verify-live but standard
 data-a-targets). Twitch remembers the ack per channel. If a blacklisted gated
 channel should be retried sooner than the 15m TTL, restart or wait it out.
 
+Link-gate doctrine (0229f9b, live find: CREP Emote needs_action with 4/30
+server-credited minutes): Twitch's flags cannot distinguish link-to-earn from
+link-optional, so server-confirmed progress (RealMinutes>0 or Claimable)
+overrides the account-link gate, and skip_account_link_drops is now a real
+switch (off = watch everything; failed claims land in manual reconcile).
+
 Still to confirm on the user's Mac:
 
 1. Does it reach state `watching` and does progress tick? This is the FIRST real
