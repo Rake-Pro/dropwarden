@@ -48,6 +48,14 @@ func (c *controller) ReassertVolume(ctx context.Context, p PlayerPolicy) error {
 }
 
 func (c *controller) ClickPlay(ctx context.Context) error {
+	// A content-classification (mature) gate replaces the player until it is
+	// acknowledged - accept it first; the player then loads and the next
+	// validation tick sees real playback. ClickPlay is invoked every
+	// validation iteration while the video is not playing, so this needs no
+	// separate engine hook.
+	if clicked, _ := c.sess.Click(ctx, selContentGateAccept); clicked {
+		return nil
+	}
 	_, err := c.sess.Click(ctx, selPlayButton)
 	return err
 }

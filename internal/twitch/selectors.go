@@ -26,6 +26,14 @@ const (
 	selDropsChatIcon = "button[aria-label*='Drops'], [data-a-target='drops-in-chat']"
 	selClaimButton   = "button[data-test-selector='DropsCampaignInProgressRewardPresentation-claim-button'], button[aria-label*='Claim']"
 	selInventoryCard = "[data-test-selector='DropsCampaignInProgressDescription'], .inventory-drop-card" // verify live
+
+	// selContentGateAccept is the content-classification (mature) gate's
+	// "Start Watching" button. The gate replaces the player entirely until
+	// acknowledged, so validation can never pass while it is up. Deliberately
+	// button-specific selectors only - a container-scoped `button` would risk
+	// clicking the adjacent "Go Home". Twitch remembers the acknowledgement
+	// per channel, so one click per channel suffices.
+	selContentGateAccept = "button[data-a-target='content-classification-gate-overlay-start-watching-button'], button[data-a-target='player-overlay-mature-accept'], button[data-test-selector='content-classification-gate-overlay-start-watching-button']"
 )
 
 // jsHealthProbe returns one JSON object describing playback and drop state in a
@@ -34,7 +42,11 @@ const (
 const jsHealthProbe = `(() => {
   const q = (s) => document.querySelector(s);
   const v = q('video');
-  const gate = !!q("[data-a-target='player-overlay-content-gate'], .content-overlay-gate");
+  // The content-classification (mature) gate renders the same overlay family
+  // as the offline gate; it must NOT read as offline - it has an accept
+  // button, which validation clicks via ClickPlay. Offline = gate WITHOUT one.
+  const acceptBtn = q("button[data-a-target='content-classification-gate-overlay-start-watching-button'], button[data-a-target='player-overlay-mature-accept'], button[data-test-selector='content-classification-gate-overlay-start-watching-button']");
+  const gate = !!q("[data-a-target='player-overlay-content-gate'], .content-overlay-gate") && !acceptBtn;
   const perr = !!q("[data-a-target='player-error-content'], .player-error");
   const raid = q("[data-test-selector='raid-banner'], .raid-banner");
   let raidTarget = '';

@@ -186,6 +186,16 @@ refreshes HURT credit tracking (gentler watchdogs, no proactive refresh),
 rewards EXPIRE unclaimed, account link needed at claim not selection. NOT
 STARTED - implementation is its own work session.
 
+Mature/content-classification gate handled (live find 2026-08-28, screenshot
+of naughty_kitteee): the "intended for certain audiences... Start Watching"
+overlay blocked playback AND matched the offline-gate selector family, so
+gated channels were insta-blacklisted as offline. Fix: the health probe only
+reports offlineGate when the overlay has NO accept button, and twitch
+ClickPlay (called every validation tick while not playing) clicks the Start
+Watching button first (selContentGateAccept, verify-live but standard
+data-a-targets). Twitch remembers the ack per channel. If a blacklisted gated
+channel should be retried sooner than the 15m TTL, restart or wait it out.
+
 Still to confirm on the user's Mac:
 
 1. Does it reach state `watching` and does progress tick? This is the FIRST real
