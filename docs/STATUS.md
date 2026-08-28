@@ -202,6 +202,18 @@ link-optional, so server-confirmed progress (RealMinutes>0 or Claimable)
 overrides the account-link gate, and skip_account_link_drops is now a real
 switch (off = watch everything; failed claims land in manual reconcile).
 
+Chrome-death recovery (live find 2026-08-27 evening): a frozen-video refresh
+coincided with the CDP connection dying, and the app spent 90+ minutes
+retry-looping navigation on the closed socket - nothing ever relaunched
+Chrome. Fix: browser.Managed wraps the session; when an underlying session's
+event stream ends (disconnect/crash), it reaps the dead process and re-invokes
+the launch closure (full re-init: capture shim, minimize policy) with capped
+exponential backoff, forever, then swaps the live session in place - the
+engine's normal backoff just starts succeeding again. Both platforms' sessions
+are wrapped. During recovery, calls fail fast with 'browser restarting'.
+Root cause of the original Chrome death itself is unknown (possibly renderer
+crash on reload) - recovery makes it irrelevant.
+
 Still to confirm on the user's Mac:
 
 1. Does it reach state `watching` and does progress tick? This is the FIRST real

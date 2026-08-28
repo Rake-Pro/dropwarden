@@ -77,22 +77,33 @@ func Open(opts Options) (*App, error) {
 // StartRuntime launches Chrome and builds the Twitch controller, page driver,
 // discoverer, and watcher engine. emit receives engine events.
 func (a *App) StartRuntime(ctx context.Context, emit watcher.Emitter) error {
-	sess, err := browser.Launch(ctx, a.Cfg, a.Log)
+	// The launch closure fully initializes a Twitch-ready session; the Managed
+	// wrapper re-invokes it whenever Chrome dies (CDP disconnect, crash), so an
+	// overnight browser crash recovers instead of retry-looping on a dead
+	// socket forever.
+	launch := func(lctx context.Context) (browser.Session, error) {
+		sess, err := browser.Launch(lctx, a.Cfg, a.Log)
+		if err != nil {
+			return nil, err
+		}
+		if err := twitch.InstallCapture(lctx, sess); err != nil {
+			a.Log.Warn().Err(err).Msg("app: install capture shim failed")
+		}
+		if a.Cfg.Browser.Window.StartMinimized {
+			if err := sess.SetMinimized(lctx, true); err != nil {
+				a.Log.Warn().Err(err).Msg("app: minimize watcher window failed")
+			} else {
+				a.Log.Info().Msg("app: watcher window minimized")
+			}
+		}
+		return sess, nil
+	}
+	sess, err := launch(ctx)
 	if err != nil {
 		return fmt.Errorf("app: launch browser: %w", err)
 	}
-	a.Session = sess
-	if a.Cfg.Browser.Window.StartMinimized {
-		if err := sess.SetMinimized(ctx, true); err != nil {
-			a.Log.Warn().Err(err).Msg("app: minimize watcher window failed")
-		} else {
-			a.Log.Info().Msg("app: watcher window minimized")
-		}
-	}
-	if err := twitch.InstallCapture(ctx, sess); err != nil {
-		a.Log.Warn().Err(err).Msg("app: install capture shim failed")
-	}
-	a.Ctrl = twitch.NewController(sess)
+	a.Session = browser.NewManaged(sess, launch, a.Log)
+	a.Ctrl = twitch.NewController(a.Session)
 	a.Pages = twitch.NewPages(a.Ctrl)
 	a.Disco = discovery.New(a.Store, a.Pages, a.Cfg, a.Log)
 	a.Engine = watcher.New(watcher.Deps{
@@ -119,12 +130,24 @@ func (a *App) startKickRuntime(ctx context.Context, emit watcher.Emitter) error 
 		return err
 	}
 	klog := a.Log.With().Str("platform", "kick").Logger()
-	sess, err := browser.LaunchWith(ctx, kcfg.Browser, profileDir, kcfg.Browser.Burnin.DimOpacity, klog)
+	launch := func(lctx context.Context) (browser.Session, error) {
+		sess, err := browser.LaunchWith(lctx, kcfg.Browser, profileDir, kcfg.Browser.Burnin.DimOpacity, klog)
+		if err != nil {
+			return nil, err
+		}
+		if kcfg.Browser.Window.StartMinimized {
+			if err := sess.SetMinimized(lctx, true); err != nil {
+				klog.Warn().Err(err).Msg("app: minimize kick window failed")
+			}
+		}
+		return sess, nil
+	}
+	sess, err := launch(ctx)
 	if err != nil {
 		return fmt.Errorf("app: launch kick browser: %w", err)
 	}
-	a.KickSession = sess
-	ctrl := kick.NewController(sess)
+	a.KickSession = browser.NewManaged(sess, launch, klog)
+	ctrl := kick.NewController(a.KickSession)
 	pages := kick.NewPages(ctrl)
 	disco := kick.NewDiscoverer(a.Store, pages, kcfg, klog)
 	a.KickEngine = watcher.New(watcher.Deps{
