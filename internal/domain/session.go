@@ -24,6 +24,7 @@ type WatchSession struct {
 	ID           string
 	DropID       string
 	CampaignID   string
+	Platform     Platform
 	ChannelLogin string
 
 	StartedAt time.Time
@@ -62,6 +63,7 @@ func (s WatchSession) DurationMinutes() int {
 type Claim struct {
 	DropID     string
 	CampaignID string
+	Platform   Platform
 	DropName   string
 	GameName   string
 	Benefits   []Benefit

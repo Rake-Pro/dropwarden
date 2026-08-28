@@ -163,16 +163,16 @@ func TestPruneQueue(t *testing.T) {
 func TestBlacklistExpiry(t *testing.T) {
 	s := newTestStore(t)
 	now := time.Now()
-	if err := s.BlacklistChannel("shroud", "stall", now.Add(10*time.Minute)); err != nil {
+	if err := s.BlacklistChannel(domain.PlatformTwitch, "shroud", "stall", now.Add(10*time.Minute)); err != nil {
 		t.Fatalf("blacklist: %v", err)
 	}
-	if bl, _ := s.IsBlacklisted("shroud", now); !bl {
+	if bl, _ := s.IsBlacklisted(domain.PlatformTwitch, "shroud", now); !bl {
 		t.Fatal("should be blacklisted now")
 	}
-	if bl, _ := s.IsBlacklisted("shroud", now.Add(11*time.Minute)); bl {
+	if bl, _ := s.IsBlacklisted(domain.PlatformTwitch, "shroud", now.Add(11*time.Minute)); bl {
 		t.Fatal("should have expired")
 	}
-	if bl, _ := s.IsBlacklisted("other", now); bl {
+	if bl, _ := s.IsBlacklisted(domain.PlatformTwitch, "other", now); bl {
 		t.Fatal("unknown channel not blacklisted")
 	}
 }

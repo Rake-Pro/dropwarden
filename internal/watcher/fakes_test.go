@@ -108,3 +108,7 @@ func (r *recordingEmitter) count(event string) int {
 	defer r.mu.Unlock()
 	return r.events[event]
 }
+
+func (f *fakePager) DrainProgress(context.Context) ([]domain.Progress, error) {
+	return nil, nil
+}

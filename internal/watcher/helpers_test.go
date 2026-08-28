@@ -17,7 +17,7 @@ func TestLoginFromPath(t *testing.T) {
 		"/":                                      "",
 	}
 	for in, want := range cases {
-		if got := loginFromPath(in); got != want {
+		if got := loginFromPath("", in); got != want {
 			t.Errorf("loginFromPath(%q)=%q want %q", in, got, want)
 		}
 	}

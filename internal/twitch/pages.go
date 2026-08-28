@@ -36,6 +36,16 @@ func (p *Pages) DiscoverCampaigns(ctx context.Context) (CaptureResult, error) {
 	return Drain(ctx, sess)
 }
 
+// DrainProgress drains the passive GQL capture buffer and returns any progress
+// entries it held (watcher.Pager's platform-neutral capture hook).
+func (p *Pages) DrainProgress(ctx context.Context) ([]domain.Progress, error) {
+	res, err := Drain(ctx, p.ctrl.Session())
+	if err != nil {
+		return nil, err
+	}
+	return res.Progress, nil
+}
+
 // ReadInventory loads the inventory page and returns server-confirmed progress.
 func (p *Pages) ReadInventory(ctx context.Context) ([]domain.Progress, error) {
 	sess := p.ctrl.Session()

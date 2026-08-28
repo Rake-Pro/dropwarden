@@ -12,13 +12,14 @@ import (
 // position when the item already exists (position is managed by SetQueueOrder).
 func (s *Store) UpsertQueueItem(it domain.QueueItem) error {
 	_, err := s.db.Exec(`INSERT INTO queue
-		(drop_id,campaign_id,position,enabled,status,reason,last_attempt_at)
-		VALUES (?,?,?,?,?,?,?)
+		(drop_id,campaign_id,platform,position,enabled,status,reason,last_attempt_at)
+		VALUES (?,?,?,?,?,?,?,?)
 		ON CONFLICT(drop_id) DO UPDATE SET
-			campaign_id=excluded.campaign_id, enabled=excluded.enabled,
+			campaign_id=excluded.campaign_id, platform=excluded.platform,
+			enabled=excluded.enabled,
 			status=excluded.status, reason=excluded.reason,
 			last_attempt_at=excluded.last_attempt_at`,
-		it.DropID, it.CampaignID, it.Position, boolToInt(it.Enabled),
+		it.DropID, it.CampaignID, string(it.Platform.OrTwitch()), it.Position, boolToInt(it.Enabled),
 		string(it.Status), it.Reason, unixPtr(it.LastAttemptAt))
 	if err != nil {
 		return fmt.Errorf("store: upsert queue item: %w", err)
@@ -28,7 +29,7 @@ func (s *Store) UpsertQueueItem(it domain.QueueItem) error {
 
 // GetQueue returns queue items in ascending position order.
 func (s *Store) GetQueue() ([]domain.QueueItem, error) {
-	rows, err := s.db.Query(`SELECT drop_id,campaign_id,position,enabled,status,reason,last_attempt_at FROM queue ORDER BY position`)
+	rows, err := s.db.Query(`SELECT drop_id,campaign_id,platform,position,enabled,status,reason,last_attempt_at FROM queue ORDER BY position`)
 	if err != nil {
 		return nil, fmt.Errorf("store: get queue: %w", err)
 	}
@@ -37,11 +38,12 @@ func (s *Store) GetQueue() ([]domain.QueueItem, error) {
 	for rows.Next() {
 		var it domain.QueueItem
 		var enabled int
-		var status, reason string
+		var pf, status, reason string
 		var last sql.NullInt64
-		if err := rows.Scan(&it.DropID, &it.CampaignID, &it.Position, &enabled, &status, &reason, &last); err != nil {
+		if err := rows.Scan(&it.DropID, &it.CampaignID, &pf, &it.Position, &enabled, &status, &reason, &last); err != nil {
 			return nil, fmt.Errorf("store: scan queue: %w", err)
 		}
+		it.Platform = domain.Platform(pf).OrTwitch()
 		it.Enabled = enabled != 0
 		it.Status = domain.ItemStatus(status)
 		it.Reason = reason

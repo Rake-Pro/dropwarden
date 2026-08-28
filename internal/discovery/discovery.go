@@ -98,12 +98,14 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 	// List entries first (basic fields), then detail entries (full drops + ACL)
 	// so details win on conflict.
 	for _, c := range captured.Campaigns {
+		c.Platform = domain.PlatformTwitch
 		if err := d.store.UpsertCampaign(c); err != nil {
 			return res, err
 		}
 		res.Campaigns++
 	}
 	for _, c := range captured.Details {
+		c.Platform = domain.PlatformTwitch
 		if err := d.store.UpsertCampaign(c); err != nil {
 			return res, err
 		}
@@ -233,9 +235,14 @@ func (d *Discoverer) reconcileQueue(ctx context.Context) (int, error) {
 	}
 	now := time.Now()
 
-	// desired = unclaimed drops of matching, in-window campaigns.
+	// desired = unclaimed drops of matching, in-window campaigns OF THIS
+	// PLATFORM. Other platforms' campaigns and queue items are invisible to
+	// this discoverer so it never prunes or enqueues across platforms.
 	desired := map[string]domain.Campaign{}
 	for _, c := range campaigns {
+		if c.Platform.OrTwitch() != domain.PlatformTwitch {
+			continue
+		}
 		if !d.matchesFilter(c) || c.Status == domain.StatusExpired {
 			continue
 		}
@@ -261,6 +268,9 @@ func (d *Discoverer) reconcileQueue(ctx context.Context) (int, error) {
 		if it.Status == domain.ItemActive {
 			keep[it.DropID] = true
 		}
+		if it.Platform.OrTwitch() != domain.PlatformTwitch {
+			keep[it.DropID] = true // another platform's item; not ours to prune
+		}
 	}
 	if removed, err := d.store.PruneQueue(keep); err != nil {
 		return 0, err
@@ -280,7 +290,7 @@ func (d *Discoverer) reconcileQueue(ctx context.Context) (int, error) {
 		if queued[id] {
 			continue
 		}
-		it := domain.QueueItem{DropID: id, CampaignID: c.ID, Position: pos, Enabled: true, Status: domain.ItemPending}
+		it := domain.QueueItem{DropID: id, CampaignID: c.ID, Platform: c.Platform.OrTwitch(), Position: pos, Enabled: true, Status: domain.ItemPending}
 		if c.RequiresAccountLink() && d.cfg.Claim.SkipAccountLink {
 			it.Status = domain.ItemNeedsAction
 			it.Reason = "account link required"

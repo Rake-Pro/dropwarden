@@ -233,7 +233,7 @@ func (e *Engine) stallCheck(ctx context.Context, now, proactiveAt time.Time) (St
 
 // handleNavigation reacts to the active channel changing (a raid or redirect).
 func (e *Engine) handleNavigation(ctx context.Context, urlOrPath string) (State, string, bool) {
-	newLogin := loginFromPath(urlOrPath)
+	newLogin := loginFromPath(e.deps.ChannelHost, urlOrPath)
 	if newLogin == "" || newLogin == e.cur.login {
 		return "", "", false
 	}
@@ -275,11 +275,15 @@ func (e *Engine) channelEligible(login string) bool {
 	return false
 }
 
-// loginFromPath extracts the channel login from a URL or pathname.
-func loginFromPath(p string) string {
+// loginFromPath extracts the channel login from a URL or pathname. host is the
+// platform's channel host (e.g. "twitch.tv", "kick.com"); empty means Twitch.
+func loginFromPath(host, p string) string {
+	if host == "" {
+		host = "twitch.tv"
+	}
 	s := p
-	if i := strings.Index(s, "twitch.tv/"); i >= 0 {
-		s = s[i+len("twitch.tv/"):]
+	if i := strings.Index(s, host+"/"); i >= 0 {
+		s = s[i+len(host)+1:]
 	}
 	s = strings.TrimPrefix(s, "/")
 	// Cut at the next path/query separator.

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/domain"
-	"github.com/rake-pro/dropwarden/internal/twitch"
+	"github.com/rake-pro/dropwarden/internal/platform"
 )
 
 // probeTimeout bounds a health probe. A timeout here is the hang signal: the
@@ -15,7 +15,7 @@ const probeTimeout = 10 * time.Second
 
 // probe runs a health probe under a hard timeout so a hung renderer surfaces as
 // an error rather than blocking the engine loop.
-func (e *Engine) probe(ctx context.Context) (twitch.Health, error) {
+func (e *Engine) probe(ctx context.Context) (platform.Health, error) {
 	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	return e.deps.Ctrl.Probe(pctx)
@@ -27,18 +27,19 @@ func newSessionID(now time.Time, rnd func() float64) string {
 	return fmt.Sprintf("%013d-%04d", now.UnixMilli(), int(rnd()*10000))
 }
 
-// updateProgressFromCapture drains the page's own captured GQL traffic and, for
-// the active drop, updates the store and the in-memory baseline. It returns the
-// current best-known minutes and whether they increased since last time.
+// updateProgressFromCapture drains passively observed progress (e.g. Twitch's
+// GQL capture shim) and, for the active drop, updates the store and the
+// in-memory baseline. It returns the current best-known minutes and whether
+// they increased since last time.
 func (e *Engine) updateProgressFromCapture(ctx context.Context) (minutes int, increased bool) {
 	if e.cur == nil {
 		return 0, false
 	}
-	res, err := twitch.Drain(ctx, e.deps.Ctrl.Session())
+	ps, err := e.deps.Pages.DrainProgress(ctx)
 	if err != nil {
 		return e.cur.lastMinutes, false
 	}
-	return e.applyProgress(res.Progress)
+	return e.applyProgress(ps)
 }
 
 // pollProgress actively fetches server-side progress at most once per
@@ -147,7 +148,7 @@ func (e *Engine) endSession(outcome domain.SessionOutcome, note string) {
 		StartedAt: ws.StartedAt, EndedAt: ws.EndedAt,
 	})
 	success := outcome == domain.OutcomeClaimed || outcome == domain.OutcomeCompleted
-	_ = e.deps.Store.RecordChannelResult(e.cur.login, success)
+	_ = e.deps.Store.RecordChannelResult(e.deps.Platform, e.cur.login, success)
 	// The session is in the store now; stop overlaying it live.
 	e.setStatus(func(s *Status) { s.SessionStartedAt = time.Time{} })
 }

@@ -4,10 +4,13 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/rake-pro/dropwarden/internal/domain"
 )
 
 // ChannelStat is the success/failure record for one channel, used to rank
-// candidates during selection.
+// candidates during selection. Keyed by (platform, login) - logins are only
+// unique within a platform.
 type ChannelStat struct {
 	Login     string
 	Successes int
@@ -16,14 +19,14 @@ type ChannelStat struct {
 }
 
 // RecordChannelResult increments the success or failure counter for a channel.
-func (s *Store) RecordChannelResult(login string, success bool) error {
+func (s *Store) RecordChannelResult(p domain.Platform, login string, success bool) error {
 	col := "failures"
 	if success {
 		col = "successes"
 	}
-	_, err := s.db.Exec(fmt.Sprintf(`INSERT INTO channel_stats (login,%s,last_seen) VALUES (?,1,?)
-		ON CONFLICT(login) DO UPDATE SET %s=%s+1, last_seen=excluded.last_seen`, col, col, col),
-		login, time.Now().UnixMilli())
+	_, err := s.db.Exec(fmt.Sprintf(`INSERT INTO channel_stats (platform,login,%s,last_seen) VALUES (?,?,1,?)
+		ON CONFLICT(platform,login) DO UPDATE SET %s=%s+1, last_seen=excluded.last_seen`, col, col, col),
+		string(p.OrTwitch()), login, time.Now().UnixMilli())
 	if err != nil {
 		return fmt.Errorf("store: record channel result: %w", err)
 	}
@@ -31,10 +34,11 @@ func (s *Store) RecordChannelResult(login string, success bool) error {
 }
 
 // ChannelStats returns the stat record for a channel, or a zero record if none.
-func (s *Store) ChannelStats(login string) (ChannelStat, error) {
+func (s *Store) ChannelStats(p domain.Platform, login string) (ChannelStat, error) {
 	var st ChannelStat
 	var last sql.NullInt64
-	err := s.db.QueryRow(`SELECT login,successes,failures,last_seen FROM channel_stats WHERE login=?`, login).
+	err := s.db.QueryRow(`SELECT login,successes,failures,last_seen FROM channel_stats WHERE platform=? AND login=?`,
+		string(p.OrTwitch()), login).
 		Scan(&st.Login, &st.Successes, &st.Failures, &last)
 	if err == sql.ErrNoRows {
 		return ChannelStat{Login: login}, nil
@@ -47,10 +51,10 @@ func (s *Store) ChannelStats(login string) (ChannelStat, error) {
 }
 
 // BlacklistChannel suppresses a channel until the given time.
-func (s *Store) BlacklistChannel(login, reason string, until time.Time) error {
-	_, err := s.db.Exec(`INSERT INTO blacklist (login,reason,until) VALUES (?,?,?)
-		ON CONFLICT(login) DO UPDATE SET reason=excluded.reason, until=excluded.until`,
-		login, reason, until.UnixMilli())
+func (s *Store) BlacklistChannel(p domain.Platform, login, reason string, until time.Time) error {
+	_, err := s.db.Exec(`INSERT INTO blacklist (platform,login,reason,until) VALUES (?,?,?,?)
+		ON CONFLICT(platform,login) DO UPDATE SET reason=excluded.reason, until=excluded.until`,
+		string(p.OrTwitch()), login, reason, until.UnixMilli())
 	if err != nil {
 		return fmt.Errorf("store: blacklist: %w", err)
 	}
@@ -59,9 +63,10 @@ func (s *Store) BlacklistChannel(login, reason string, until time.Time) error {
 
 // IsBlacklisted reports whether a channel is currently suppressed. Expired
 // entries are treated as not blacklisted.
-func (s *Store) IsBlacklisted(login string, now time.Time) (bool, error) {
+func (s *Store) IsBlacklisted(p domain.Platform, login string, now time.Time) (bool, error) {
 	var until sql.NullInt64
-	err := s.db.QueryRow(`SELECT until FROM blacklist WHERE login=?`, login).Scan(&until)
+	err := s.db.QueryRow(`SELECT until FROM blacklist WHERE platform=? AND login=?`,
+		string(p.OrTwitch()), login).Scan(&until)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -74,7 +79,7 @@ func (s *Store) IsBlacklisted(login string, now time.Time) (bool, error) {
 	return now.UnixMilli() < until.Int64, nil
 }
 
-// ClearBlacklist removes all blacklist entries.
+// ClearBlacklist removes all blacklist entries (all platforms).
 func (s *Store) ClearBlacklist() error {
 	if _, err := s.db.Exec(`DELETE FROM blacklist`); err != nil {
 		return fmt.Errorf("store: clear blacklist: %w", err)

@@ -11,9 +11,15 @@ import (
 // loadState reads the queue, campaigns, progress, and claimed set from the store
 // into the maps the queue package expects.
 func (e *Engine) loadState() (items []domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, err error) {
-	items, err = e.deps.Store.GetQueue()
+	all, err := e.deps.Store.GetQueue()
 	if err != nil {
 		return
+	}
+	// The queue is shared across platforms; this engine works only its own.
+	for _, it := range all {
+		if it.Platform.OrTwitch() == e.deps.Platform.OrTwitch() {
+			items = append(items, it)
+		}
 	}
 	cs, err := e.deps.Store.ListCampaigns()
 	if err != nil {
@@ -183,11 +189,11 @@ func (e *Engine) pickChannel(ctx context.Context, c domain.Campaign, cands []que
 	}
 
 	stats := func(login string) (int, int) {
-		st, _ := e.deps.Store.ChannelStats(login)
+		st, _ := e.deps.Store.ChannelStats(e.deps.Platform, login)
 		return st.Successes, st.Failures
 	}
 	blacklisted := func(login string) bool {
-		bl, _ := e.deps.Store.IsBlacklisted(login, now)
+		bl, _ := e.deps.Store.IsBlacklisted(e.deps.Platform, login, now)
 		return bl
 	}
 	current := ""

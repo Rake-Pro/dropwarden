@@ -5,6 +5,24 @@ package domain
 
 import "time"
 
+// Platform identifies which streaming platform an entity belongs to. The
+// store treats an empty value as PlatformTwitch (the original single-platform
+// data predates the field).
+type Platform string
+
+const (
+	PlatformTwitch Platform = "twitch"
+	PlatformKick   Platform = "kick"
+)
+
+// OrTwitch normalizes the zero value to PlatformTwitch.
+func (p Platform) OrTwitch() Platform {
+	if p == "" {
+		return PlatformTwitch
+	}
+	return p
+}
+
 // CampaignStatus mirrors the states Twitch exposes for a drop campaign.
 type CampaignStatus string
 
@@ -14,9 +32,10 @@ const (
 	StatusExpired  CampaignStatus = "EXPIRED"
 )
 
-// Campaign is a Twitch drop campaign for a single game over a time window.
+// Campaign is a drop campaign for a single game over a time window.
 type Campaign struct {
 	ID       string
+	Platform Platform
 	Name     string
 	GameID   string
 	GameName string

@@ -102,4 +102,38 @@ var migrations = []string{
 	// only ever be APPENDED here - the version pointer of an existing database
 	// is already past every earlier index.
 	`ALTER TABLE campaigns ADD COLUMN account_connected INTEGER;`,
+
+	// Multi-platform support: a platform discriminator on every table whose
+	// rows belong to one platform. Existing rows are all Twitch. channel_stats
+	// and blacklist are keyed by login, which can collide across platforms, so
+	// they are rebuilt with a composite (platform, login) primary key - the
+	// rename/create/copy/drop steps are separate entries because migrations
+	// run one statement per entry.
+	`ALTER TABLE campaigns ADD COLUMN platform TEXT NOT NULL DEFAULT 'twitch';`,
+	`ALTER TABLE queue ADD COLUMN platform TEXT NOT NULL DEFAULT 'twitch';`,
+	`ALTER TABLE sessions ADD COLUMN platform TEXT NOT NULL DEFAULT 'twitch';`,
+	`ALTER TABLE claims ADD COLUMN platform TEXT NOT NULL DEFAULT 'twitch';`,
+	`ALTER TABLE channel_stats RENAME TO channel_stats_old;`,
+	`CREATE TABLE IF NOT EXISTS channel_stats (
+		platform  TEXT NOT NULL DEFAULT 'twitch',
+		login     TEXT NOT NULL,
+		successes INTEGER DEFAULT 0,
+		failures  INTEGER DEFAULT 0,
+		last_seen INTEGER,
+		PRIMARY KEY (platform, login)
+	);`,
+	`INSERT INTO channel_stats (platform, login, successes, failures, last_seen)
+		SELECT 'twitch', login, successes, failures, last_seen FROM channel_stats_old;`,
+	`DROP TABLE channel_stats_old;`,
+	`ALTER TABLE blacklist RENAME TO blacklist_old;`,
+	`CREATE TABLE IF NOT EXISTS blacklist (
+		platform TEXT NOT NULL DEFAULT 'twitch',
+		login    TEXT NOT NULL,
+		reason   TEXT,
+		until    INTEGER,
+		PRIMARY KEY (platform, login)
+	);`,
+	`INSERT INTO blacklist (platform, login, reason, until)
+		SELECT 'twitch', login, reason, until FROM blacklist_old;`,
+	`DROP TABLE blacklist_old;`,
 }

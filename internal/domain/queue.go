@@ -43,6 +43,7 @@ func ValidPriorityMode(m PriorityMode) bool {
 type QueueItem struct {
 	DropID        string
 	CampaignID    string
+	Platform      Platform
 	Position      int
 	Enabled       bool
 	Status        ItemStatus

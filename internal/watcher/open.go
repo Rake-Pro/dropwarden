@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/domain"
-	"github.com/rake-pro/dropwarden/internal/twitch"
+	"github.com/rake-pro/dropwarden/internal/platform"
 )
 
-func (e *Engine) playerPolicy() twitch.PlayerPolicy {
-	return twitch.PlayerPolicy{
+func (e *Engine) playerPolicy() platform.PlayerPolicy {
+	return platform.PlayerPolicy{
 		Volume:        e.deps.Cfg.Browser.Player.Volume,
 		LowestQuality: e.deps.Cfg.Browser.Player.ForceLowestQuality,
 	}
@@ -98,6 +98,7 @@ func (e *Engine) beginWatching(ctx context.Context) (State, string) {
 			ID:           newSessionID(now, e.deps.Rand),
 			DropID:       e.cur.drop.ID,
 			CampaignID:   e.cur.campaign.ID,
+			Platform:     e.deps.Platform,
 			ChannelLogin: e.cur.login,
 			StartedAt:    now,
 			StartMinutes: base,
@@ -117,8 +118,8 @@ func (e *Engine) beginWatching(ctx context.Context) (State, string) {
 // failChannel records a failed channel, blacklists it, and reselects.
 func (e *Engine) failChannel(outcome domain.SessionOutcome, reason string, ttl time.Duration) (State, string) {
 	if e.cur != nil {
-		_ = e.deps.Store.RecordChannelResult(e.cur.login, false)
-		_ = e.deps.Store.BlacklistChannel(e.cur.login, reason, e.deps.Now().Add(ttl))
+		_ = e.deps.Store.RecordChannelResult(e.deps.Platform, e.cur.login, false)
+		_ = e.deps.Store.BlacklistChannel(e.deps.Platform, e.cur.login, reason, e.deps.Now().Add(ttl))
 		e.deps.Log.Warn().Str("login", e.cur.login).Str("reason", reason).Msg("channel failed")
 	}
 	e.cur = nil

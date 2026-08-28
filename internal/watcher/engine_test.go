@@ -171,7 +171,7 @@ func TestFailChannelBlacklists(t *testing.T) {
 	if next != StateSelectingChannel {
 		t.Fatalf("expected reselect, got %s", next)
 	}
-	bl, _ := st.IsBlacklisted("deadchannel", e.deps.Now())
+	bl, _ := st.IsBlacklisted(domain.PlatformTwitch, "deadchannel", e.deps.Now())
 	if !bl {
 		t.Fatal("expected channel blacklisted")
 	}
@@ -264,7 +264,7 @@ func TestHardStallCreditedElsewhereDoesNotBlacklist(t *testing.T) {
 	if !done || next != StateCooldown {
 		t.Fatalf("expected cooldown stand-down, got %s done=%v", next, done)
 	}
-	if bl, _ := st.IsBlacklisted("grabbys", now); bl {
+	if bl, _ := st.IsBlacklisted(domain.PlatformTwitch, "grabbys", now); bl {
 		t.Fatal("channel must not be blacklisted when another session holds the drop slot")
 	}
 }
@@ -286,7 +286,7 @@ func TestHardStallSameChannelStillBlacklists(t *testing.T) {
 	if !done || next != StateSelectingChannel {
 		t.Fatalf("expected reselect after blacklist, got %s done=%v", next, done)
 	}
-	if bl, _ := st.IsBlacklisted("grabbys", now); !bl {
+	if bl, _ := st.IsBlacklisted(domain.PlatformTwitch, "grabbys", now); !bl {
 		t.Fatal("stalled channel that IS our credited session should be blacklisted")
 	}
 }

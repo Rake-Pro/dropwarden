@@ -18,16 +18,21 @@ import (
 	"github.com/rake-pro/dropwarden/internal/discovery"
 	"github.com/rake-pro/dropwarden/internal/domain"
 	"github.com/rake-pro/dropwarden/internal/store"
-	"github.com/rake-pro/dropwarden/internal/twitch"
+	"github.com/rake-pro/dropwarden/internal/platform"
 )
 
-// Pager is the engine's view of the Twitch page driver (twitch.Pages).
+// Pager is the engine's view of a platform's page driver (twitch.Pages,
+// kick.Pages).
 type Pager interface {
-	OpenChannel(ctx context.Context, login string, policy twitch.PlayerPolicy) error
+	OpenChannel(ctx context.Context, login string, policy platform.PlayerPolicy) error
 	ReadInventory(ctx context.Context) ([]domain.Progress, error)
 	DirectoryChannels(ctx context.Context, gameSlug string) ([]string, error)
 	FetchCurrentDrop(ctx context.Context) (*domain.Progress, error)
 	FetchInventoryProgress(ctx context.Context) ([]domain.Progress, error)
+	// DrainProgress returns progress entries observed passively since the last
+	// call (Twitch: the GQL capture shim). Platforms without passive capture
+	// return nil.
+	DrainProgress(ctx context.Context) ([]domain.Progress, error)
 }
 
 // Discoverer is the engine's view of the discovery pass (discovery.Discoverer).
@@ -38,12 +43,19 @@ type Discoverer interface {
 // Deps are the engine's collaborators.
 type Deps struct {
 	Store *store.Store
-	Ctrl  twitch.Controller
+	Ctrl  platform.Controller
 	Pages Pager
 	Disco Discoverer
 	Cfg   *config.Config
 	Emit  Emitter
 	Log   zerolog.Logger
+
+	// Platform tags everything this engine touches (queue items, sessions,
+	// claims, channel stats); zero value means Twitch. ChannelHost is the
+	// platform's channel-URL host (e.g. "twitch.tv", "kick.com"), used to
+	// recognize channel navigations (raids/redirects).
+	Platform    domain.Platform
+	ChannelHost string
 
 	// Now and Rand are injectable for deterministic tests. Rand returns [0,1).
 	Now  func() time.Time

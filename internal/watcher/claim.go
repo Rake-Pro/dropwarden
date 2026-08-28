@@ -66,6 +66,7 @@ func (e *Engine) runClaiming(parent context.Context) (State, string) {
 	claim := domain.Claim{
 		DropID:     drop.ID,
 		CampaignID: e.cur.campaign.ID,
+		Platform:   e.deps.Platform,
 		DropName:   drop.Name,
 		GameName:   e.cur.campaign.GameName,
 		Benefits:   drop.Benefits,
