@@ -166,11 +166,13 @@ launch failure logs and leaves Twitch running; UI has a second Now watching
 card with its own controls (/api/kick/*), KICK badges in queue rows, a Kick
 footer row, and a Settings toggle. Kick engine runs with gentler watchdogs
 (KickRuntimeConfig: no proactive refresh, longer stalls) because Kick's FAQ
-says refreshes hurt credit tracking. FIRST LIVE RUN PROTOCOL: enable the
+says refreshes hurt credit tracking. BACKLOGGED 2026-08-28: no Kick campaigns the user
+cares about are running right now, so live verification waits until one
+appears. FIRST LIVE RUN PROTOCOL (when a campaign shows up): enable the
 toggle, restart, log into Kick in the second window, turn on the GraphQL
 dump toggle, and send back ~/.dropwarden/debug/kick-campaigns.json +
 kick-inventory.txt - those dumps are what turn the guessed parser/selectors
-into verified ones. KNOWN GAPS until then: no Kick progress source (stall
+into verified ones. Do NOT chase Kick issues before those dumps exist. KNOWN GAPS until then: no Kick progress source (stall
 aborts are effectively disabled; drops will not complete on Kick yet),
 claim/play/offline selectors unverified, Cloudflare behavior unverified.
 
