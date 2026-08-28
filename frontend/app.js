@@ -306,7 +306,7 @@ function settingsPaneHTML() {
       <div class="group"><div class="caption">Browser &amp; claiming</div><div class="card">
         <div class="row stacked"><div class="lab"><div class="l">Chrome path</div><div class="h">Blank = auto-detect. Override for Chrome Beta or an unusual install.</div></div>
           <div class="ctl"><input class="input mono" data-field="chromePath" value="${esc(cfg.chromePath)}" placeholder="auto-detected" style="width:100%"></div></div>
-        <div class="row"><div class="lab"><div class="l">Skip account-link drops</div><div class="h">Surface drops that need a linked account instead of failing on them.</div></div><div class="ctl">${toggleHTML('skipAccountLink', cfg.skipAccountLink)}</div></div>
+        <div class="row"><div class="lab"><div class="l">Skip account-link drops</div><div class="h">Skip campaigns Twitch reports as unlinked. Drops the server is already crediting are watched regardless, and Off watches everything (failed claims surface for manual reconcile).</div></div><div class="ctl">${toggleHTML('skipAccountLink', cfg.skipAccountLink)}</div></div>
         <div class="row"><div class="lab"><div class="l">Allow GQL claim fallback</div><div class="h">Off by design — replaying the claim mutation has triggered bot blocks.</div></div><div class="ctl">${toggleHTML('allowGqlFallback', cfg.allowGqlFallback)}</div></div>
       </div></div>
       <div class="group"><div class="caption">Kick</div><div class="card">

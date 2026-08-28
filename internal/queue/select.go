@@ -74,10 +74,27 @@ func remainingMinutes(d domain.Drop, progress map[string]domain.Progress) int {
 	return d.RequiredMinutes
 }
 
+// linkBlocked reports whether the account-link gate should exclude this item.
+// Twitch's flags cannot distinguish "link required to EARN" from "link page
+// exists but the drop itself earns fine" (Special Events watch-to-redeem
+// campaigns report isAccountConnected=false while crediting normally), so
+// server-confirmed progress overrides the gate: if Twitch is already crediting
+// minutes for the drop, it is watchable regardless of link status. skipLink
+// false (the skip_account_link_drops setting) disables the gate entirely.
+func linkBlocked(skipLink bool, campaign domain.Campaign, dropID string, progress map[string]domain.Progress) bool {
+	if !skipLink || !campaign.RequiresAccountLink() {
+		return false
+	}
+	if p, ok := progress[dropID]; ok && (p.RealMinutes > 0 || p.Claimable) {
+		return false // the server is demonstrably crediting this drop
+	}
+	return true
+}
+
 // eligibleNow reports whether item currently qualifies for selection: enabled,
 // pending or active, campaign live and account-link-free, drop present, not
 // complete/claimed, and preconditions satisfied.
-func eligibleNow(item domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, now time.Time) (domain.Campaign, domain.Drop, bool) {
+func eligibleNow(item domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, skipLink bool, now time.Time) (domain.Campaign, domain.Drop, bool) {
 	if !item.Enabled {
 		return domain.Campaign{}, domain.Drop{}, false
 	}
@@ -89,7 +106,7 @@ func eligibleNow(item domain.QueueItem, campaigns map[string]domain.Campaign, pr
 	if !ok || !isWatchable(campaign, now) {
 		return domain.Campaign{}, domain.Drop{}, false
 	}
-	if campaign.RequiresAccountLink() {
+	if linkBlocked(skipLink, campaign, item.DropID, progress) {
 		return domain.Campaign{}, domain.Drop{}, false
 	}
 	drop, ok := findDrop(campaign, item.DropID)
@@ -111,7 +128,7 @@ func eligibleNow(item domain.QueueItem, campaigns map[string]domain.Campaign, pr
 // EligibleCandidates returns every currently-eligible drop, ordered according
 // to mode (highest priority first). The watcher uses this to fall through to the
 // next available drop when the top one has no live channel.
-func EligibleCandidates(items []domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, mode domain.PriorityMode, now time.Time) []Candidate {
+func EligibleCandidates(items []domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, mode domain.PriorityMode, skipLink bool, now time.Time) []Candidate {
 	type entry struct {
 		item     domain.QueueItem
 		campaign domain.Campaign
@@ -121,7 +138,7 @@ func EligibleCandidates(items []domain.QueueItem, campaigns map[string]domain.Ca
 
 	var survivors []entry
 	for i, item := range items {
-		campaign, drop, ok := eligibleNow(item, campaigns, progress, claimed, now)
+		campaign, drop, ok := eligibleNow(item, campaigns, progress, claimed, skipLink, now)
 		if !ok {
 			continue
 		}
@@ -170,8 +187,8 @@ func EligibleCandidates(items []domain.QueueItem, campaigns map[string]domain.Ca
 
 // NextDrop returns the single highest-priority eligible drop, or (nil, nil) when
 // nothing is currently eligible.
-func NextDrop(items []domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, mode domain.PriorityMode, now time.Time) (*Candidate, error) {
-	cands := EligibleCandidates(items, campaigns, progress, claimed, mode, now)
+func NextDrop(items []domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, mode domain.PriorityMode, skipLink bool, now time.Time) (*Candidate, error) {
+	cands := EligibleCandidates(items, campaigns, progress, claimed, mode, skipLink, now)
 	if len(cands) == 0 {
 		return nil, nil
 	}
@@ -182,7 +199,7 @@ func NextDrop(items []domain.QueueItem, campaigns map[string]domain.Campaign, pr
 // returning the status the engine should record on the queue item along with
 // a human-readable reason. eligible=true, status=domain.ItemPending means the
 // item is selectable right now.
-func EligibilityReason(item domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, now time.Time) (eligible bool, status domain.ItemStatus, reason string) {
+func EligibilityReason(item domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, skipLink bool, now time.Time) (eligible bool, status domain.ItemStatus, reason string) {
 	if !item.Enabled {
 		return false, domain.ItemDisabled, "user disabled this drop"
 	}
@@ -197,7 +214,7 @@ func EligibilityReason(item domain.QueueItem, campaigns map[string]domain.Campai
 	if !hasStarted(campaign, now) {
 		return false, domain.ItemUnavailable, "campaign has not started yet"
 	}
-	if campaign.RequiresAccountLink() {
+	if linkBlocked(skipLink, campaign, item.DropID, progress) {
 		return false, domain.ItemNeedsAction, "account link required"
 	}
 

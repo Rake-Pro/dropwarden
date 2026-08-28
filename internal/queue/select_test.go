@@ -29,7 +29,7 @@ func TestNextDrop_TopDown(t *testing.T) {
 		{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending},
 	}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, now)
+	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestNextDrop_EndingSoonest(t *testing.T) {
 		{DropID: "d1", CampaignID: "c1", Position: 3, Enabled: true, Status: domain.ItemPending},
 	}
 	campaigns := map[string]domain.Campaign{"c1": campSoon, "c2": campLater, "c3": campNoEnd}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityEndingSoonest, now)
+	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityEndingSoonest, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestNextDrop_ClosestToComplete(t *testing.T) {
 		// d1 has 90/100 done (10 remaining), d2 has no progress (100 remaining)
 		"d1": {DropID: "d1", RealMinutes: 90, RequiredMinutes: 100, Source: domain.SourceInventory},
 	}
-	got, err := NextDrop(items, campaigns, progress, nil, domain.PriorityClosestToComplete, now)
+	got, err := NextDrop(items, campaigns, progress, nil, domain.PriorityClosestToComplete, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestNextDrop_ShortestFirst(t *testing.T) {
 		{DropID: "d2", CampaignID: "c1", Position: 2, Enabled: true, Status: domain.ItemPending},
 	}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityShortestFirst, now)
+	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityShortestFirst, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestNextDrop_AccountLinkExcluded(t *testing.T) {
 	camp.AccountLinkURL = "https://example.com/link"
 	items := []domain.QueueItem{{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending}}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, now)
+	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestNextDrop_ConnectedAccountEligibleDespiteLinkURL(t *testing.T) {
 	camp.AccountConnected = &connected
 	items := []domain.QueueItem{{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending}}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, now)
+	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestNextDrop_ExpiredCampaignExcluded(t *testing.T) {
 	camp := baseCampaign("c1", past, domain.Drop{ID: "d1", CampaignID: "c1", RequiredMinutes: 60})
 	items := []domain.QueueItem{{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending}}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, now)
+	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestNextDrop_PreconditionUnmetSkipped(t *testing.T) {
 		{DropID: "d2", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending},
 	}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, map[string]bool{}, domain.PriorityTopDown, now)
+	got, err := NextDrop(items, campaigns, nil, map[string]bool{}, domain.PriorityTopDown, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestNextDrop_PreconditionUnmetSkipped(t *testing.T) {
 	}
 
 	// Once claimed, it should become eligible.
-	got, err = NextDrop(items, campaigns, nil, map[string]bool{"d1": true}, domain.PriorityTopDown, now)
+	got, err = NextDrop(items, campaigns, nil, map[string]bool{"d1": true}, domain.PriorityTopDown, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestNextDrop_CompletedOrClaimedSkipped(t *testing.T) {
 		"d1": {DropID: "d1", RealMinutes: 60, RequiredMinutes: 60, Source: domain.SourceInventory},
 	}
 	claimed := map[string]bool{"d2": true}
-	got, err := NextDrop(items, campaigns, progress, claimed, domain.PriorityTopDown, now)
+	got, err := NextDrop(items, campaigns, progress, claimed, domain.PriorityTopDown, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestNextDrop_DisabledSkipped(t *testing.T) {
 		{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: false, Status: domain.ItemPending},
 	}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, now)
+	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestNextDrop_DisabledSkipped(t *testing.T) {
 
 func TestNextDrop_Empty(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	got, err := NextDrop(nil, nil, nil, nil, domain.PriorityTopDown, now)
+	got, err := NextDrop(nil, nil, nil, nil, domain.PriorityTopDown, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestEligibilityReason(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			elig, status, reason := EligibilityReason(tt.item, tt.campaigns, tt.progress, tt.claimed, now)
+			elig, status, reason := EligibilityReason(tt.item, tt.campaigns, tt.progress, tt.claimed, true, now)
 			if elig != tt.wantElig {
 				t.Errorf("eligible: got %v, want %v", elig, tt.wantElig)
 			}
@@ -337,5 +337,44 @@ func TestEligibilityReason(t *testing.T) {
 				t.Errorf("expected non-empty reason when not eligible")
 			}
 		})
+	}
+}
+
+func TestNextDrop_ServerProgressOverridesLinkGate(t *testing.T) {
+	// A watch-to-redeem campaign reports unlinked (isAccountConnected=false)
+	// while Twitch demonstrably credits minutes; progress must unblock it.
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	future := now.Add(24 * time.Hour)
+	camp := baseCampaign("c1", future, domain.Drop{ID: "d1", CampaignID: "c1", RequiredMinutes: 30})
+	camp.AccountLinkURL = "https://example.com/link"
+	unlinked := false
+	camp.AccountConnected = &unlinked
+	items := []domain.QueueItem{{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending}}
+	campaigns := map[string]domain.Campaign{"c1": camp}
+	progress := map[string]domain.Progress{
+		"d1": {DropID: "d1", RealMinutes: 4, RequiredMinutes: 30, Source: domain.SourceInventory},
+	}
+	got, err := NextDrop(items, campaigns, progress, nil, domain.PriorityTopDown, true, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil || got.Drop.ID != "d1" {
+		t.Fatalf("server-credited drop must be watchable despite link flags, got %+v", got)
+	}
+}
+
+func TestNextDrop_SkipLinkOffDisablesGate(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	future := now.Add(24 * time.Hour)
+	camp := baseCampaign("c1", future, domain.Drop{ID: "d1", CampaignID: "c1", RequiredMinutes: 60})
+	camp.AccountLinkURL = "https://example.com/link"
+	items := []domain.QueueItem{{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending}}
+	campaigns := map[string]domain.Campaign{"c1": camp}
+	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, false, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil || got.Drop.ID != "d1" {
+		t.Fatalf("skip_account_link_drops=false must disable the gate, got %+v", got)
 	}
 }

@@ -73,7 +73,7 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 	tally := map[string]int{}
 	for i := range items {
 		it := items[i]
-		eligible, status, reason := queue.EligibilityReason(it, campaigns, progress, claimed, now)
+		eligible, status, reason := queue.EligibilityReason(it, campaigns, progress, claimed, e.deps.Cfg.Claim.SkipAccountLink, now)
 		if eligible {
 			tally["eligible"]++
 			// Preserve an actively-watched item; otherwise it is selectable now.
@@ -110,7 +110,7 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 		ev.Msg("selecting: eligibility tally")
 	}
 
-	cands := queue.EligibleCandidates(items, campaigns, progress, claimed, domain.PriorityMode(e.deps.Cfg.Queue.PriorityMode), now)
+	cands := queue.EligibleCandidates(items, campaigns, progress, claimed, domain.PriorityMode(e.deps.Cfg.Queue.PriorityMode), e.deps.Cfg.Claim.SkipAccountLink, now)
 	if len(cands) == 0 {
 		return StateCooldown, "nothing eligible to watch"
 	}
