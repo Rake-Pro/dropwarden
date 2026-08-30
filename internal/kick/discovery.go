@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -24,6 +26,33 @@ type Discoverer struct {
 	pages  *Pages
 	cfg    *config.Config
 	logger zerolog.Logger
+
+	mu   sync.Mutex
+	last Diagnostic
+}
+
+// Diagnostic is a snapshot of the last Kick discovery pass, for the debug UI.
+// Kick discovery is API+DOM shaped (no GQL capture), so it carries the campaigns
+// endpoint status instead of Twitch's op/header telemetry.
+type Diagnostic struct {
+	At              time.Time `json:"at"`
+	APIStatus       int       `json:"apiStatus"`
+	CampaignsParsed int       `json:"campaignsParsed"`
+	Enqueued        int       `json:"enqueued"`
+	LastError       string    `json:"lastError,omitempty"`
+}
+
+// LastDiagnostic returns a snapshot of the most recent discovery pass.
+func (d *Discoverer) LastDiagnostic() Diagnostic {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.last
+}
+
+func (d *Discoverer) record(diag Diagnostic) {
+	d.mu.Lock()
+	d.last = diag
+	d.mu.Unlock()
 }
 
 // NewDiscoverer builds a Kick discoverer.
@@ -33,6 +62,18 @@ func NewDiscoverer(st *store.Store, pages *Pages, cfg *config.Config, logger zer
 
 // RunOnce performs one full Kick discovery pass.
 func (d *Discoverer) RunOnce(ctx context.Context) (discovery.Result, error) {
+	diag := Diagnostic{At: time.Now()}
+	res, err := d.runOnce(ctx, &diag)
+	diag.CampaignsParsed = res.Campaigns
+	diag.Enqueued = res.Enqueued
+	if err != nil {
+		diag.LastError = err.Error()
+	}
+	d.record(diag)
+	return res, err
+}
+
+func (d *Discoverer) runOnce(ctx context.Context, diag *Diagnostic) (discovery.Result, error) {
 	var res discovery.Result
 
 	// Warm the drops page first: it establishes the authenticated, Cloudflare-
@@ -56,6 +97,7 @@ func (d *Discoverer) RunOnce(ctx context.Context) (discovery.Result, error) {
 	if d.cfg.Logging.CaptureGQLBodies {
 		d.dumpDebug("kick-campaigns.json", []byte(wrapped.Body))
 	}
+	diag.APIStatus = wrapped.Status
 	if wrapped.Status != 200 {
 		// The endpoint is unofficial; a non-200 is diagnosis material, not fatal.
 		d.logger.Warn().Int("status", wrapped.Status).Str("body_sample", clip(wrapped.Body, 300)).

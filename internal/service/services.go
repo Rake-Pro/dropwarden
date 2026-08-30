@@ -8,6 +8,7 @@ import (
 	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rake-pro/dropwarden/internal/discovery"
 	"github.com/rake-pro/dropwarden/internal/domain"
+	"github.com/rake-pro/dropwarden/internal/kick"
 	"github.com/rake-pro/dropwarden/internal/store"
 	"github.com/rake-pro/dropwarden/internal/watcher"
 )
@@ -20,16 +21,23 @@ type Backend struct {
 	Store      *store.Store
 	ConfigPath string
 
+	// startupKickEnabled is kick.enabled as it was when the process started.
+	// The live config changes the moment the user saves the toggle, but the
+	// runtime only follows on restart; the UI needs both to tell "restart
+	// pending" apart from "failed to launch".
+	startupKickEnabled bool
+
 	mu         sync.RWMutex
 	cfg        *config.Config
 	engine     *watcher.Engine
 	kickEngine *watcher.Engine
 	disco      *discovery.Discoverer
+	kickDisco  *kick.Discoverer
 }
 
 // NewBackend builds a Backend.
 func NewBackend(st *store.Store, eng *watcher.Engine, cfg *config.Config, cfgPath string) *Backend {
-	return &Backend{Store: st, engine: eng, cfg: cfg, ConfigPath: cfgPath}
+	return &Backend{Store: st, engine: eng, cfg: cfg, ConfigPath: cfgPath, startupKickEnabled: cfg.Kick.Enabled}
 }
 
 // SetEngine attaches the watcher engine once the runtime is up.
@@ -58,6 +66,42 @@ func (b *Backend) KickEngine() *watcher.Engine {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.kickEngine
+}
+
+// EngineFor returns the engine driving the given platform, or nil when that
+// runtime is not up. The zero platform normalizes to Twitch.
+func (b *Backend) EngineFor(p domain.Platform) *watcher.Engine {
+	if p.OrTwitch() == domain.PlatformKick {
+		return b.KickEngine()
+	}
+	return b.Engine()
+}
+
+// ReloadEngines pushes the current config into every running engine. The Kick
+// engine runs on its derived runtime config (own browser block, gentler
+// watchdogs), so it must never receive the root config verbatim.
+func (b *Backend) ReloadEngines() {
+	cfg := b.config()
+	if eng := b.Engine(); eng != nil {
+		eng.ReloadConfig(cfg)
+	}
+	if keng := b.KickEngine(); keng != nil {
+		keng.ReloadConfig(cfg.KickRuntimeConfig())
+	}
+}
+
+// SetKickDiscoverer attaches the Kick discoverer when the kick runtime is up.
+func (b *Backend) SetKickDiscoverer(d *kick.Discoverer) {
+	b.mu.Lock()
+	b.kickDisco = d
+	b.mu.Unlock()
+}
+
+// KickDiscoverer returns the Kick discoverer, or nil when kick is disabled.
+func (b *Backend) KickDiscoverer() *kick.Discoverer {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.kickDisco
 }
 
 // SetDiscoverer attaches the discoverer once the runtime is up.
@@ -164,7 +208,7 @@ func (s *QueueService) Get() ([]QueueItemDTO, error) {
 		dto := QueueItemDTO{
 			DropID: it.DropID, CampaignID: it.CampaignID, Platform: string(it.Platform.OrTwitch()),
 			DropName: d.Name,
-			Game: cmap[it.CampaignID].GameName, Position: it.Position, Enabled: it.Enabled,
+			Game:     cmap[it.CampaignID].GameName, Position: it.Position, Enabled: it.Enabled,
 			Status: string(it.Status), Reason: it.Reason, RequiredMinutes: d.RequiredMinutes,
 		}
 		if p, err := s.b.Store.GetProgress(it.DropID); err == nil && p != nil {
@@ -190,9 +234,7 @@ func (s *QueueService) SetPriorityMode(mode string) error {
 	if err := config.Save(s.b.ConfigPath, cfg); err != nil {
 		return err
 	}
-	if eng := s.b.Engine(); eng != nil {
-		eng.ReloadConfig(cfg)
-	}
+	s.b.ReloadEngines()
 	return nil
 }
 
@@ -254,7 +296,7 @@ func (s *HistoryService) Sessions(limit int) ([]SessionDTO, error) {
 	out := make([]SessionDTO, 0, len(sessions))
 	for _, ws := range sessions {
 		out = append(out, SessionDTO{
-			ID: ws.ID, DropID: ws.DropID, ChannelLogin: ws.ChannelLogin,
+			ID: ws.ID, Platform: string(ws.Platform.OrTwitch()), DropID: ws.DropID, ChannelLogin: ws.ChannelLogin,
 			StartedAt: ws.StartedAt, EndedAt: ws.EndedAt, Minutes: ws.DurationMinutes(), Outcome: string(ws.Outcome),
 		})
 	}
@@ -270,19 +312,42 @@ func (s *HistoryService) Stats() (StatsDTO, error) {
 	if err != nil {
 		return StatsDTO{}, err
 	}
-	st := StatsDTO{DropsClaimed: len(claims), Sessions: len(sessions), OutcomeCounts: map[string]int{}}
+	st := StatsDTO{Sessions: len(sessions), OutcomeCounts: map[string]int{}, ByPlatform: map[string]PlatformTotalsDTO{}}
+	plat := func(p domain.Platform) string { return string(p.OrTwitch()) }
+	bump := func(key string, f func(*PlatformTotalsDTO)) {
+		t := st.ByPlatform[key]
+		f(&t)
+		st.ByPlatform[key] = t
+	}
+	// Drops are platform-tagged via their campaign; progress rows only carry the
+	// drop ID, so build the mapping once for the earned tally below.
+	dropPlatform := map[string]string{}
+	if campaigns, err := s.b.Store.ListCampaigns(); err == nil {
+		for _, c := range campaigns {
+			for _, d := range c.Drops {
+				dropPlatform[d.ID] = plat(c.Platform)
+			}
+		}
+	}
 	// Earned = confirmed claims plus watch-complete drops still awaiting a
 	// claim (failed auto-claim, or completed in the background of a
 	// simultaneous multi-drop campaign).
+	st.DropsClaimed = len(claims)
 	st.DropsEarned = len(claims)
 	claimedSet := make(map[string]bool, len(claims))
 	for _, c := range claims {
 		claimedSet[c.DropID] = true
+		bump(plat(c.Platform), func(t *PlatformTotalsDTO) { t.DropsClaimed++; t.DropsEarned++ })
 	}
 	if progress, err := s.b.Store.ListProgress(); err == nil {
 		for _, p := range progress {
 			if !claimedSet[p.DropID] && p.ClaimedAt == nil && p.Complete() {
 				st.DropsEarned++
+				// Campaign gone from the store = platform unknown; count it in the
+				// global total only rather than misattributing it to Twitch.
+				if key := dropPlatform[p.DropID]; key != "" {
+					bump(key, func(t *PlatformTotalsDTO) { t.DropsEarned++ })
+				}
 			}
 		}
 	}
@@ -290,8 +355,10 @@ func (s *HistoryService) Stats() (StatsDTO, error) {
 	for _, ws := range sessions {
 		// Wall-clock time on stream, NOT per-drop credited minutes: drops accrue
 		// simultaneously, so credited deltas badly undercount time watched.
-		st.MinutesWatched += ws.DurationMinutes()
+		mins := ws.DurationMinutes()
+		st.MinutesWatched += mins
 		st.OutcomeCounts[string(ws.Outcome)]++
+		bump(plat(ws.Platform), func(t *PlatformTotalsDTO) { t.MinutesWatched += mins; t.Sessions++ })
 		if ws.Outcome == domain.OutcomeClaimed || ws.Outcome == domain.OutcomeCompleted {
 			success++
 		}
@@ -307,8 +374,10 @@ func (s *HistoryService) Stats() (StatsDTO, error) {
 			continue
 		}
 		if es := eng.Status(); es.State == watcher.StateWatching && !es.SessionStartedAt.IsZero() {
-			st.MinutesWatched += int(time.Since(es.SessionStartedAt).Minutes())
+			mins := int(time.Since(es.SessionStartedAt).Minutes())
+			st.MinutesWatched += mins
 			st.Sessions++
+			bump(plat(domain.Platform(es.Platform)), func(t *PlatformTotalsDTO) { t.MinutesWatched += mins; t.Sessions++ })
 		}
 	}
 	return st, nil

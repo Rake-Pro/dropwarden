@@ -155,6 +155,7 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 		s.DropID = drop.ID
 		s.DropName = drop.Name
 		s.ChannelLogin = login
+		s.Game = cand.Campaign.GameName
 		s.Required = drop.RequiredMinutes
 	})
 	return StateOpening, "selected " + login

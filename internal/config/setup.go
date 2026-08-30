@@ -204,10 +204,23 @@ func (c *Config) KickProfileDir() (string, error) {
 func (c *Config) KickRuntimeConfig() *Config {
 	kc := *c
 	kc.Browser = c.Kick.Browser
-	// Inherit the shared player policy unless Kick overrides it.
+	// The settings UI edits only the ROOT browser block, so shared behavior
+	// (player policy, mute, minimize/focus flags, burn-in, Chrome binary)
+	// inherits from it; the kick block contributes geometry/profile overrides.
+	// Bool flags OR so the kick block can force one on but the UI stays truthful.
 	if kc.Browser.Player.Volume == 0 {
 		kc.Browser.Player = c.Browser.Player
 	}
+	if kc.Browser.ChromePath == "" {
+		kc.Browser.ChromePath = c.Browser.ChromePath
+	}
+	if kc.Browser.Burnin == (BurninConfig{}) {
+		kc.Browser.Burnin = c.Browser.Burnin
+	}
+	kc.Browser.MuteAudio = kc.Browser.MuteAudio || c.Browser.MuteAudio
+	kc.Browser.Window.NeverFocus = kc.Browser.Window.NeverFocus || c.Browser.Window.NeverFocus
+	kc.Browser.Window.StartMinimized = kc.Browser.Window.StartMinimized || c.Browser.Window.StartMinimized
+	kc.Browser.Window.AlwaysOnBottom = kc.Browser.Window.AlwaysOnBottom || c.Browser.Window.AlwaysOnBottom
 	if kc.Watcher.SoftStall < 10*time.Minute {
 		kc.Watcher.SoftStall = 10 * time.Minute
 	}

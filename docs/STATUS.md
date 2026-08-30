@@ -8,9 +8,17 @@ NOTES-twitch.md, NOTES-wails.md.
 
 - User runs the GUI on macOS (Apple Silicon, macOS 26) via GoLand run config
   "dropwarden GUI" (`go run ./cmd/dropwarden`). Xcode CLT installed.
-- In THIS container: no Chrome/GUI. Verify only with `go build ./...`,
-  `GOOS=windows go build ./...`, `go test ./...`, `go vet ./...`. GUI (Wails)
-  cross-compiles for Windows headless; it does NOT build on linux (stub).
+- In THIS container: no Chrome/GUI to RUN, but the Linux GUI now BUILDS
+  (2026-08-30): the stub is gone, `cmd/dropwarden` compiles for
+  windows|darwin|linux, Linux uses Wails' GTK3 backend (`-tags gtk3` ->
+  GTK3 + webkit2gtk-4.1; bookworm has no webkitgtk-6.0 so the default GTK4
+  backend cannot build here). The GTK dev stack lives in a user sysroot at
+  ~/tools/wails-sysroot (container user cannot apt-install); ~/.zshenv sources
+  ~/tools/wails-sysroot.env automatically. Verify with `task check` or:
+  `go vet -tags gtk3 ./...`, `go test -tags gtk3 ./...`,
+  `go build -tags gtk3 ./cmd/dropwarden`, `GOOS=windows go build ./...`.
+  Real Linux machines just install libgtk-3-dev libwebkit2gtk-4.1-dev
+  libx11-dev. Long-term those packages get baked into claude-container.
   `go env -w GOTMPDIR=/home/claude/gotmp` is set (test exec needs it).
 - The frontend talks to Go over a JSON API on the Wails asset origin
   (`internal/service/httpapi.go`, `/api/*`) - NO generated Wails bindings.
@@ -40,6 +48,35 @@ NOTES-twitch.md, NOTES-wails.md.
   `capture_gql_bodies` dump toggle (writes `~/.dropwarden/debug/*.json`, no auth).
 
 ## NEXT live milestone (where to resume)
+
+MULTI-PLATFORM UX OVERHAUL 2026-08-30 (Kick promoted from bolt-on to first
+class; static-reviewed only, confirm on the Mac): /api/state now carries a
+uniform `platforms` array (twitch first: enabled/up/status, Status carries its
+platform) and engine actions are `POST /api/engine/{platform}/{action}` (the
+old /api/watch/* and /api/kick/* routes are GONE); the unused `campaigns` key
+was dropped from state (it cost N+1 progress queries per 5s poll). Dashboard
+renders one Now-watching card per enabled platform (platform badges appear
+only when >1 platform is on, twitch purple / kick green, kick-green progress
+bars); a kick launch failure now shows an explicit "not running" card +
+footer row instead of silently vanishing. Stats gained byPlatform totals
+(dashboard Totals card splits min/claims when multi). Settings restructured:
+new Platforms pane (Twitch group = skip-account-link + GQL fallback moved
+from Browser; Kick group = enable toggle + first-run copy), new App pane
+(theme picker — previously config-only — + auth), Browser pane is chrome-path
+only. Debugging view is per-platform (kick card shows api status/parsed/
+enqueued/lastError from the new kick.Discoverer.LastDiagnostic) and Force
+discovery hits every running engine. Tray: per-platform status lines +
+pause/skip (kick items hidden until its runtime attaches — SetHidden is
+verify-live on both OSes), refresh drives all engines. BUGS FIXED on the way:
+settings Save / priority-mode change never hot-reloaded the KICK engine (now
+ReloadEngines pushes cfg.KickRuntimeConfig()); kick config was never
+validated (volume/dim now checked when enabled); the Debugging dump toggle
+saved the shared cfg object and could commit unsaved Settings edits (config
+is now cloned via loadCfg); watchdog chips lied ("Playback healthy"/"Volume
+1%" were hardcoded — now "Playback validated" + real volume %); paused idle
+shows Resume instead of Start; preview mode disables action buttons; queue
+poll no longer re-renders under an open priority dropdown; config.example.yaml
+gained the kick block it was missing.
 
 2026-08-27 live run diagnosed: every queued drop was tallied `needs_action`
 ("account link required") so selection never left cooldown, even with Cinna's

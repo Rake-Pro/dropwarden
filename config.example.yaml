@@ -73,6 +73,20 @@ browser:
     force_lowest_quality: true
     reassert_interval: 30s
 
+kick:
+  enabled: false               # parallel Kick drops runtime (its own Chrome instance + engine)
+  browser:
+    profile_dir: ""            # blank = <approot>/chrome-profile-kick (never shared with Twitch)
+    mute_audio: false
+    window:
+      width: 640
+      height: 400
+      x: 700                   # offset so the two watcher windows do not stack
+      y: 40
+      always_on_bottom: true
+      never_focus: true
+      start_minimized: false
+
 auth:
   mode: manual                 # manual | stored (stored is unsupported and ships OFF)
   stored:

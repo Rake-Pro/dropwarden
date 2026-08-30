@@ -48,6 +48,7 @@ body {
 .grp { color: var(--text-tertiary); font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 12px 10px 6px; }
 .nav { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-ctl); color: var(--text-secondary); cursor: pointer; font-weight: 500; }
 .nav:hover { background: rgba(127,127,127,0.12); color: var(--text-primary); }
+.nav:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .nav.active { background: var(--accent-dim); color: var(--text-primary); }
 .nav .ic { width: 22px; height: 22px; border-radius: var(--radius-ctl); display: grid; place-items: center; font-size: 13px; background: var(--bg-control); }
 .nav.active .ic { background: var(--accent); color: #fff; }
@@ -70,7 +71,7 @@ body {
 @keyframes pillpulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
 .pill.watching, .pill.active { background: var(--ok-dim); color: #4bbd85; } .pill.watching .d, .pill.active .d { background: var(--ok); }
 .pill.pending, .pill.idle { background: rgba(127,127,127,0.16); color: var(--text-secondary); } .pill.pending .d, .pill.idle .d { background: var(--text-tertiary); }
-.pill.blocked, .pill.needs_action, .pill.needs { background: var(--warn-dim); color: #d98a00; } .pill.blocked .d, .pill.needs_action .d, .pill.needs .d { background: var(--warn); }
+.pill.blocked, .pill.needs_action, .pill.needs, .pill.needs_user_action { background: var(--warn-dim); color: #d98a00; } .pill.blocked .d, .pill.needs_action .d, .pill.needs .d, .pill.needs_user_action .d { background: var(--warn); }
 .pill.claimed { background: var(--accent-dim); color: var(--accent); } .pill.claimed .d { background: var(--accent); }
 .pill.offline, .pill.unavailable, .pill.error { background: var(--err-dim); color: var(--err); } .pill.offline .d, .pill.unavailable .d, .pill.error .d { background: var(--err); }
 
@@ -91,8 +92,10 @@ body {
 .now .who .ch { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .now .who .ch .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .now .who .ch .live { font-size: 9.5px; font-weight: 800; letter-spacing: .06em; color: #fff; background: var(--err); padding: 2px 6px; border-radius: 4px; }
-/* Kick platform badge (brand green on dark). */
-.pfk { font-size: 9px; font-weight: 800; letter-spacing: .07em; color: #0b1f02; background: #53fc18; padding: 1.5px 5px; border-radius: 4px; vertical-align: 1px; }
+/* Platform badges (brand colors; shown wherever more than one platform is on). */
+.pf { font-size: 9px; font-weight: 800; letter-spacing: .07em; padding: 1.5px 5px; border-radius: 4px; vertical-align: 1px; white-space: nowrap; }
+.pf.twitch { color: #241047; background: #c9a6ff; } /* dark-on-bright like the kick badge; white on #9147ff fails contrast at 9px */
+.pf.kick { color: #0b1f02; background: #53fc18; }
 .now .who .game { color: var(--text-secondary); font-size: 12px; }
 .drop-row { margin-top: 16px; }
 .drop-row .lbl { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; }
@@ -102,6 +105,7 @@ body {
 .bar { height: 10px; border-radius: 999px; background: var(--bg-control); overflow: hidden; }
 .bar > i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg,#a86bff,var(--twitch)); }
 .bar > i.blue { background: linear-gradient(90deg,#5aa9ff,var(--accent)); }
+.bar > i.kick { background: linear-gradient(90deg,#8dff5c,#3ecc0e); }
 .watchdogs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
 .wd { display: flex; align-items: center; gap: 7px; background: rgba(127,127,127,0.08); border: 1px solid var(--hairline-card); border-radius: 8px; padding: 7px 10px; font-size: 11.5px; color: var(--text-secondary); }
 .wd .tick { color: var(--ok); font-weight: 700; }
@@ -110,6 +114,7 @@ body {
 .btn { appearance: none; border: 1px solid var(--hairline); background: var(--bg-control); color: var(--text-primary); font: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 14px; border-radius: var(--radius-ctl); cursor: pointer; }
 .btn:hover { background: var(--bg-elev); }
 .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.btn[disabled] { opacity: .45; cursor: default; pointer-events: none; }
 .btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
 .btn.ghost { background: transparent; }
 .btn.danger { color: var(--err); }

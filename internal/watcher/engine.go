@@ -17,8 +17,8 @@ import (
 	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rake-pro/dropwarden/internal/discovery"
 	"github.com/rake-pro/dropwarden/internal/domain"
-	"github.com/rake-pro/dropwarden/internal/store"
 	"github.com/rake-pro/dropwarden/internal/platform"
+	"github.com/rake-pro/dropwarden/internal/store"
 )
 
 // Pager is the engine's view of a platform's page driver (twitch.Pages,
@@ -82,10 +82,12 @@ type command struct {
 
 // Status is a snapshot of the engine for the UI/CLI.
 type Status struct {
+	Platform     string    `json:"platform"`
 	State        State     `json:"state"`
 	DropID       string    `json:"dropID"`
 	DropName     string    `json:"dropName"`
 	ChannelLogin string    `json:"channelLogin"`
+	Game         string    `json:"game"`
 	Current      int       `json:"current"`
 	Required     int       `json:"required"`
 	Paused       bool      `json:"paused"`
@@ -165,6 +167,7 @@ func New(d Deps) *Engine {
 	}
 	e := &Engine{deps: d, cmds: make(chan command, 16), state: StateIdle}
 	e.paused = !d.Cfg.Watcher.EnabledOnStart
+	e.status = Status{Platform: string(d.Platform.OrTwitch()), State: StateIdle, Paused: e.paused}
 	return e
 }
 

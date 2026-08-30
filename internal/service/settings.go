@@ -12,20 +12,24 @@ func NewSettingsService(b *Backend) *SettingsService { return &SettingsService{b
 // Load returns the current config as a flat DTO.
 func (s *SettingsService) Load() ConfigDTO { return toConfigDTO(s.b.config()) }
 
-// Save applies the DTO onto the current config, validates and persists it, and
-// hot-reloads the engine.
+// Save applies the DTO onto a COPY of the current config, validates and
+// persists that, and only then commits it and hot-reloads the engines. A save
+// that fails validation must leave the live config untouched, otherwise the
+// rejected values keep echoing back into the form and every later save fails.
 func (s *SettingsService) Save(dto ConfigDTO) error {
 	s.b.mu.Lock()
-	cfg := s.b.cfg
-	applyConfigDTO(cfg, dto)
+	cp := *s.b.cfg
+	cp.Games = append([]string(nil), s.b.cfg.Games...)
 	s.b.mu.Unlock()
+	applyConfigDTO(&cp, dto)
 
-	if err := config.Save(s.b.ConfigPath, cfg); err != nil {
+	if err := config.Save(s.b.ConfigPath, &cp); err != nil {
 		return err
 	}
-	if eng := s.b.Engine(); eng != nil {
-		eng.ReloadConfig(cfg)
-	}
+	s.b.mu.Lock()
+	s.b.cfg = &cp
+	s.b.mu.Unlock()
+	s.b.ReloadEngines()
 	return nil
 }
 

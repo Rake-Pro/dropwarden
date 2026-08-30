@@ -1,8 +1,13 @@
 version: "3"
 
-# dropwarden task runner. The GUI app (cmd/dropwarden) targets Windows and
-# macOS; on those machines `wails3 dev` gives HMR. The CLI harness
-# (cmd/dropwarden-cli) runs everywhere and is the phase 1-4 development surface.
+# dropwarden task runner. The GUI app (cmd/dropwarden) targets Windows, macOS,
+# and Linux. On Windows/macOS `wails3 dev` gives HMR. Linux uses Wails' GTK3
+# backend (build tag gtk3 -> GTK3 + webkit2gtk-4.1, the most portable stack);
+# the gtk3 tag is inert on other platforms, so every Go command passes it.
+# In claude-container the GTK dev stack lives in a user sysroot: source
+# ~/tools/wails-sysroot.env first (real Linux machines just install
+# libgtk-3-dev libwebkit2gtk-4.1-dev libx11-dev). The CLI harness
+# (cmd/dropwarden-cli) runs everywhere with no cgo.
 
 vars:
   GOTMPDIR:
@@ -16,12 +21,12 @@ tasks:
   test:
     desc: Run all unit tests
     cmds:
-      - go test ./...
+      - go test -tags gtk3 ./...
 
   vet:
     desc: go vet
     cmds:
-      - go vet ./...
+      - go vet -tags gtk3 ./...
 
   fmt-check:
     desc: Verify gofmt cleanliness
@@ -37,6 +42,11 @@ tasks:
     desc: Cross-compile check of the GUI for Windows (CGO-free)
     cmds:
       - GOOS=windows go build ./...
+
+  build-linux:
+    desc: Build the Linux GUI (GTK3 backend; needs GTK dev stack or the container sysroot env)
+    cmds:
+      - go build -tags gtk3 -o bin/dropwarden ./cmd/dropwarden
 
   check:
     desc: fmt-check + vet + test + windows build + forbidden-call scan

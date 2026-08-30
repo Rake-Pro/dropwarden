@@ -27,9 +27,13 @@ func TestHTTPStateAndActions(t *testing.T) {
 		t.Fatalf("state code=%d", rr.Code)
 	}
 	var state struct {
-		Connection map[string]bool `json:"connection"`
-		Queue      []QueueItemDTO  `json:"queue"`
-		Config     ConfigDTO       `json:"config"`
+		Platforms []struct {
+			Platform string `json:"platform"`
+			Enabled  bool   `json:"enabled"`
+			Up       bool   `json:"up"`
+		} `json:"platforms"`
+		Queue  []QueueItemDTO `json:"queue"`
+		Config ConfigDTO      `json:"config"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &state); err != nil {
 		t.Fatalf("decode state: %v", err)
@@ -40,8 +44,14 @@ func TestHTTPStateAndActions(t *testing.T) {
 	if state.Config.Volume != 0.01 {
 		t.Fatalf("bad config in state: %+v", state.Config)
 	}
-	if state.Connection["chrome"] {
-		t.Fatal("chrome should be false with nil engine")
+	if len(state.Platforms) != 2 || state.Platforms[0].Platform != "twitch" || state.Platforms[1].Platform != "kick" {
+		t.Fatalf("bad platforms in state: %+v", state.Platforms)
+	}
+	if !state.Platforms[0].Enabled || state.Platforms[0].Up {
+		t.Fatalf("twitch should be enabled but not up with nil engine: %+v", state.Platforms[0])
+	}
+	if state.Platforms[1].Enabled || state.Platforms[1].Up {
+		t.Fatalf("kick should be disabled by default: %+v", state.Platforms[1])
 	}
 
 	// POST /api/queue/priority (valid) - persists config, engine nil is fine.
@@ -58,11 +68,28 @@ func TestHTTPStateAndActions(t *testing.T) {
 		t.Fatalf("invalid priority should be 400, got %d", rr.Code)
 	}
 
-	// POST /api/watch/start with nil engine -> 400 "watcher not running".
+	// POST /api/engine/twitch/start with nil engine -> 400 "not running".
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/watch/start", nil))
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/twitch/start", nil))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("start with nil engine should be 400, got %d", rr.Code)
+	}
+
+	// Kick disabled -> 400 with a settings hint; bogus platform/action -> 400.
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/kick/start", nil))
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "disabled") {
+		t.Fatalf("kick-disabled start should be 400 with hint, got %d %s", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/mixer/start", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("unknown platform should be 400, got %d", rr.Code)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/twitch/dance", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("unknown action should be 400, got %d", rr.Code)
 	}
 
 	// POST /api/queue/enabled toggles the item.
@@ -86,18 +113,25 @@ func TestHTTPDebug(t *testing.T) {
 		t.Fatalf("debug code=%d", rr.Code)
 	}
 	var dbg struct {
-		RuntimeUp bool              `json:"runtimeUp"`
-		Paths     map[string]string `json:"paths"`
-		LogTail   []string          `json:"logTail"`
+		Platforms map[string]struct {
+			Enabled bool `json:"enabled"`
+			Up      bool `json:"up"`
+		} `json:"platforms"`
+		Paths   map[string]string `json:"paths"`
+		LogTail []string          `json:"logTail"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &dbg); err != nil {
 		t.Fatalf("decode debug: %v", err)
 	}
-	if dbg.RuntimeUp {
-		t.Fatal("runtimeUp should be false with nil engine")
+	tw, ok := dbg.Platforms["twitch"]
+	if !ok || tw.Up {
+		t.Fatalf("twitch debug section missing or up with nil engine: %+v", dbg.Platforms)
 	}
-	if dbg.Paths["config"] == "" {
-		t.Fatalf("expected config path in debug paths: %+v", dbg.Paths)
+	if _, ok := dbg.Platforms["kick"]; !ok {
+		t.Fatalf("kick debug section missing: %+v", dbg.Platforms)
+	}
+	if dbg.Paths["config"] == "" || dbg.Paths["kickChromeProfile"] == "" {
+		t.Fatalf("expected config + kick profile paths in debug paths: %+v", dbg.Paths)
 	}
 }
 

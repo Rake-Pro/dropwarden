@@ -7,21 +7,28 @@
 // it falls back to SAMPLE data so the page still renders for design review.
 
 const SAMPLE = {
-  connection: { chrome: false, loggedIn: false },
-  status: { state: 'idle', channelLogin: '', dropName: '', current: 0, required: 0, game: '' },
-  kickStatus: null,
-  queue: [
-    { dropID: 'd1', dropName: 'Wooden Barricade', game: 'Rust', status: 'active', enabled: true, currentMinutes: 42, requiredMinutes: 60, reason: '@shroud · watching now' },
-    { dropID: 'd2', dropName: 'Elite Wooden Door Skin', game: 'Rust', status: 'pending', enabled: true, currentMinutes: 0, requiredMinutes: 120, reason: '@posty +6' },
-    { dropID: 'd4', dropName: 'Master Chief Armor Coating', game: 'Halo MCC', status: 'needs_action', enabled: false, currentMinutes: 0, requiredMinutes: 90, reason: 'account link required' },
+  platforms: [
+    {
+      platform: 'twitch', enabled: true, up: true, pendingRestart: false,
+      status: { platform: 'twitch', state: 'watching', paused: false, channelLogin: 'shroud', dropName: 'Wooden Barricade', current: 42, required: 60, game: 'Rust' },
+    },
+    {
+      platform: 'kick', enabled: true, up: true, pendingRestart: false,
+      status: { platform: 'kick', state: 'idle', paused: true, channelLogin: '', dropName: '', current: 0, required: 0, game: '' },
+    },
   ],
-  claims: [{ dropName: 'HCS 2026 Weapon Charm', game: 'Halo Infinite', claimedAt: 'sample' }],
-  stats: { dropsEarned: 0, dropsClaimed: 0, minutesWatched: 0, successRate: 0, sessions: 0, outcomeCounts: {} },
+  queue: [
+    { dropID: 'd1', platform: 'twitch', dropName: 'Wooden Barricade', game: 'Rust', status: 'active', enabled: true, currentMinutes: 42, requiredMinutes: 60, reason: '@shroud · watching now' },
+    { dropID: 'd2', platform: 'kick', dropName: 'Elite Wooden Door Skin', game: 'Rust', status: 'pending', enabled: true, currentMinutes: 0, requiredMinutes: 120, reason: '@posty +6' },
+    { dropID: 'd4', platform: 'twitch', dropName: 'Master Chief Armor Coating', game: 'Halo MCC', status: 'needs_action', enabled: false, currentMinutes: 0, requiredMinutes: 90, reason: 'account link required' },
+  ],
+  claims: [{ dropName: 'HCS 2026 Weapon Charm', platform: 'twitch', game: 'Halo Infinite', claimedAt: 'sample' }],
+  stats: { dropsEarned: 0, dropsClaimed: 0, minutesWatched: 0, successRate: 0, sessions: 0, outcomeCounts: {}, byPlatform: {} },
   spark: [],
   config: {
     theme: 'dark', games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'], anyGame: false,
     priorityMode: 'top_down', autoEnqueueNew: true, volume: 0.01, forceLowestQuality: true,
-    neverFocus: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, kickEnabled: false, claimStrategy: 'in_page',
+    neverFocus: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, kickEnabled: true, claimStrategy: 'in_page',
     allowGqlFallback: false, skipAccountLink: true, authMode: 'manual', storedEnabled: false, logLevel: 'info',
   },
 };
@@ -60,11 +67,10 @@ async function post(path, body) {
 
 export const api = {
   get offline() { return offline; },
+  async state() { return fetchState(); },
   async refreshState() { cache = null; return fetchState(); },
-  async connection() { return (await fetchState()).connection || {}; },
-  async status() { return (await fetchState()).status || {}; },
-  // Kick engine status, or null when the kick runtime is disabled/not up.
-  async kickStatus() { return (await fetchState()).kickStatus || null; },
+  // Enabled/up/status per platform, twitch first.
+  async platforms() { return (await fetchState()).platforms || []; },
   async queue() { return (await fetchState()).queue || []; },
   async claims() { return (await fetchState()).claims || []; },
   async stats() { return (await fetchState()).stats || {}; },
@@ -77,17 +83,17 @@ export const api = {
     return r.json();
   },
 
-  start() { return post('/api/watch/start'); },
-  stop() { return post('/api/watch/stop'); },
-  skip() { return post('/api/watch/skip'); },
-  refresh() { return post('/api/watch/refresh'); },
-  // Kick engine controls (mirror of the Twitch ones).
-  kick: {
-    start() { return post('/api/kick/start'); },
-    stop() { return post('/api/kick/stop'); },
-    skip() { return post('/api/kick/skip'); },
-    refresh() { return post('/api/kick/refresh'); },
+  // Engine controls, uniform across platforms.
+  engine(platform) {
+    const p = encodeURIComponent(platform);
+    return {
+      start() { return post(`/api/engine/${p}/start`); },
+      stop() { return post(`/api/engine/${p}/stop`); },
+      skip() { return post(`/api/engine/${p}/skip`); },
+      refresh() { return post(`/api/engine/${p}/refresh`); },
+    };
   },
+
   setEnabled(dropID, on) { return post('/api/queue/enabled', { dropID, on }); },
   setOrder(ids) { return post('/api/queue/order', { ids }); },
   setPriority(mode) { return post('/api/queue/priority', { mode }); },

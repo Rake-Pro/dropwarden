@@ -109,6 +109,17 @@ func (c *Config) validate() error {
 	if o := c.Browser.Burnin.DimOpacity; o < 0 || o > 1 {
 		return fmt.Errorf("config: browser.burnin.dim_opacity %v must be in [0,1]", o)
 	}
+	if c.Kick.Enabled {
+		// Validate the config the Kick engine will actually run with (its own
+		// browser block, player policy inherited from Twitch when unset).
+		kc := c.KickRuntimeConfig()
+		if v := kc.Browser.Player.Volume; v <= 0 || v > 1 {
+			return fmt.Errorf("config: kick.browser.player.volume %v must be in (0,1]", v)
+		}
+		if o := kc.Browser.Burnin.DimOpacity; o < 0 || o > 1 {
+			return fmt.Errorf("config: kick.browser.burnin.dim_opacity %v must be in [0,1]", o)
+		}
+	}
 	if c.Watcher.SoftStall >= c.Watcher.HardStall {
 		return fmt.Errorf("config: watcher.soft_stall (%s) must be less than hard_stall (%s)", c.Watcher.SoftStall, c.Watcher.HardStall)
 	}

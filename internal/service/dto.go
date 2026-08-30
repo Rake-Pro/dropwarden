@@ -50,6 +50,7 @@ type ClaimDTO struct {
 
 type SessionDTO struct {
 	ID           string    `json:"id"`
+	Platform     string    `json:"platform"`
 	DropID       string    `json:"dropID"`
 	ChannelLogin string    `json:"channelLogin"`
 	StartedAt    time.Time `json:"startedAt"`
@@ -68,6 +69,18 @@ type StatsDTO struct {
 	Sessions       int            `json:"sessions"`
 	SuccessRate    int            `json:"successRate"` // percent
 	OutcomeCounts  map[string]int `json:"outcomeCounts"`
+
+	// ByPlatform splits the headline totals per platform so a multi-platform
+	// setup can see where the time and claims went. Keys are platform names
+	// ("twitch", "kick"); single-platform setups just get one entry.
+	ByPlatform map[string]PlatformTotalsDTO `json:"byPlatform"`
+}
+
+type PlatformTotalsDTO struct {
+	DropsEarned    int `json:"dropsEarned"`
+	DropsClaimed   int `json:"dropsClaimed"`
+	MinutesWatched int `json:"minutesWatched"`
+	Sessions       int `json:"sessions"`
 }
 
 // ConfigDTO is the subset of config the settings UI edits. It is deliberately

@@ -37,6 +37,7 @@ type App struct {
 
 	// Kick runtime (nil unless kick.enabled).
 	KickSession browser.Session
+	KickDisco   *kick.Discoverer
 	KickEngine  *watcher.Engine
 }
 
@@ -149,9 +150,9 @@ func (a *App) startKickRuntime(ctx context.Context, emit watcher.Emitter) error 
 	a.KickSession = browser.NewManaged(sess, launch, klog)
 	ctrl := kick.NewController(a.KickSession)
 	pages := kick.NewPages(ctrl)
-	disco := kick.NewDiscoverer(a.Store, pages, kcfg, klog)
+	a.KickDisco = kick.NewDiscoverer(a.Store, pages, kcfg, klog)
 	a.KickEngine = watcher.New(watcher.Deps{
-		Store: a.Store, Ctrl: ctrl, Pages: pages, Disco: disco,
+		Store: a.Store, Ctrl: ctrl, Pages: pages, Disco: a.KickDisco,
 		Cfg: kcfg, Emit: emit, Log: klog,
 		Platform: domain.PlatformKick, ChannelHost: "kick.com",
 	})

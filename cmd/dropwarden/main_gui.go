@@ -1,4 +1,4 @@
-//go:build windows || darwin
+//go:build windows || darwin || linux
 
 // Command dropwarden is the tray-first desktop app. It opens the store and
 // config immediately, brings up the dashboard window and system tray, and
@@ -35,7 +35,7 @@ func main() {
 
 	wapp := application.New(application.Options{
 		Name:        "dropwarden",
-		Description: "Twitch drops collector",
+		Description: "Twitch and Kick drops collector",
 		Assets:      application.AssetOptions{Handler: assets},
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "pro.rake.dropwarden",
@@ -67,6 +67,7 @@ func startRuntime(ctx context.Context, a *app.App, backend *service.Backend, emi
 	backend.SetDiscoverer(a.Disco)
 	if a.KickEngine != nil {
 		backend.SetKickEngine(a.KickEngine)
+		backend.SetKickDiscoverer(a.KickDisco)
 	}
 	a.Log.Info().Int("engines", len(a.Engines())).Msg("runtime up; watcher engine(s) attached")
 	// Run every platform engine; block until all exit (ctx cancellation).

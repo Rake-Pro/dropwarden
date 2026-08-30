@@ -179,7 +179,11 @@ func backoffDuration(level int) time.Duration {
 // refresh may run. It always returns to Discovering.
 func (e *Engine) runCooldown(ctx context.Context) (State, string) {
 	e.cur = nil
-	e.setStatus(func(s *Status) { *s = Status{State: StateCooldown, Since: e.deps.Now()} })
+	// Reset the watch fields but keep the engine identity/flags: this wholesale
+	// reset must never wipe Platform (stats attribution) or Paused.
+	e.setStatus(func(s *Status) {
+		*s = Status{Platform: s.Platform, Paused: s.Paused, State: StateCooldown, Since: e.deps.Now()}
+	})
 	d := e.jittered(e.deps.Cfg.Watcher.Cooldown, e.deps.Cfg.Watcher.CooldownJitter)
 	e.sleepInterruptible(ctx, d)
 	e.drainCommands()
