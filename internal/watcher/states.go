@@ -104,6 +104,18 @@ func (e *Engine) runDiscovering(ctx context.Context) (State, string) {
 	if e.shutdown {
 		return StateIdle, "shutdown"
 	}
+	if !e.staggered {
+		e.staggered = true
+		if e.deps.DiscoveryStagger > 0 && e.sleepInterruptible(ctx, e.deps.DiscoveryStagger) {
+			e.drainCommands()
+			if e.shutdown {
+				return StateIdle, "shutdown"
+			}
+			if e.paused {
+				return StateIdle, "paused"
+			}
+		}
+	}
 	e.refreshReq = false
 	res, err := e.deps.Disco.RunOnce(ctx)
 	if err != nil {
@@ -180,9 +192,9 @@ func backoffDuration(level int) time.Duration {
 func (e *Engine) runCooldown(ctx context.Context) (State, string) {
 	e.cur = nil
 	// Reset the watch fields but keep the engine identity/flags: this wholesale
-	// reset must never wipe Platform (stats attribution) or Paused.
+	// reset must never wipe Profile or Platform (stats attribution) or Paused.
 	e.setStatus(func(s *Status) {
-		*s = Status{Platform: s.Platform, Paused: s.Paused, State: StateCooldown, Since: e.deps.Now()}
+		*s = Status{Profile: s.Profile, Platform: s.Platform, Paused: s.Paused, State: StateCooldown, Since: e.deps.Now()}
 	})
 	d := e.jittered(e.deps.Cfg.Watcher.Cooldown, e.deps.Cfg.Watcher.CooldownJitter)
 	e.sleepInterruptible(ctx, d)

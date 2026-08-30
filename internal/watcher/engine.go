@@ -53,9 +53,18 @@ type Deps struct {
 	// Platform tags everything this engine touches (queue items, sessions,
 	// claims, channel stats); zero value means Twitch. ChannelHost is the
 	// platform's channel-URL host (e.g. "twitch.tv", "kick.com"), used to
-	// recognize channel navigations (raids/redirects).
+	// recognize channel navigations (raids/redirects). Profile names the person
+	// this engine watches for; it never selects a store (each profile has its
+	// own) but tags the status so the UI can attribute state per profile.
 	Platform    domain.Platform
 	ChannelHost string
+	Profile     string
+
+	// DiscoveryStagger delays the engine's FIRST discovery pass only (0 for
+	// the first engine started), so N profiles' engines do not all hit their
+	// platform's GQL/API at once on boot. Later discovery passes keep their
+	// existing independent jitter (cooldown, cooldown_jitter), untouched.
+	DiscoveryStagger time.Duration
 
 	// Now and Rand are injectable for deterministic tests. Rand returns [0,1).
 	Now  func() time.Time
@@ -82,6 +91,7 @@ type command struct {
 
 // Status is a snapshot of the engine for the UI/CLI.
 type Status struct {
+	Profile      string    `json:"profile"`
 	Platform     string    `json:"platform"`
 	State        State     `json:"state"`
 	DropID       string    `json:"dropID"`
@@ -132,6 +142,8 @@ type Engine struct {
 	statusMu    sync.Mutex
 	status      Status
 	eligibility map[string]int
+
+	staggered bool // true once the first-discovery stagger delay has run (or been skipped)
 }
 
 // LastEligibility returns the most recent selection eligibility tally.
@@ -167,7 +179,7 @@ func New(d Deps) *Engine {
 	}
 	e := &Engine{deps: d, cmds: make(chan command, 16), state: StateIdle}
 	e.paused = !d.Cfg.Watcher.EnabledOnStart
-	e.status = Status{Platform: string(d.Platform.OrTwitch()), State: StateIdle, Paused: e.paused}
+	e.status = Status{Profile: d.Profile, Platform: string(d.Platform.OrTwitch()), State: StateIdle, Paused: e.paused}
 	return e
 }
 

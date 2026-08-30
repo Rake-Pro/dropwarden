@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/config"
+	"github.com/rake-pro/dropwarden/internal/discovery"
 	"github.com/rake-pro/dropwarden/internal/domain"
+	"github.com/rake-pro/dropwarden/internal/kick"
 	"github.com/rake-pro/dropwarden/internal/logging"
+	"github.com/rake-pro/dropwarden/internal/watcher"
 )
 
 // NewHTTPHandler builds an http.Handler exposing the services as a small JSON
@@ -23,20 +25,14 @@ func NewHTTPHandler(b *Backend) http.Handler {
 
 	mux := http.NewServeMux()
 
-	// Aggregate state for the dashboard/queue/history views in one round trip.
-	// Platforms are a uniform array (twitch first) so the frontend renders every
-	// platform the same way instead of special-casing a bolted-on second one.
+	// Aggregate state for the dashboard/queue/history views in one round trip:
+	// the shared config plus one entry per profile carrying that profile's
+	// platforms, queue, claims, stats, and sparkline. Platforms stay a uniform
+	// array (twitch first) so the frontend renders every platform the same way.
 	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
-		q, _ := queue.Get()
-		claims, _ := history.Claims()
-		stats, _ := history.Stats()
 		writeJSON(w, map[string]any{
-			"platforms": platformStates(b),
-			"queue":     nonNilQueue(q),
-			"claims":    claims,
-			"stats":     stats,
-			"config":    settings.Load(),
-			"spark":     minutesSpark(history),
+			"config":   settings.Load(),
+			"profiles": profileStates(b, queue, history),
 		})
 	})
 
@@ -59,20 +55,22 @@ func NewHTTPHandler(b *Backend) http.Handler {
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
-	// Engine actions, uniform across platforms: /api/engine/{platform}/{action}.
-	mux.HandleFunc("POST /api/engine/{platform}/{action}", func(w http.ResponseWriter, r *http.Request) {
+	// Engine actions, uniform across profiles and platforms:
+	// /api/engine/{profile}/{platform}/{action}.
+	mux.HandleFunc("POST /api/engine/{profile}/{platform}/{action}", func(w http.ResponseWriter, r *http.Request) {
+		eff, err := b.config().Effective(r.PathValue("profile"))
+		if err != nil {
+			writeErr(w, fmt.Errorf("unknown profile %q", r.PathValue("profile")))
+			return
+		}
 		p := domain.Platform(r.PathValue("platform"))
 		if p != domain.PlatformTwitch && p != domain.PlatformKick {
 			writeErr(w, fmt.Errorf("unknown platform %q", r.PathValue("platform")))
 			return
 		}
-		e := b.EngineFor(p)
+		e := b.EngineFor(eff.Name, p)
 		if e == nil {
-			if p == domain.PlatformKick && !b.config().Kick.Enabled {
-				writeErr(w, fmt.Errorf("kick is disabled — enable it in Settings › Platforms and restart"))
-			} else {
-				writeErr(w, fmt.Errorf("%s runtime is not running", p))
-			}
+			writeErr(w, engineDownError(b, eff, p))
 			return
 		}
 		switch r.PathValue("action") {
@@ -91,15 +89,17 @@ func NewHTTPHandler(b *Backend) http.Handler {
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
-	// Queue actions.
+	// Queue actions. Each names the profile whose queue it edits; an empty
+	// profile means the first one (the single-profile case).
 	mux.HandleFunc("POST /api/queue/order", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			IDs []string `json:"ids"`
+			Profile string   `json:"profile"`
+			IDs     []string `json:"ids"`
 		}
 		if !decode(w, r, &body) {
 			return
 		}
-		if err := queue.SetOrder(body.IDs); err != nil {
+		if err := queue.SetOrder(body.Profile, body.IDs); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -107,18 +107,20 @@ func NewHTTPHandler(b *Backend) http.Handler {
 	})
 	mux.HandleFunc("POST /api/queue/enabled", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			DropID string `json:"dropID"`
-			On     bool   `json:"on"`
+			Profile string `json:"profile"`
+			DropID  string `json:"dropID"`
+			On      bool   `json:"on"`
 		}
 		if !decode(w, r, &body) {
 			return
 		}
-		if err := queue.SetEnabled(body.DropID, body.On); err != nil {
+		if err := queue.SetEnabled(body.Profile, body.DropID, body.On); err != nil {
 			writeErr(w, err)
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true})
 	})
+	// Priority mode is a root setting shared by every profile.
 	mux.HandleFunc("POST /api/queue/priority", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Mode string `json:"mode"`
@@ -127,6 +129,61 @@ func NewHTTPHandler(b *Backend) http.Handler {
 			return
 		}
 		if err := queue.SetPriorityMode(body.Mode); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
+	// Profile management. Both take effect on the next app start (the runtime
+	// per profile is built at startup); the state route reports pendingRestart
+	// until then. No delete/rename by design.
+	mux.HandleFunc("POST /api/profiles", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name        string `json:"name"`
+			DisplayName string `json:"displayName"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if err := settings.AddProfile(body.Name, body.DisplayName); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+	mux.HandleFunc("POST /api/profiles/enabled", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+			On   bool   `json:"on"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if err := settings.SetProfileEnabled(body.Name, body.On); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
+	// GET /api/profiles lists every profile's raw editable overlay for the
+	// Profiles settings pane (distinct from POST /api/profiles, which adds one).
+	mux.HandleFunc("GET /api/profiles", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, settings.Profiles())
+	})
+	mux.HandleFunc("POST /api/profiles/update", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name         string   `json:"name"`
+			DisplayName  string   `json:"displayName"`
+			KickEnabled  bool     `json:"kickEnabled"`
+			Games        []string `json:"games"`
+			InheritGames bool     `json:"inheritGames"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if err := settings.UpdateProfile(body.Name, body.DisplayName, body.KickEnabled, body.Games, body.InheritGames); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -145,9 +202,9 @@ func nonNilQueue(q []QueueItemDTO) []QueueItemDTO {
 }
 
 // minutesSpark returns a coarse per-day watch-minutes series for the last 14
-// days, derived from session history.
-func minutesSpark(h *HistoryService) []int {
-	sessions, err := h.Sessions(0)
+// days, derived from one profile's session history.
+func minutesSpark(h *HistoryService, profile string) []int {
+	sessions, err := h.Sessions(profile, 0)
 	if err != nil {
 		return []int{}
 	}
@@ -177,71 +234,170 @@ func minutesSpark(h *HistoryService) []int {
 	return out
 }
 
-// platformStates builds the uniform per-platform runtime array for /api/state,
+// profileStates builds the per-profile state array for /api/state, in config
+// order. A profile this process did not open (disabled at start, or added
+// since) still appears, reporting no engines and empty data instead of
+// vanishing from the UI.
+func profileStates(b *Backend, queue *QueueService, history *HistoryService) []map[string]any {
+	cfg := b.config()
+	out := make([]map[string]any, 0, len(cfg.Profiles))
+	for _, pc := range cfg.Profiles {
+		eff, err := cfg.Effective(pc.Name)
+		if err != nil {
+			continue
+		}
+		pb := b.Profiles[eff.Name]
+		// pendingRestart: what this process launched with differs from what is
+		// saved now - the runtime follows on the next app restart.
+		pending := eff.Enabled != (pb != nil && pb.startupEnabled)
+		entry := map[string]any{
+			"name": eff.Name, "displayName": eff.DisplayName, "enabled": eff.Enabled,
+			"pendingRestart": pending,
+			"platforms":      platformStates(b, eff, pb, pending),
+			"queue":          []QueueItemDTO{},
+			"claims":         []ClaimDTO{},
+			"stats":          StatsDTO{OutcomeCounts: map[string]int{}, ByPlatform: map[string]PlatformTotalsDTO{}},
+			"spark":          []int{},
+		}
+		if pb != nil {
+			q, _ := queue.Get(eff.Name)
+			entry["queue"] = nonNilQueue(q)
+			if claims, err := history.Claims(eff.Name); err == nil {
+				entry["claims"] = claims
+			}
+			if stats, err := history.Stats(eff.Name); err == nil {
+				entry["stats"] = stats
+			}
+			entry["spark"] = minutesSpark(history, eff.Name)
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// platformStates builds one profile's uniform per-platform runtime array,
 // twitch first. A platform that is enabled but has no engine attached is either
-// still starting or failed to launch; the frontend tells those apart by whether
-// the rest of the runtime is up.
-func platformStates(b *Backend) []map[string]any {
+// still starting, waiting on a restart, or failed to launch; pendingRestart and
+// the rest of the runtime tell those apart.
+func platformStates(b *Backend, eff *config.ProfileEffective, pb *ProfileBackend, profilePending bool) []map[string]any {
 	entry := func(p domain.Platform, enabled, pendingRestart bool) map[string]any {
 		m := map[string]any{"platform": string(p), "enabled": enabled, "pendingRestart": pendingRestart, "up": false, "status": nil}
-		if e := b.EngineFor(p); e != nil {
-			m["up"] = true
-			m["status"] = e.Status()
+		if pb != nil {
+			if e := pb.Engine(p); e != nil {
+				m["up"] = true
+				m["status"] = e.Status()
+			}
 		}
 		return m
 	}
-	kickEnabled := b.config().Kick.Enabled
+	kickEnabled := eff.Enabled && eff.KickEnabled
+	kickPending := profilePending || (pb != nil && eff.KickEnabled != pb.startupKick)
 	return []map[string]any{
-		entry(domain.PlatformTwitch, true, false),
-		// pendingRestart: the saved toggle differs from what this process
-		// started with — the runtime follows on the next app restart.
-		entry(domain.PlatformKick, kickEnabled, kickEnabled != b.startupKickEnabled),
+		entry(domain.PlatformTwitch, eff.Enabled, profilePending),
+		entry(domain.PlatformKick, kickEnabled, kickPending),
 	}
 }
 
-// buildDebug assembles the debug snapshot for the Debugging pane, one section
-// per platform plus the shared log tail and paths.
+// engineDownError explains WHY a (profile, platform) engine is unavailable,
+// keeping the disabled-vs-not-running distinction honest per profile.
+func engineDownError(b *Backend, eff *config.ProfileEffective, p domain.Platform) error {
+	if !eff.Enabled {
+		return fmt.Errorf("profile %q is disabled - enable it in Settings and restart", eff.Name)
+	}
+	if p == domain.PlatformKick && !eff.KickEnabled {
+		return fmt.Errorf("kick is disabled for %s - enable it in Settings > Platforms and restart", eff.DisplayName)
+	}
+	if b.Profile(eff.Name) == nil {
+		return fmt.Errorf("profile %q was added after startup - restart the app to start its runtime", eff.Name)
+	}
+	return fmt.Errorf("%s runtime is not running for %s", p, eff.DisplayName)
+}
+
+// buildDebug assembles the debug snapshot for the Debugging pane: one section
+// per profile (and per platform within it) plus the shared log tail, with paths
+// listed per profile.
 func buildDebug(b *Backend) map[string]any {
+	cfg := b.config()
 	dir, _ := config.Dir()
-	dbPath, _ := config.DBPath()
 	logPath, _ := config.LogPath()
-	profile, _ := b.config().ProfileDir()
-	kickProfile, _ := b.config().KickProfileDir()
-	debugDir := ""
-	if dir != "" {
-		debugDir = filepath.Join(dir, "debug")
-	}
 
-	twitch := map[string]any{"enabled": true, "up": b.Engine() != nil, "status": nil, "eligibility": map[string]int{}, "lastDiscovery": nil}
-	if eng := b.Engine(); eng != nil {
-		twitch["status"] = eng.Status()
-		twitch["eligibility"] = eng.LastEligibility()
-	}
-	if d := b.Discoverer(); d != nil {
-		if diag := d.LastDiagnostic(); !diag.At.IsZero() {
-			twitch["lastDiscovery"] = diag
+	profiles := map[string]any{}
+	profilePaths := map[string]any{}
+	for _, pc := range cfg.Profiles {
+		eff, err := cfg.Effective(pc.Name)
+		if err != nil {
+			continue
 		}
-	}
-
-	kick := map[string]any{"enabled": b.config().Kick.Enabled, "up": b.KickEngine() != nil, "status": nil, "eligibility": map[string]int{}, "lastDiscovery": nil}
-	if eng := b.KickEngine(); eng != nil {
-		kick["status"] = eng.Status()
-		kick["eligibility"] = eng.LastEligibility()
-	}
-	if d := b.KickDiscoverer(); d != nil {
-		if diag := d.LastDiagnostic(); !diag.At.IsZero() {
-			kick["lastDiscovery"] = diag
+		pb := b.Profiles[eff.Name]
+		profiles[eff.Name] = map[string]any{
+			"displayName": eff.DisplayName,
+			"enabled":     eff.Enabled,
+			"twitch":      platformDebug(pb, eff.Enabled, domain.PlatformTwitch),
+			"kick":        platformDebug(pb, eff.Enabled && eff.KickEnabled, domain.PlatformKick),
+		}
+		pp, err := cfg.ProfilePaths(eff.Name)
+		if err != nil {
+			continue
+		}
+		chromeProfile, kickChromeProfile := pp.ChromeProfile, pp.ChromeProfileKick
+		// The browser profile_dir overrides are single-instance settings and
+		// apply to the main profile only (see app.chromeDirs).
+		if eff.Name == config.MainProfileName {
+			if d, err := cfg.ProfileDir(); err == nil {
+				chromeProfile = d
+			}
+			if d, err := cfg.KickProfileDir(); err == nil {
+				kickChromeProfile = d
+			}
+		}
+		profilePaths[eff.Name] = map[string]string{
+			"database": pp.DB, "chromeProfile": chromeProfile,
+			"kickChromeProfile": kickChromeProfile, "debugDir": pp.Debug,
 		}
 	}
 
 	return map[string]any{
-		"platforms": map[string]any{"twitch": twitch, "kick": kick},
-		"logTail":   logging.RecentLines(120),
-		"paths": map[string]string{
-			"appRoot": dir, "config": b.ConfigPath, "database": dbPath,
-			"log": logPath, "chromeProfile": profile, "kickChromeProfile": kickProfile, "debugDir": debugDir,
+		"profiles": profiles,
+		"logTail":  logging.RecentLines(120),
+		"paths": map[string]any{
+			"appRoot": dir, "config": b.ConfigPath, "log": logPath,
+			"profiles": profilePaths,
 		},
 	}
+}
+
+// platformDebug renders one (profile, platform) debug section.
+func platformDebug(pb *ProfileBackend, enabled bool, p domain.Platform) map[string]any {
+	m := map[string]any{"enabled": enabled, "up": false, "status": nil, "eligibility": map[string]int{}, "lastDiscovery": nil}
+	if pb == nil {
+		return m
+	}
+	if eng := pb.Engine(p); eng != nil {
+		m["up"] = true
+		m["status"] = eng.Status()
+		m["eligibility"] = eng.LastEligibility()
+	}
+	if diag := lastDiscovery(pb.Discoverer(p)); diag != nil {
+		m["lastDiscovery"] = diag
+	}
+	return m
+}
+
+// lastDiscovery returns a discoverer's last-pass diagnostic, or nil when no
+// pass has run. The two platforms report different fields, so the debug view
+// takes it as opaque JSON.
+func lastDiscovery(d watcher.Discoverer) any {
+	switch v := d.(type) {
+	case *discovery.Discoverer:
+		if diag := v.LastDiagnostic(); !diag.At.IsZero() {
+			return diag
+		}
+	case *kick.Discoverer:
+		if diag := v.LastDiagnostic(); !diag.At.IsZero() {
+			return diag
+		}
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

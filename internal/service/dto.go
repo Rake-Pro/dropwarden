@@ -112,3 +112,15 @@ type ConfigDTO struct {
 type LoginDTO struct {
 	LoggedIn bool `json:"loggedIn"`
 }
+
+// ProfileDTO is one profile's editable overlay for the Profiles settings
+// pane - the raw overlay values (what the profile itself sets vs inherits),
+// not the resolved Effective ones the dashboard uses.
+type ProfileDTO struct {
+	Name         string   `json:"name"`
+	DisplayName  string   `json:"displayName"`
+	Enabled      bool     `json:"enabled"`
+	Games        []string `json:"games"`
+	InheritGames bool     `json:"inheritGames"`
+	KickEnabled  bool     `json:"kickEnabled"` // effective (resolved), for display
+}

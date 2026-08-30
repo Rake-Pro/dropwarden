@@ -314,3 +314,93 @@ func TestBeginWatchingContinuesSessionAcrossRevalidation(t *testing.T) {
 		t.Fatalf("revalidation must not mint a new session: %+v vs %+v", e.cur.session, first)
 	}
 }
+
+func TestRunDiscoveringZeroStaggerRunsImmediately(t *testing.T) {
+	// Profile 0 (or any single-profile install, where Deps.DiscoveryStagger is
+	// never set) must see today's exact behavior: discovery fires with no
+	// delay at all.
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	cfg, _ := config.StarterDefaults()
+	disco := &fakeDisco{}
+	e := New(Deps{
+		Store: st, Ctrl: newFakeController(), Pages: &fakePager{}, Disco: disco,
+		Cfg: cfg, Emit: newRecordingEmitter(), Log: zerolog.Nop(),
+		Rand: func() float64 { return 0.5 },
+	})
+
+	start := time.Now()
+	next, _ := e.runDiscovering(context.Background())
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("zero stagger should not delay discovery, took %s", elapsed)
+	}
+	if next != StateSelectingChannel {
+		t.Fatalf("expected SelectingChannel, got %s", next)
+	}
+	if disco.calls != 1 {
+		t.Fatalf("expected 1 discovery call, got %d", disco.calls)
+	}
+}
+
+func TestRunDiscoveringAppliesStaggerOnceOnly(t *testing.T) {
+	// A later-started engine's FIRST discovery is delayed by its stagger
+	// offset; every subsequent discovery pass (e.g. after a cooldown) runs on
+	// its normal schedule with no further stagger.
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	cfg, _ := config.StarterDefaults()
+	disco := &fakeDisco{}
+	const stagger = 30 * time.Millisecond
+	e := New(Deps{
+		Store: st, Ctrl: newFakeController(), Pages: &fakePager{}, Disco: disco,
+		Cfg: cfg, Emit: newRecordingEmitter(), Log: zerolog.Nop(),
+		Rand: func() float64 { return 0.5 }, DiscoveryStagger: stagger,
+	})
+
+	start := time.Now()
+	e.runDiscovering(context.Background())
+	if elapsed := time.Since(start); elapsed < stagger {
+		t.Fatalf("first discovery should wait out the stagger, took %s want >= %s", elapsed, stagger)
+	}
+	if disco.calls != 1 {
+		t.Fatalf("expected 1 discovery call after stagger, got %d", disco.calls)
+	}
+
+	start = time.Now()
+	e.runDiscovering(context.Background())
+	if elapsed := time.Since(start); elapsed >= stagger {
+		t.Fatalf("second discovery must not re-apply the stagger, took %s", elapsed)
+	}
+	if disco.calls != 2 {
+		t.Fatalf("expected 2 discovery calls, got %d", disco.calls)
+	}
+}
+
+func TestCooldownPreservesEngineIdentity(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	cfg, _ := config.StarterDefaults()
+	e := New(Deps{
+		Store: st, Ctrl: newFakeController(), Pages: &fakePager{}, Disco: &fakeDisco{},
+		Cfg: cfg, Emit: newRecordingEmitter(), Log: zerolog.Nop(),
+		Platform: domain.PlatformKick, ChannelHost: "kick.com", Profile: "greg",
+		Rand: func() float64 { return 0.5 },
+	})
+	if got := e.Status(); got.Profile != "greg" || got.Platform != "kick" {
+		t.Fatalf("engine identity not stamped at New: %+v", got)
+	}
+	e.setStatus(func(s *Status) { s.DropName = "Tier 1"; s.Current = 42 })
+
+	// The cooldown reset wipes the watch fields wholesale; a wiped Profile would
+	// credit this profile's minutes to another one.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	e.runCooldown(ctx)
+	got := e.Status()
+	if got.Profile != "greg" || got.Platform != "kick" {
+		t.Fatalf("cooldown reset wiped engine identity: %+v", got)
+	}
+	if got.DropName != "" || got.Current != 0 {
+		t.Fatalf("cooldown reset should clear the watch fields: %+v", got)
+	}
+}

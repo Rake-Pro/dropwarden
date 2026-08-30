@@ -95,8 +95,8 @@ func doctor() error {
 	defer a.Close()
 
 	dir, _ := config.Dir()
-	dbPath, _ := config.DBPath()
 	logPath, _ := config.LogPath()
+	paths, _ := a.Cfg.ProfilePaths(a.Main().Name)
 	profile, _ := a.Cfg.ProfileDir()
 	chrome, chromeErr := browser.FindChrome(a.Cfg.Browser.ChromePath)
 
@@ -104,7 +104,8 @@ func doctor() error {
 	fmt.Fprintln(w, "dropwarden doctor")
 	fmt.Fprintf(w, "app root\t%s\n", dir)
 	fmt.Fprintf(w, "config\t%s\n", a.ConfigPath)
-	fmt.Fprintf(w, "database\t%s\n", dbPath)
+	fmt.Fprintf(w, "profile\t%s\n", a.Main().Name)
+	fmt.Fprintf(w, "database\t%s\n", paths.DB)
 	fmt.Fprintf(w, "log\t%s\n", logPath)
 	fmt.Fprintf(w, "chrome profile\t%s\n", profile)
 	if chromeErr != nil {
@@ -125,6 +126,17 @@ func doctor() error {
 	return nil
 }
 
+// mainTwitch returns the first profile's Twitch runtime. StartRuntime only
+// errors when NO profile started, so on a multi-profile config the first
+// profile's launch can have failed while a later one came up.
+func mainTwitch(a *app.App) (*app.PlatformRuntime, error) {
+	pr := a.Main()
+	if pr == nil || pr.Twitch == nil {
+		return nil, fmt.Errorf("twitch runtime for the first profile did not start (see log)")
+	}
+	return pr.Twitch, nil
+}
+
 func login() error {
 	a, err := app.Open(app.Options{Console: true})
 	if err != nil {
@@ -140,9 +152,13 @@ func login() error {
 	fmt.Println("A dedicated Chrome window has opened. Log in to Twitch by hand.")
 	fmt.Println("Waiting for the session to become authenticated (Ctrl-C to abort)...")
 
+	tw, err := mainTwitch(a)
+	if err != nil {
+		return err
+	}
 	lctx, lcancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer lcancel()
-	if err := twitch.WaitForLogin(lctx, a.Session, 3*time.Second); err != nil {
+	if err := twitch.WaitForLogin(lctx, tw.Session, 3*time.Second); err != nil {
 		return err
 	}
 	fmt.Println("Logged in. The session is saved in the profile; future runs reuse it.")
@@ -160,7 +176,11 @@ func discover() error {
 	if err := a.StartRuntime(ctx, service.NewLogEmitter(a.Log)); err != nil {
 		return err
 	}
-	res, err := a.Disco.RunOnce(ctx)
+	tw, err := mainTwitch(a)
+	if err != nil {
+		return err
+	}
+	res, err := tw.Disco.RunOnce(ctx)
 	if err != nil {
 		return err
 	}
@@ -180,7 +200,11 @@ func inventory() error {
 	if err := a.StartRuntime(ctx, service.NewLogEmitter(a.Log)); err != nil {
 		return err
 	}
-	prog, err := a.Pages.ReadInventory(ctx)
+	tw, err := mainTwitch(a)
+	if err != nil {
+		return err
+	}
+	prog, err := tw.Pages.ReadInventory(ctx)
 	if err != nil {
 		return err
 	}
@@ -209,9 +233,14 @@ func watch() error {
 	if err := a.StartRuntime(ctx, service.NewLogEmitter(a.Log)); err != nil {
 		return err
 	}
+	tw, err := mainTwitch(a)
+	if err != nil {
+		return err
+	}
 	fmt.Println("watcher engine running; press Ctrl-C to stop")
-	a.Engine.Start()
-	return a.Engine.Run(ctx)
+	eng := tw.Engine
+	eng.Start()
+	return eng.Run(ctx)
 }
 
 func report() error {
@@ -221,9 +250,10 @@ func report() error {
 	}
 	defer a.Close()
 
-	claims, _ := a.Store.ListClaims(time.Time{}, time.Time{})
-	sessions, _ := a.Store.ListSessions(0)
-	queue, _ := a.Store.GetQueue()
+	st := a.Main().Store
+	claims, _ := st.ListClaims(time.Time{}, time.Time{})
+	sessions, _ := st.ListSessions(0)
+	queue, _ := st.GetQueue()
 
 	fmt.Printf("== Claims (%d) ==\n", len(claims))
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
@@ -254,7 +284,7 @@ func report() error {
 }
 
 func printCampaigns(a *app.App) error {
-	campaigns, err := a.Store.ListCampaigns()
+	campaigns, err := a.Main().Store.ListCampaigns()
 	if err != nil {
 		return err
 	}

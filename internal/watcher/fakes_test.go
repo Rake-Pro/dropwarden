@@ -81,9 +81,15 @@ func (f *fakePager) FetchInventoryProgress(context.Context) ([]domain.Progress, 
 }
 
 // fakeDisco implements Discoverer.
-type fakeDisco struct{ res discovery.Result }
+type fakeDisco struct {
+	res   discovery.Result
+	calls int
+}
 
-func (f *fakeDisco) RunOnce(context.Context) (discovery.Result, error) { return f.res, nil }
+func (f *fakeDisco) RunOnce(context.Context) (discovery.Result, error) {
+	f.calls++
+	return f.res, nil
+}
 
 // recordingEmitter captures emitted events for assertions.
 type recordingEmitter struct {

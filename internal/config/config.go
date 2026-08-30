@@ -27,6 +27,58 @@ type Config struct {
 	Auth      AuthConfig      `yaml:"auth"`
 	Logging   LoggingConfig   `yaml:"logging"`
 	UI        UIConfig        `yaml:"ui"`
+
+	// Profiles lists the people this instance manages drops for. A config with
+	// no profiles block synthesizes exactly one profile (MainProfileName)
+	// rooted at the app dir itself, so existing single-profile installs need
+	// zero file moves; see applyDefaults.
+	Profiles []ProfileConfig `yaml:"profiles,omitempty"`
+}
+
+// MainProfileName is the legacy single-profile identity: synthesized when the
+// config has no profiles block, rooted at the app dir itself (dir ".").
+const MainProfileName = "main"
+
+// ProfileConfig is one person's overlay onto the root config: their own data
+// directory plus the few fields that can differ per profile. Every other
+// section of Config (queue, watcher, claim, browser, kick defaults, auth,
+// logging, theme) is shared across all profiles.
+type ProfileConfig struct {
+	Name string `yaml:"name"`
+
+	// Dir is the profile's data directory. "" (omitted) resolves to
+	// profiles/<name>/ under the app root; "." roots the profile at the app
+	// dir itself (used by the synthesized main profile); anything else is
+	// resolved relative to the app root, or used as-is if absolute.
+	Dir string `yaml:"dir,omitempty"`
+
+	Enabled     bool     `yaml:"enabled"`
+	DisplayName string   `yaml:"display_name,omitempty"` // optional; UI label, defaults to Name
+	Games       []string `yaml:"games,omitempty"`        // optional; omitted => inherit root games/any_game
+	AnyGame     *bool    `yaml:"any_game,omitempty"`     // optional; nil => inherit root any_game
+
+	Kick ProfileKickConfig `yaml:"kick,omitempty"`
+
+	// WindowSlot is the tiling row index for this profile's engine windows.
+	// nil (omitted) defaults to the profile's position in the Profiles list.
+	WindowSlot *int `yaml:"window_slot,omitempty"`
+}
+
+// ProfileKickConfig is a profile's override of the shared kick block. The
+// root kick block (browser, geometry) stays the defaults for every profile;
+// only whether Kick runs for this profile is overridable.
+type ProfileKickConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty"` // nil => inherit root kick.enabled
+}
+
+// Profile returns the named profile, or nil if it does not exist.
+func (c *Config) Profile(name string) *ProfileConfig {
+	for i := range c.Profiles {
+		if c.Profiles[i].Name == name {
+			return &c.Profiles[i]
+		}
+	}
+	return nil
 }
 
 // KickConfig enables the parallel Kick runtime: its own Chrome instance and

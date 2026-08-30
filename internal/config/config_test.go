@@ -1,7 +1,9 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -77,3 +79,329 @@ func TestExpandPath(t *testing.T) {
 		t.Fatalf("abs path changed: %q", got)
 	}
 }
+
+func TestLegacySynthesizesMainProfile(t *testing.T) {
+	cfg, err := StarterDefaults()
+	if err != nil {
+		t.Fatalf("starter defaults: %v", err)
+	}
+	if len(cfg.Profiles) != 1 {
+		t.Fatalf("expected exactly 1 synthesized profile, got %d", len(cfg.Profiles))
+	}
+	p := cfg.Profiles[0]
+	if p.Name != MainProfileName || p.Dir != "." || !p.Enabled {
+		t.Fatalf("unexpected synthesized profile: %+v", p)
+	}
+
+	home := t.TempDir()
+	t.Setenv("DROPWARDEN_HOME", home)
+
+	root, err := Dir()
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	pp, err := cfg.ProfilePaths(MainProfileName)
+	if err != nil {
+		t.Fatalf("ProfilePaths: %v", err)
+	}
+	if pp.DB != filepath.Join(root, "dropwarden.db") {
+		t.Fatalf("main DB path = %q, want app-root dropwarden.db", pp.DB)
+	}
+	if pp.ChromeProfile != filepath.Join(root, "chrome-profile") {
+		t.Fatalf("main chrome-profile path = %q", pp.ChromeProfile)
+	}
+	if pp.ChromeProfileKick != filepath.Join(root, "chrome-profile-kick") {
+		t.Fatalf("main chrome-profile-kick path = %q", pp.ChromeProfileKick)
+	}
+	if pp.Debug != filepath.Join(root, "debug") {
+		t.Fatalf("main debug path = %q", pp.Debug)
+	}
+
+	// Existing helpers stay unchanged and agree with ProfilePaths(main).
+	dbPath, err := DBPath()
+	if err != nil {
+		t.Fatalf("DBPath: %v", err)
+	}
+	if dbPath != pp.DB {
+		t.Fatalf("DBPath() = %q, want %q", dbPath, pp.DB)
+	}
+	chromeDir, err := cfg.ProfileDir()
+	if err != nil {
+		t.Fatalf("ProfileDir: %v", err)
+	}
+	if chromeDir != pp.ChromeProfile {
+		t.Fatalf("ProfileDir() = %q, want %q", chromeDir, pp.ChromeProfile)
+	}
+	kickDir, err := cfg.KickProfileDir()
+	if err != nil {
+		t.Fatalf("KickProfileDir: %v", err)
+	}
+	if kickDir != pp.ChromeProfileKick {
+		t.Fatalf("KickProfileDir() = %q, want %q", kickDir, pp.ChromeProfileKick)
+	}
+}
+
+func TestSynthesisWrittenBackOnSave(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	cfg, _ := StarterDefaults()
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(raw), "profiles:") {
+		t.Fatalf("expected synthesized profiles block written on save, got:\n%s", raw)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got.Profiles) != 1 || got.Profiles[0].Name != MainProfileName {
+		t.Fatalf("unexpected profiles after round trip: %+v", got.Profiles)
+	}
+}
+
+func TestExplicitProfilesBlockParses(t *testing.T) {
+	cfg, err := StarterDefaults()
+	if err != nil {
+		t.Fatalf("starter defaults: %v", err)
+	}
+	slot := 1
+	kickOn := true
+	cfg.Profiles = append(cfg.Profiles, ProfileConfig{
+		Name:        "greg",
+		Enabled:     true,
+		DisplayName: "Greg",
+		Kick:        ProfileKickConfig{Enabled: &kickOn},
+		WindowSlot:  &slot,
+	})
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got.Profiles) != 2 {
+		t.Fatalf("expected 2 profiles (main + greg), got %d", len(got.Profiles))
+	}
+	p := got.Profile("greg")
+	if p == nil {
+		t.Fatal("greg profile missing after round trip")
+	}
+	if p.DisplayName != "Greg" || p.Kick.Enabled == nil || !*p.Kick.Enabled || p.WindowSlot == nil || *p.WindowSlot != 1 {
+		t.Fatalf("greg profile fields lost round trip: %+v", p)
+	}
+}
+
+func TestProfilePathsForAddedProfile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("DROPWARDEN_HOME", home)
+
+	cfg, _ := StarterDefaults()
+	cfg.Profiles = append(cfg.Profiles, ProfileConfig{Name: "greg", Enabled: true})
+
+	root, err := Dir()
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	pp, err := cfg.ProfilePaths("greg")
+	if err != nil {
+		t.Fatalf("ProfilePaths: %v", err)
+	}
+	wantBase := filepath.Join(root, "profiles", "greg")
+	if pp.DB != filepath.Join(wantBase, "dropwarden.db") {
+		t.Fatalf("greg DB path = %q, want under %q", pp.DB, wantBase)
+	}
+	if pp.ChromeProfile != filepath.Join(wantBase, "chrome-profile") {
+		t.Fatalf("greg chrome-profile path = %q", pp.ChromeProfile)
+	}
+	if pp.ChromeProfileKick != filepath.Join(wantBase, "chrome-profile-kick") {
+		t.Fatalf("greg chrome-profile-kick path = %q", pp.ChromeProfileKick)
+	}
+	if pp.Debug != filepath.Join(wantBase, "debug") {
+		t.Fatalf("greg debug path = %q", pp.Debug)
+	}
+
+	if _, err := cfg.ProfilePaths("nope"); err == nil {
+		t.Fatal("expected error for unknown profile")
+	}
+}
+
+func TestProfileNameValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		p1   string
+		p2   string
+	}{
+		{"uppercase rejected", "Greg", ""},
+		{"space rejected", "greg smith", ""},
+		{"empty rejected", "", ""},
+		{"too long rejected", strings.Repeat("a", 25), ""},
+		{"duplicate rejected", "greg", "greg"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, _ := StarterDefaults()
+			cfg.Profiles = append(cfg.Profiles, ProfileConfig{Name: tc.p1, Enabled: true, AnyGame: boolPtr(true)})
+			if tc.p2 != "" {
+				cfg.Profiles = append(cfg.Profiles, ProfileConfig{Name: tc.p2, Enabled: true, AnyGame: boolPtr(true)})
+			}
+			if err := cfg.validate(); err == nil {
+				t.Fatalf("%s: expected validation error", tc.name)
+			}
+		})
+	}
+
+	// Valid slug boundaries accepted.
+	cfg, _ := StarterDefaults()
+	cfg.Profiles = append(cfg.Profiles, ProfileConfig{Name: "greg-2", Enabled: true, AnyGame: boolPtr(true)})
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("valid slug rejected: %v", err)
+	}
+}
+
+func TestProfileGamesInheritance(t *testing.T) {
+	cfg, _ := StarterDefaults()
+	cfg.Games = []string{"Rust"}
+	cfg.AnyGame = false
+	cfg.Profiles = append(cfg.Profiles, ProfileConfig{Name: "inherits", Enabled: true})
+	cfg.Profiles = append(cfg.Profiles, ProfileConfig{Name: "overrides", Enabled: true, Games: []string{"Halo Infinite"}})
+
+	inherited, err := cfg.Effective("inherits")
+	if err != nil {
+		t.Fatalf("Effective: %v", err)
+	}
+	if len(inherited.Games) != 1 || inherited.Games[0] != "Rust" {
+		t.Fatalf("expected inherited games [Rust], got %v", inherited.Games)
+	}
+
+	overridden, err := cfg.Effective("overrides")
+	if err != nil {
+		t.Fatalf("Effective: %v", err)
+	}
+	if len(overridden.Games) != 1 || overridden.Games[0] != "Halo Infinite" {
+		t.Fatalf("expected overridden games [Halo Infinite], got %v", overridden.Games)
+	}
+}
+
+func TestProfileKickEnabledOverride(t *testing.T) {
+	cfg, _ := StarterDefaults()
+	cfg.Kick.Enabled = true // root default
+	on := true
+	off := false
+	cfg.Profiles = append(cfg.Profiles,
+		ProfileConfig{Name: "inherits", Enabled: true, AnyGame: boolPtr(true)},
+		ProfileConfig{Name: "on", Enabled: true, AnyGame: boolPtr(true), Kick: ProfileKickConfig{Enabled: &on}},
+		ProfileConfig{Name: "off", Enabled: true, AnyGame: boolPtr(true), Kick: ProfileKickConfig{Enabled: &off}},
+	)
+
+	inherits, err := cfg.Effective("inherits")
+	if err != nil {
+		t.Fatalf("Effective: %v", err)
+	}
+	if !inherits.KickEnabled {
+		t.Fatalf("expected 'inherits' profile to inherit root kick.enabled=true, got %v", inherits.KickEnabled)
+	}
+	on2, err := cfg.Effective("on")
+	if err != nil {
+		t.Fatalf("Effective: %v", err)
+	}
+	if !on2.KickEnabled {
+		t.Fatal("expected 'on' profile KickEnabled true")
+	}
+	off2, err := cfg.Effective("off")
+	if err != nil {
+		t.Fatalf("Effective: %v", err)
+	}
+	if off2.KickEnabled {
+		t.Fatal("expected 'off' profile KickEnabled false despite root true")
+	}
+}
+
+func TestWindowTileDefaultMatchesLegacySingleProfile(t *testing.T) {
+	// StarterDefaults synthesizes exactly one profile ("main", slot 0, no
+	// explicit window geometry): the tiling default must reproduce today's
+	// baked-in single-profile positions exactly, or existing installs would
+	// see their windows jump on upgrade.
+	cfg, _ := StarterDefaults()
+
+	twitch, err := cfg.ProfileRuntimeConfig(MainProfileName)
+	if err != nil {
+		t.Fatalf("ProfileRuntimeConfig: %v", err)
+	}
+	if twitch.Browser.Window.X != 40 || twitch.Browser.Window.Y != 40 {
+		t.Fatalf("twitch window = (%d,%d), want (40,40)", twitch.Browser.Window.X, twitch.Browser.Window.Y)
+	}
+
+	kick, err := cfg.ProfileKickRuntimeConfig(MainProfileName)
+	if err != nil {
+		t.Fatalf("ProfileKickRuntimeConfig: %v", err)
+	}
+	if kick.Browser.Window.X != 700 || kick.Browser.Window.Y != 40 {
+		t.Fatalf("kick window = (%d,%d), want (700,40)", kick.Browser.Window.X, kick.Browser.Window.Y)
+	}
+}
+
+func TestWindowTileDefaultMultiProfileSlots(t *testing.T) {
+	cfg, _ := StarterDefaults()
+	slot1 := 1
+	cfg.Profiles = append(cfg.Profiles, ProfileConfig{
+		Name: "second", Enabled: true, AnyGame: boolPtr(true), WindowSlot: &slot1,
+		Kick: ProfileKickConfig{Enabled: boolPtr(true)},
+	})
+
+	twitch, err := cfg.ProfileRuntimeConfig("second")
+	if err != nil {
+		t.Fatalf("ProfileRuntimeConfig: %v", err)
+	}
+	if twitch.Browser.Window.X != 40 || twitch.Browser.Window.Y != 460 {
+		t.Fatalf("slot-1 twitch window = (%d,%d), want (40,460)", twitch.Browser.Window.X, twitch.Browser.Window.Y)
+	}
+
+	kick, err := cfg.ProfileKickRuntimeConfig("second")
+	if err != nil {
+		t.Fatalf("ProfileKickRuntimeConfig: %v", err)
+	}
+	if kick.Browser.Window.X != 700 || kick.Browser.Window.Y != 460 {
+		t.Fatalf("slot-1 kick window = (%d,%d), want (700,460)", kick.Browser.Window.X, kick.Browser.Window.Y)
+	}
+}
+
+func TestWindowTileDefaultExplicitOverrideWins(t *testing.T) {
+	cfg, _ := StarterDefaults()
+	cfg.Browser.Window.X, cfg.Browser.Window.Y = 999, 888
+	cfg.Kick.Browser.Window.X, cfg.Kick.Browser.Window.Y = 111, 222
+	slot1 := 1
+	cfg.Profiles = append(cfg.Profiles, ProfileConfig{
+		Name: "second", Enabled: true, AnyGame: boolPtr(true), WindowSlot: &slot1,
+	})
+
+	for _, name := range []string{MainProfileName, "second"} {
+		twitch, err := cfg.ProfileRuntimeConfig(name)
+		if err != nil {
+			t.Fatalf("ProfileRuntimeConfig(%s): %v", name, err)
+		}
+		if twitch.Browser.Window.X != 999 || twitch.Browser.Window.Y != 888 {
+			t.Fatalf("%s: explicit twitch override lost, got (%d,%d)", name, twitch.Browser.Window.X, twitch.Browser.Window.Y)
+		}
+		kick, err := cfg.ProfileKickRuntimeConfig(name)
+		if err != nil {
+			t.Fatalf("ProfileKickRuntimeConfig(%s): %v", name, err)
+		}
+		if kick.Browser.Window.X != 111 || kick.Browser.Window.Y != 222 {
+			t.Fatalf("%s: explicit kick override lost, got (%d,%d)", name, kick.Browser.Window.X, kick.Browser.Window.Y)
+		}
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }

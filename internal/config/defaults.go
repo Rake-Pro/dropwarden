@@ -2,10 +2,14 @@ package config
 
 import (
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/domain"
 )
+
+// profileNameRe is the lowercase-slug rule for profile names.
+var profileNameRe = regexp.MustCompile(`^[a-z0-9-]{1,24}$`)
 
 // DefaultGames is the MVP test set.
 var DefaultGames = []string{
@@ -45,11 +49,11 @@ func (c *Config) applyDefaults() {
 	setInt(&c.Watcher.HealthTickJitter, 40)
 	setDuration(&c.Watcher.ProgressPoll, 60*time.Second)
 
-	// Kick's dedicated browser window; offset from the Twitch one by default.
+	// Kick's dedicated browser window. X/Y are NOT defaulted here: 0,0 (unset)
+	// is the signal that lets ProfileKickRuntimeConfig apply the window-tiling
+	// default instead (see setup.go); an explicit x/y in the config always wins.
 	setInt(&c.Kick.Browser.Window.Width, 640)
 	setInt(&c.Kick.Browser.Window.Height, 400)
-	setInt(&c.Kick.Browser.Window.X, 700)
-	setInt(&c.Kick.Browser.Window.Y, 40)
 	setDuration(&c.Watcher.MaxSession, 4*time.Hour)
 	setDuration(&c.Watcher.Cooldown, 60*time.Second)
 	setDuration(&c.Watcher.CooldownJitter, 120*time.Second)
@@ -60,10 +64,10 @@ func (c *Config) applyDefaults() {
 	setString(&c.Claim.Strategy, "in_page")
 	setDuration(&c.Claim.RetryBackoff, 5*time.Minute)
 
+	// X/Y are NOT defaulted here (see the Kick window comment above); the
+	// window-tiling default lives in ProfileRuntimeConfig.
 	setInt(&c.Browser.Window.Width, 640)
 	setInt(&c.Browser.Window.Height, 400)
-	setInt(&c.Browser.Window.X, 40)
-	setInt(&c.Browser.Window.Y, 40)
 	setFloat(&c.Browser.Burnin.DimOpacity, 0.55)
 	setDuration(&c.Browser.Burnin.ShiftInterval, 20*time.Minute)
 	setInt(&c.Browser.Burnin.ShiftPixels, 8)
@@ -74,6 +78,13 @@ func (c *Config) applyDefaults() {
 
 	setString(&c.Logging.Level, "info")
 	setInt(&c.Logging.MaxSizeMB, 5)
+
+	// No profiles block = legacy single-profile install: synthesize the one
+	// implicit profile rooted at the app dir itself. This gets written back
+	// into the profiles block the next time the config is saved.
+	if len(c.Profiles) == 0 {
+		c.Profiles = []ProfileConfig{{Name: MainProfileName, Dir: ".", Enabled: true}}
+	}
 }
 
 // validate returns a typed error naming the offending key when a value is out
@@ -89,6 +100,9 @@ func (c *Config) validate() error {
 	}
 	if !c.AnyGame && len(c.Games) == 0 {
 		return fmt.Errorf("config: games must be non-empty unless any_game is true")
+	}
+	if err := c.validateProfiles(); err != nil {
+		return err
 	}
 	switch c.Claim.Strategy {
 	case "in_page", "in_page_then_gql":
@@ -109,9 +123,11 @@ func (c *Config) validate() error {
 	if o := c.Browser.Burnin.DimOpacity; o < 0 || o > 1 {
 		return fmt.Errorf("config: browser.burnin.dim_opacity %v must be in [0,1]", o)
 	}
-	if c.Kick.Enabled {
+	if c.anyKickEnabled() {
 		// Validate the config the Kick engine will actually run with (its own
-		// browser block, player policy inherited from Twitch when unset).
+		// browser block, player policy inherited from Twitch when unset). The
+		// kick block itself is shared, so one check covers every profile that
+		// turns it on.
 		kc := c.KickRuntimeConfig()
 		if v := kc.Browser.Player.Volume; v <= 0 || v > 1 {
 			return fmt.Errorf("config: kick.browser.player.volume %v must be in (0,1]", v)
@@ -130,6 +146,48 @@ func (c *Config) validate() error {
 		return err
 	}
 	return nil
+}
+
+// validateProfiles walks every profile the same way the root config is
+// validated: name shape and uniqueness for all profiles, and the games
+// overlay invariant for enabled ones (disabled profiles never run, so their
+// overlay does not need to resolve to anything runnable).
+func (c *Config) validateProfiles() error {
+	seen := make(map[string]bool, len(c.Profiles))
+	for i := range c.Profiles {
+		p := &c.Profiles[i]
+		if !profileNameRe.MatchString(p.Name) {
+			return fmt.Errorf("config: profiles[%d].name %q must match [a-z0-9-]{1,24}", i, p.Name)
+		}
+		if seen[p.Name] {
+			return fmt.Errorf("config: profile name %q is not unique", p.Name)
+		}
+		seen[p.Name] = true
+		if !p.Enabled {
+			continue
+		}
+		games, anyGame := c.effectiveGames(p)
+		if !anyGame && len(games) == 0 {
+			return fmt.Errorf("config: profile %q: games must be non-empty unless any_game is true", p.Name)
+		}
+	}
+	return nil
+}
+
+// anyKickEnabled reports whether the root kick block or any enabled profile's
+// override turns Kick on, i.e. whether the shared kick browser config needs
+// to be valid.
+func (c *Config) anyKickEnabled() bool {
+	if c.Kick.Enabled {
+		return true
+	}
+	for i := range c.Profiles {
+		p := &c.Profiles[i]
+		if p.Enabled && c.effectiveKickEnabled(p) {
+			return true
+		}
+	}
+	return false
 }
 
 func zerologLevel(s string) (string, error) {

@@ -1,12 +1,16 @@
 // Package app assembles the dropwarden object graph from configuration: config,
-// logging, and the SQLite store are opened eagerly; the browser, Twitch
-// controller, discovery, and watcher engine are built on demand by StartRuntime
-// (which launches Chrome). Both the CLI and the Wails app build on this.
+// logging, and every enabled profile's SQLite store are opened eagerly; the
+// browsers, controllers, discoverers, and watcher engines are built on demand by
+// StartRuntime (which launches Chrome). Both the CLI and the Wails app build on
+// this.
 package app
 
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -21,24 +25,35 @@ import (
 	"github.com/rake-pro/dropwarden/internal/watcher"
 )
 
+// PlatformRuntime is one (profile, platform) runtime: its own Chrome, page
+// driver, discoverer, and watcher engine.
+type PlatformRuntime struct {
+	Session browser.Session
+	Pages   watcher.Pager
+	Disco   watcher.Discoverer
+	Engine  *watcher.Engine
+}
+
+// ProfileRuntime is one person's runtime: their own store (opened eagerly) and
+// one PlatformRuntime per platform they run. Kick is nil unless kick is enabled
+// for that profile; Twitch is nil until StartRuntime brings Chrome up.
+type ProfileRuntime struct {
+	Name  string
+	Log   zerolog.Logger
+	Store *store.Store
+
+	Twitch *PlatformRuntime
+	Kick   *PlatformRuntime
+}
+
 // App holds the eagerly-opened resources.
 type App struct {
 	Cfg        *config.Config
 	ConfigPath string
 	Log        zerolog.Logger
-	Store      *store.Store
 
-	// Runtime resources (nil until StartRuntime).
-	Session browser.Session
-	Ctrl    twitch.Controller
-	Pages   *twitch.Pages
-	Disco   *discovery.Discoverer
-	Engine  *watcher.Engine
-
-	// Kick runtime (nil unless kick.enabled).
-	KickSession browser.Session
-	KickDisco   *kick.Discoverer
-	KickEngine  *watcher.Engine
+	// Profiles are the enabled profiles this process manages, in config order.
+	Profiles []*ProfileRuntime
 }
 
 // Options tune assembly.
@@ -46,8 +61,8 @@ type Options struct {
 	Console bool // pretty console logging (CLI)
 }
 
-// Open loads config, sets up logging, and opens the store. It does NOT launch
-// Chrome, so it is safe for commands like doctor and report.
+// Open loads config, sets up logging, and opens every enabled profile's store.
+// It does NOT launch Chrome, so it is safe for commands like doctor and report.
 func Open(opts Options) (*App, error) {
 	cfg, path, err := config.LoadOrInit()
 	if err != nil {
@@ -64,37 +79,141 @@ func Open(opts Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	dbPath, err := config.DBPath()
-	if err != nil {
-		return nil, err
+	a := &App{Cfg: cfg, ConfigPath: path, Log: logger}
+	for _, p := range cfg.Profiles {
+		if !p.Enabled {
+			continue
+		}
+		plog := logger.With().Str("profile", p.Name).Logger()
+		st, err := openProfileStore(cfg, p.Name)
+		if err != nil {
+			// One profile's unusable store must not take down the others; a
+			// single-profile install still fails via the empty check below.
+			plog.Error().Err(err).Msg("app: open profile store failed; skipping this profile")
+			continue
+		}
+		a.Profiles = append(a.Profiles, &ProfileRuntime{Name: p.Name, Log: plog, Store: st})
 	}
-	st, err := store.Open(dbPath)
-	if err != nil {
-		return nil, err
+	if len(a.Profiles) == 0 {
+		return nil, fmt.Errorf("app: no enabled profiles in %s", path)
 	}
-	return &App{Cfg: cfg, ConfigPath: path, Log: logger, Store: st}, nil
+	return a, nil
 }
 
-// StartRuntime launches Chrome and builds the Twitch controller, page driver,
-// discoverer, and watcher engine. emit receives engine events.
+// openProfileStore creates a profile's data directory if needed and opens its
+// own SQLite database.
+func openProfileStore(cfg *config.Config, name string) (*store.Store, error) {
+	pp, err := cfg.ProfilePaths(name)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(pp.DB), 0o700); err != nil {
+		return nil, fmt.Errorf("create profile dir: %w", err)
+	}
+	return store.Open(pp.DB)
+}
+
+// Main returns the first opened profile runtime: the only one in a
+// single-profile install, and what the CLI harness operates on.
+func (a *App) Main() *ProfileRuntime {
+	if len(a.Profiles) == 0 {
+		return nil
+	}
+	return a.Profiles[0]
+}
+
+// Profile returns the named profile runtime, or nil.
+func (a *App) Profile(name string) *ProfileRuntime {
+	for _, p := range a.Profiles {
+		if p.Name == name {
+			return p
+		}
+	}
+	return nil
+}
+
+// StartRuntime launches each profile's Chrome instances and builds their
+// controllers, page drivers, discoverers, and watcher engines. emit receives
+// engine events from every engine. One profile's launch failure is logged and
+// that profile is skipped: a broken profile must never take down the others.
+// It errors only when NO profile came up.
 func (a *App) StartRuntime(ctx context.Context, emit watcher.Emitter) error {
+	started := 0
+	for idx, pr := range a.Profiles {
+		if err := a.startProfileRuntime(ctx, pr, idx, emit); err != nil {
+			pr.Log.Error().Err(err).Msg("app: profile runtime failed to start; skipping this profile")
+			continue
+		}
+		started++
+	}
+	if started == 0 {
+		return fmt.Errorf("app: no profile runtime could be started")
+	}
+	return nil
+}
+
+// startProfileRuntime brings up one profile's Twitch runtime (required) and its
+// Kick runtime (additive: a Kick failure leaves the profile Twitch-only). idx
+// is the profile's position in a.Profiles (0 for the first-started profile),
+// which seeds both of its engines' first-discovery stagger.
+func (a *App) startProfileRuntime(ctx context.Context, pr *ProfileRuntime, idx int, emit watcher.Emitter) error {
+	if err := a.startTwitchRuntime(ctx, pr, idx, emit); err != nil {
+		return err
+	}
+	eff, err := a.Cfg.Effective(pr.Name)
+	if err != nil {
+		return err
+	}
+	if eff.KickEnabled {
+		if err := a.startKickRuntime(ctx, pr, idx, emit); err != nil {
+			// Kick is additive: a Kick launch failure must never take down the
+			// working Twitch runtime.
+			pr.Log.Error().Err(err).Msg("app: kick runtime failed to start; continuing twitch-only")
+		}
+	}
+	return nil
+}
+
+// discoveryStaggerStep spaces each profile's engines' first discovery pass so
+// N profiles do not burst their platform's GQL/API fetches simultaneously at
+// boot; the first-started profile (idx 0) keeps today's un-staggered timing.
+const discoveryStaggerStep = 90 * time.Second
+
+// discoveryStagger returns the first-discovery stagger for the idx-th started
+// profile (its position in a.Profiles): 0 for the first profile, one more
+// discoveryStaggerStep per profile after that.
+func discoveryStagger(idx int) time.Duration {
+	return time.Duration(idx) * discoveryStaggerStep
+}
+
+// startTwitchRuntime launches the profile's Twitch Chrome and engine.
+func (a *App) startTwitchRuntime(ctx context.Context, pr *ProfileRuntime, idx int, emit watcher.Emitter) error {
+	pcfg, err := a.Cfg.ProfileRuntimeConfig(pr.Name)
+	if err != nil {
+		return err
+	}
+	profileDir, _, err := a.chromeDirs(pr.Name)
+	if err != nil {
+		return err
+	}
+	log := pr.Log.With().Str("platform", "twitch").Logger()
 	// The launch closure fully initializes a Twitch-ready session; the Managed
 	// wrapper re-invokes it whenever Chrome dies (CDP disconnect, crash), so an
 	// overnight browser crash recovers instead of retry-looping on a dead
 	// socket forever.
 	launch := func(lctx context.Context) (browser.Session, error) {
-		sess, err := browser.Launch(lctx, a.Cfg, a.Log)
+		sess, err := browser.LaunchWith(lctx, pcfg.Browser, profileDir, pcfg.Browser.Burnin.DimOpacity, log)
 		if err != nil {
 			return nil, err
 		}
 		if err := twitch.InstallCapture(lctx, sess); err != nil {
-			a.Log.Warn().Err(err).Msg("app: install capture shim failed")
+			log.Warn().Err(err).Msg("app: install capture shim failed")
 		}
-		if a.Cfg.Browser.Window.StartMinimized {
+		if pcfg.Browser.Window.StartMinimized {
 			if err := sess.SetMinimized(lctx, true); err != nil {
-				a.Log.Warn().Err(err).Msg("app: minimize watcher window failed")
+				log.Warn().Err(err).Msg("app: minimize watcher window failed")
 			} else {
-				a.Log.Info().Msg("app: watcher window minimized")
+				log.Info().Msg("app: watcher window minimized")
 			}
 		}
 		return sess, nil
@@ -103,34 +222,37 @@ func (a *App) StartRuntime(ctx context.Context, emit watcher.Emitter) error {
 	if err != nil {
 		return fmt.Errorf("app: launch browser: %w", err)
 	}
-	a.Session = browser.NewManaged(sess, launch, a.Log)
-	a.Ctrl = twitch.NewController(a.Session)
-	a.Pages = twitch.NewPages(a.Ctrl)
-	a.Disco = discovery.New(a.Store, a.Pages, a.Cfg, a.Log)
-	a.Engine = watcher.New(watcher.Deps{
-		Store: a.Store, Ctrl: a.Ctrl, Pages: a.Pages, Disco: a.Disco,
-		Cfg: a.Cfg, Emit: emit, Log: a.Log,
-		Platform: domain.PlatformTwitch, ChannelHost: "twitch.tv",
-	})
-
-	if a.Cfg.Kick.Enabled {
-		if err := a.startKickRuntime(ctx, emit); err != nil {
-			// Kick is additive: a Kick launch failure must never take down the
-			// working Twitch runtime.
-			a.Log.Error().Err(err).Msg("app: kick runtime failed to start; continuing twitch-only")
-		}
+	managed := browser.NewManaged(sess, launch, log)
+	ctrl := twitch.NewController(managed)
+	pages := twitch.NewPages(ctrl)
+	disco := discovery.New(pr.Store, pages, pcfg, log)
+	pr.Twitch = &PlatformRuntime{
+		Session: managed,
+		Pages:   pages,
+		Disco:   disco,
+		Engine: watcher.New(watcher.Deps{
+			Store: pr.Store, Ctrl: ctrl, Pages: pages, Disco: disco,
+			Cfg: pcfg, Emit: emit, Log: log,
+			Platform: domain.PlatformTwitch, ChannelHost: "twitch.tv", Profile: pr.Name,
+			DiscoveryStagger: discoveryStagger(idx),
+		}),
 	}
 	return nil
 }
 
-// startKickRuntime launches the second Chrome instance and the Kick engine.
-func (a *App) startKickRuntime(ctx context.Context, emit watcher.Emitter) error {
-	kcfg := a.Cfg.KickRuntimeConfig()
-	profileDir, err := a.Cfg.KickProfileDir()
+// startKickRuntime launches the profile's second Chrome instance and its Kick
+// engine. The Kick engine always runs on the profile's derived kick config,
+// never the root config.
+func (a *App) startKickRuntime(ctx context.Context, pr *ProfileRuntime, idx int, emit watcher.Emitter) error {
+	kcfg, err := a.Cfg.ProfileKickRuntimeConfig(pr.Name)
 	if err != nil {
 		return err
 	}
-	klog := a.Log.With().Str("platform", "kick").Logger()
+	_, profileDir, err := a.chromeDirs(pr.Name)
+	if err != nil {
+		return err
+	}
+	klog := pr.Log.With().Str("platform", "kick").Logger()
 	launch := func(lctx context.Context) (browser.Session, error) {
 		sess, err := browser.LaunchWith(lctx, kcfg.Browser, profileDir, kcfg.Browser.Burnin.DimOpacity, klog)
 		if err != nil {
@@ -147,40 +269,71 @@ func (a *App) startKickRuntime(ctx context.Context, emit watcher.Emitter) error 
 	if err != nil {
 		return fmt.Errorf("app: launch kick browser: %w", err)
 	}
-	a.KickSession = browser.NewManaged(sess, launch, klog)
-	ctrl := kick.NewController(a.KickSession)
+	managed := browser.NewManaged(sess, launch, klog)
+	ctrl := kick.NewController(managed)
 	pages := kick.NewPages(ctrl)
-	a.KickDisco = kick.NewDiscoverer(a.Store, pages, kcfg, klog)
-	a.KickEngine = watcher.New(watcher.Deps{
-		Store: a.Store, Ctrl: ctrl, Pages: pages, Disco: a.KickDisco,
-		Cfg: kcfg, Emit: emit, Log: klog,
-		Platform: domain.PlatformKick, ChannelHost: "kick.com",
-	})
-	a.Log.Info().Msg("app: kick runtime up")
+	disco := kick.NewDiscoverer(pr.Store, pages, kcfg, klog)
+	pr.Kick = &PlatformRuntime{
+		Session: managed,
+		Pages:   pages,
+		Disco:   disco,
+		Engine: watcher.New(watcher.Deps{
+			Store: pr.Store, Ctrl: ctrl, Pages: pages, Disco: disco,
+			Cfg: kcfg, Emit: emit, Log: klog,
+			Platform: domain.PlatformKick, ChannelHost: "kick.com", Profile: pr.Name,
+			DiscoveryStagger: discoveryStagger(idx),
+		}),
+	}
+	pr.Log.Info().Msg("app: kick runtime up")
 	return nil
 }
 
-// Engines returns every engine that should run (twitch first, then kick).
+// chromeDirs resolves a profile's two Chrome user-data dirs. The browser
+// profile_dir overrides are single-instance settings, so they apply to the main
+// profile only; every other profile uses its own directory layout.
+func (a *App) chromeDirs(name string) (string, string, error) {
+	if name == config.MainProfileName {
+		twitchDir, err := a.Cfg.ProfileDir()
+		if err != nil {
+			return "", "", err
+		}
+		kickDir, err := a.Cfg.KickProfileDir()
+		if err != nil {
+			return "", "", err
+		}
+		return twitchDir, kickDir, nil
+	}
+	pp, err := a.Cfg.ProfilePaths(name)
+	if err != nil {
+		return "", "", err
+	}
+	return pp.ChromeProfile, pp.ChromeProfileKick, nil
+}
+
+// Engines returns every engine that should run, profile by profile (twitch
+// first, then kick).
 func (a *App) Engines() []*watcher.Engine {
 	var out []*watcher.Engine
-	if a.Engine != nil {
-		out = append(out, a.Engine)
-	}
-	if a.KickEngine != nil {
-		out = append(out, a.KickEngine)
+	for _, pr := range a.Profiles {
+		for _, plat := range []*PlatformRuntime{pr.Twitch, pr.Kick} {
+			if plat != nil && plat.Engine != nil {
+				out = append(out, plat.Engine)
+			}
+		}
 	}
 	return out
 }
 
 // Close releases runtime and eager resources.
 func (a *App) Close() {
-	if a.Session != nil {
-		_ = a.Session.Close()
-	}
-	if a.KickSession != nil {
-		_ = a.KickSession.Close()
-	}
-	if a.Store != nil {
-		_ = a.Store.Close()
+	for _, pr := range a.Profiles {
+		for _, plat := range []*PlatformRuntime{pr.Twitch, pr.Kick} {
+			if plat != nil && plat.Session != nil {
+				_ = plat.Session.Close()
+			}
+		}
+		if pr.Store != nil {
+			_ = pr.Store.Close()
+		}
 	}
 }

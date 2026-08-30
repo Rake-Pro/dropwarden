@@ -96,6 +96,21 @@ body {
 .pf { font-size: 9px; font-weight: 800; letter-spacing: .07em; padding: 1.5px 5px; border-radius: 4px; vertical-align: 1px; white-space: nowrap; }
 .pf.twitch { color: #241047; background: #c9a6ff; } /* dark-on-bright like the kick badge; white on #9147ff fails contrast at 9px */
 .pf.kick { color: #0b1f02; background: #53fc18; }
+.pf.profile { color: var(--text-primary); background: rgba(127,127,127,0.22); } /* neutral - profiles aren't platform-branded */
+
+/* Multi-profile dashboard: one section per enabled profile, stacked in the
+   existing .stack (its gap spaces the sections); platform cards inside a
+   section sit side by side via an inline minmax(0, Nfr) grid (see app.js). */
+.profile-section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.profile-head { display: flex; align-items: center; gap: 10px; }
+.profile-head .pname { margin: 0; font-size: 14.5px; font-weight: 700; }
+
+/* Profile selector pill bar (Queue/History/Settings headers, >1 profile). */
+.prof-pills { display: flex; gap: 6px; flex-wrap: wrap; margin: -6px 0 16px; }
+.prof-pill { appearance: none; border: 1px solid var(--hairline); background: var(--bg-control); color: var(--text-secondary); font: inherit; font-size: 12px; font-weight: 600; padding: 6px 13px; border-radius: 999px; cursor: pointer; }
+.prof-pill:hover { color: var(--text-primary); }
+.prof-pill.active { background: var(--accent); border-color: transparent; color: #fff; }
+.prof-pill:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .now .who .game { color: var(--text-secondary); font-size: 12px; }
 .drop-row { margin-top: 16px; }
 .drop-row .lbl { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; }

@@ -67,8 +67,53 @@ DESIGN DOC WRITTEN 2026-08-30: docs/NOTES-multiprofile.md (read it before
 implementing - config profiles block w/ legacy zero-move migration, per-
 profile DBs, N ProfileRuntimes, /api/engine/{profile}/{platform}/{action},
 unified dashboard + profile selector, tray generalization, 4 phases).
-NEXT WORK ITEM: Phase 0 (config + paths). All development + testing stays on
-the user's Mac/Windows until the thin client is purchased.
+
+MULTI-PROFILE PHASES 0-3 CODE COMPLETE (2026-08-31, in the working tree,
+UNCOMMITTED). What landed: config gained a `profiles:` block (name, dir,
+enabled, display_name, games/any_game inherit-or-override, per-profile kick
+enable, window_slot) with legacy synthesis - a config with no profiles block
+still gets exactly one profile ("main", rooted at the app dir itself), so
+existing installs move zero files and see zero behavior change; `config.
+ProfilePaths`/`Effective`/`ProfileRuntimeConfig`/`ProfileKickRuntimeConfig`
+resolve the per-profile overlay. `internal/app` now holds N `ProfileRuntime`s
+(App.Profiles, replacing the old single Engine/KickEngine fields);
+StartRuntime loops profiles and SKIPS one that fails to launch rather than
+taking the others down. The HTTP API is profile-dimensioned:
+`/api/engine/{profile}/{platform}/{action}`, `/api/state` returns a
+`profiles` array (each with its platforms/queue/claims/stats/spark), and
+`/api/profiles` gained add / enabled-toggle / update routes (no delete/rename
+in v1, documented as a manual-file-ops-with-the-app-stopped operation). The
+dashboard is unified: one section per enabled profile, a profile pill bar in
+Queue/History/Settings headers when >1 profile is configured, a new
+Settings > Profiles pane, and footer/tray labels that collapse to today's
+platform-only wording for a single profile. Phase 3 polish: window-tiling
+defaults (default engine geometry is a slot grid - x = 40 + platform_col*660,
+y = 40 + window_slot*420, twitch col 0 / kick col 1 - applied in
+`config.ProfileRuntimeConfig`/`ProfileKickRuntimeConfig` only when the config
+left x/y unset, so an explicit `browser.window`/`kick.browser.window`
+geometry always wins; slot 0 reproduces today's baked-in single-profile
+positions (40,40) / (700,40) exactly, so this applies unconditionally, not
+just when >1 profile is configured) and a 90s discovery stagger (each
+started profile's engines seed their FIRST discovery pass with
+`profile_index * 90s` via `watcher.Deps.DiscoveryStagger`, wired in
+`internal/app/app.go`'s `discoveryStagger`/`startTwitchRuntime`/
+`startKickRuntime`, applied once in `watcher.runDiscovering`; the
+first-started profile keeps stagger 0, so single-profile boot timing is
+unchanged) so N profiles do not burst their platform's GQL/API fetches
+simultaneously at boot. config.example.yaml documents the profiles shape
+(commented out) and the legacy-main note. New unit tests: config
+`TestWindowTileDefault*` (single-profile matches legacy positions, multi-
+profile slot grid, explicit override wins) and watcher
+`TestRunDiscoveringZeroStaggerRunsImmediately` / `TestRunDiscoveringApplies
+StaggerOnceOnly`, plus `app.TestDiscoveryStagger`. `task check` passes clean.
+
+OWED: a Mac test pass of the whole multi-profile surface (two profiles on
+the Mac = the full thin-client shape minus GTK - this needs a real display
+and is not doable in this container); the Linux GUI runtime itself is still
+verify-live (it builds, per the Environment section above, but has not run
+on real hardware); the optional `--listen` remote-management question from
+the design doc remains open/undecided. NEXT WORK ITEM: the Mac test pass,
+then commit.
 
 ## NEXT live milestone (where to resume)
 

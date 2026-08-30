@@ -7,6 +7,12 @@ const pct = (cur, req) => req > 0 ? Math.min(100, Math.round(cur / req * 100)) :
 
 let cfg = null;
 
+// selectedProfile drives the Queue/History/Settings profile pill bar: a
+// module-level var defaulting to the first (enabled) profile, no persistence
+// (see pickProfile). The Dashboard is unaffected - it shows every enabled
+// profile at once, not a single selected one.
+let selectedProfile = null;
+
 // Platform display metadata. Everything platform-facing renders through this
 // table so a future platform is one row here, not a scatter of special cases.
 const PLATFORM_META = {
@@ -15,6 +21,33 @@ const PLATFORM_META = {
 };
 const platLabel = (p) => (PLATFORM_META[p] || { label: p }).label;
 const pfBadge = (p) => PLATFORM_META[p] ? `<span class="pf ${esc(p)}">${esc(platLabel(p).toUpperCase())}</span>` : '';
+// profBadge marks up-next/queue rows with their profile when more than one
+// profile is enabled - the profile equivalent of pfBadge above.
+const profBadge = (name) => `<span class="pf profile">${esc(name)}</span>`;
+
+// pickProfile resolves the profile the Queue/History/Settings views render:
+// enabled profiles only, keyed by selectedProfile (defaulting to and falling
+// back to the first one, e.g. after a profile is disabled mid-session).
+function pickProfile(state) {
+  const profiles = (state.profiles || []).filter(p => p.enabled);
+  if (!profiles.length) return { profiles, profile: null, multiProfile: false };
+  if (!selectedProfile || !profiles.some(p => p.name === selectedProfile)) selectedProfile = profiles[0].name;
+  const profile = profiles.find(p => p.name === selectedProfile) || profiles[0];
+  return { profiles, profile, multiProfile: profiles.length > 1 };
+}
+
+// profilePillBar renders the profile selector shown in the Queue/History/
+// Settings headers once there is more than one profile; onPick re-renders
+// the calling view after the selection changes.
+function profilePillBar(profiles, onPick) {
+  const bar = el(`<div class="prof-pills"></div>`);
+  profiles.forEach(p => {
+    const pill = el(`<button type="button" class="prof-pill ${p.name === selectedProfile ? 'active' : ''}">${esc(p.displayName)}</button>`);
+    pill.addEventListener('click', () => { selectedProfile = p.name; onPick(); });
+    bar.append(pill);
+  });
+  return bar;
+}
 
 // visiblePlatforms/isMulti: a platform is shown when it is enabled OR its
 // engine is still running (disabled in settings but not yet restarted) — a
@@ -40,34 +73,48 @@ function switchView(view) {
   document.querySelectorAll('.nav').forEach(n => n.classList.toggle('active', n.dataset.view === view));
 }
 
+// footRow renders one (profile, platform) footer line. With one profile the
+// label collapses to today's platform-only text; with more than one it gets
+// a "Greg - Twitch" prefix.
+function footRow(row, displayName, multiProfile, p) {
+  const label = multiProfile ? `${displayName} - ${platLabel(p.platform)}` : platLabel(p.platform);
+  const twitchUp = !!(p._twitchUp);
+  if (!p.up) {
+    // Just toggled on in settings: the runtime follows on restart, nothing
+    // has failed.
+    if (p.pendingRestart) return row('warn', label + ' enabled — restart app');
+    // Runtimes attach together: if Twitch is up but this platform is not,
+    // its launch failed rather than being merely slow.
+    return twitchUp ? row('off', label + ' failed to start') : row('warn', label + ': starting Chrome…');
+  }
+  const st = p.status || {};
+  if (!p.enabled) return row('warn', label + ' runs until restart');
+  if (st.paused) return row('warn', label + ' paused');
+  return row('ok', label + ' running');
+}
+
 async function renderFoot() {
-  const plats = await api.platforms();
+  const state = await api.state();
+  const profiles = state.profiles || [];
+  const multiProfile = profiles.length > 1;
   const foot = $('#rail-foot');
   const row = (cls, label) => `<div class="frow"><span class="fdot ${cls}"></span>${label}</div>`;
   if (api.offline) {
     foot.innerHTML = row('off', 'Preview mode') + row('off', 'Backend not connected');
     return;
   }
-  const twitchUp = !!(plats[0] && plats[0].up);
-  foot.innerHTML = visiblePlatforms(plats).map(p => {
-    const label = platLabel(p.platform);
-    if (!p.up) {
-      // Just toggled on in settings: the runtime follows on restart, nothing
-      // has failed.
-      if (p.pendingRestart) return row('warn', label + ' enabled — restart app');
-      // Runtimes attach together: if Twitch is up but this platform is not,
-      // its launch failed rather than being merely slow.
-      return twitchUp ? row('off', label + ' failed to start') : row('warn', label + ': starting Chrome…');
+  let rows = '';
+  for (const prof of profiles) {
+    const twitchUp = !!(prof.platforms && prof.platforms[0] && prof.platforms[0].up);
+    for (const p of visiblePlatforms(prof.platforms)) {
+      rows += footRow(row, prof.displayName, multiProfile, { ...p, _twitchUp: twitchUp });
     }
-    const st = p.status || {};
-    if (!p.enabled) return row('warn', label + ' runs until restart');
-    if (st.paused) return row('warn', label + ' paused');
-    return row('ok', label + ' running');
-  }).join('');
+  }
+  foot.innerHTML = rows || row('warn', 'No profiles configured');
 }
 
-// nowCardEl renders one platform's "Now watching" card.
-function nowCardEl(p, multi) {
+// nowCardEl renders one platform's "Now watching" card for a profile.
+function nowCardEl(p, multi, profile) {
   const st = p.status || {};
   const state = p.up ? (st.state || 'idle') : 'offline';
   const watching = state === 'watching';
@@ -135,7 +182,7 @@ function nowCardEl(p, multi) {
     ${btns}
   </div>`);
   card.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', async () => {
-    const a = api.engine(p.platform);
+    const a = api.engine(p.platform, profile);
     const act = b.dataset.act;
     try {
       if (act === 'start') await a.start();
@@ -148,71 +195,136 @@ function nowCardEl(p, multi) {
   return card;
 }
 
+// needyBanner renders the "drops need your attention" banner. profileName is
+// set only in the multi-profile per-section form, so its Open queue link also
+// selects that profile's pill.
+function needyBanner(needy, profileName) {
+  const detail = needy.slice(0, 2).map(q => `${q.dropName} — ${q.reason || 'action required'}`).join('  ·  ')
+    + (needy.length > 2 ? `  ·  +${needy.length - 2} more` : '');
+  const banner = el(`<div class="banner needs">
+    <span class="ic">!</span>
+    <div class="tx"><div class="t">${needy.length === 1 ? 'A drop needs' : needy.length + ' drops need'} your attention</div>
+    <div class="d">${esc(detail)}</div></div>
+    <button class="btn btn-sm" data-goto="queue">Open queue</button>
+  </div>`);
+  banner.querySelector('[data-goto]').addEventListener('click', () => {
+    if (profileName) selectedProfile = profileName;
+    go('queue');
+  });
+  return banner;
+}
+
+// combineStats sums headline stats across enabled profiles for the shared
+// Totals card; successRate is a session-weighted average, not a plain mean.
+function combineStats(profiles) {
+  const s = { dropsEarned: 0, dropsClaimed: 0, minutesWatched: 0, sessions: 0, successRate: 0 };
+  let successSum = 0, successWeight = 0;
+  for (const p of profiles) {
+    const st = p.stats || {};
+    s.dropsEarned += st.dropsEarned || 0;
+    s.dropsClaimed += st.dropsClaimed || 0;
+    s.minutesWatched += st.minutesWatched || 0;
+    s.sessions += st.sessions || 0;
+    if (st.sessions) { successSum += (st.successRate || 0) * st.sessions; successWeight += st.sessions; }
+  }
+  s.successRate = successWeight ? Math.round(successSum / successWeight) : 0;
+  return s;
+}
+
 async function renderDashboard() {
   const state = await api.state();
-  const plats = visiblePlatforms(state.platforms);
-  const multi = isMulti(state.platforms);
-  const queue = state.queue || [];
-  const stats = state.stats || {};
-  const upnext = queue.filter(q => q.status === 'pending').slice(0, 3);
+  const allProfiles = state.profiles || [];
+  // Visible mirrors the platform rule: enabled, OR still running after a
+  // mid-session disable (a profile's engines only stop on restart).
+  const profiles = allProfiles.filter(p => p.enabled || (p.platforms || []).some(pl => pl.up));
+  const multiProfile = profiles.length > 1;
 
   const v = $('#v-dashboard');
   v.innerHTML = '';
+
+  const anyMulti = profiles.some(p => isMulti(p.platforms));
   v.append(el(`<div>
     <h2 class="title">Now watching</h2>
-    <p class="sub">${multi
+    <p class="sub">${anyMulti
       ? 'One channel per platform. The watcher keeps each window unfocused and dimmed while progress ticks.'
       : 'One channel at a time. The watcher keeps this window unfocused and dimmed while progress ticks.'}</p>
   </div>`));
 
-  // Drops waiting on the user (manual claim, account link) get a banner - the
-  // watcher deliberately does not retry these, so they must be visible.
-  const needy = queue.filter(q => q.status === 'needs_action');
-  if (needy.length) {
-    const detail = needy.slice(0, 2).map(q => `${q.dropName} — ${q.reason || 'action required'}`).join('  ·  ')
-      + (needy.length > 2 ? `  ·  +${needy.length - 2} more` : '');
-    const banner = el(`<div class="banner needs">
-      <span class="ic">!</span>
-      <div class="tx"><div class="t">${needy.length === 1 ? 'A drop needs' : needy.length + ' drops need'} your attention</div>
-      <div class="d">${esc(detail)}</div></div>
-      <button class="btn btn-sm" data-goto="queue">Open queue</button>
-    </div>`);
-    banner.querySelector('[data-goto]').addEventListener('click', () => go('queue'));
-    v.append(banner);
+  const left = el(`<div class="stack"></div>`);
+
+  if (!multiProfile) {
+    // Single-profile install: identical to the original single-profile view -
+    // no person header, no per-section banner (a plain global one instead).
+    const prof = profiles[0] || { name: '', queue: [], platforms: [] };
+    const plats = visiblePlatforms(prof.platforms);
+    const multi = isMulti(prof.platforms);
+    const needy = (prof.queue || []).filter(q => q.status === 'needs_action');
+    if (needy.length) v.append(needyBanner(needy));
+    for (const p of plats) left.append(nowCardEl(p, multi, prof.name));
+  } else {
+    for (const prof of profiles) {
+      const plats = visiblePlatforms(prof.platforms);
+      const multi = isMulti(prof.platforms);
+      const needy = (prof.queue || []).filter(q => q.status === 'needs_action');
+      const section = el(`<div class="profile-section"><div class="profile-head"><h3 class="pname">${esc(prof.displayName)}</h3></div></div>`);
+      if (needy.length) section.append(needyBanner(needy, prof.name));
+      const row = el(`<div class="now-row" style="display:grid;grid-template-columns:repeat(${Math.max(plats.length, 1)}, minmax(0, 1fr));gap:14px"></div>`);
+      for (const p of plats) row.append(nowCardEl(p, multi, prof.name));
+      section.append(row);
+      left.append(section);
+    }
   }
 
-  const grid = el(`<div class="grid2"></div>`);
-  const left = el(`<div class="stack"></div>`);
-  for (const p of plats) left.append(nowCardEl(p, multi));
+  // Up next: a single shared list across every enabled profile's pending
+  // queue, badging the profile (and platform, per that profile's own
+  // multi-platform-ness) once there is more than one profile.
+  const upnext = multiProfile
+    ? profiles.flatMap(p => (p.queue || []).filter(q => q.status === 'pending')
+        .map(q => ({ ...q, profName: p.displayName, profPlatMulti: isMulti(p.platforms) })))
+      .slice(0, 3)
+    : ((profiles[0] && profiles[0].queue) || []).filter(q => q.status === 'pending').slice(0, 3);
+  const soloMulti = !multiProfile && isMulti((profiles[0] || {}).platforms);
+  const upnextHTML = upnext.length ? upnext.map((q, i) => {
+    const platBit = (multiProfile ? q.profPlatMulti : soloMulti) ? pfBadge(q.platform) + ' ' : '';
+    const profBit = multiProfile ? profBadge(q.profName) + ' ' : '';
+    return `<div class="up"><span class="idx">${i + 1}</span><div class="t"><div class="n">${profBit}${platBit}${esc(q.dropName)}</div><div class="g">${esc(q.game)} · ${esc(q.reason || '')}</div></div><span class="m mono">${q.currentMinutes}/${q.requiredMinutes}</span></div>`;
+  }).join('') : '<div class="empty">Queue is empty.</div>';
 
-  const byPlat = stats.byPlatform || {};
-  const platRows = multi ? plats.map(p => {
-    const bp = byPlat[p.platform] || {};
-    return `<div class="kv"><span class="k">${pfBadge(p.platform)}</span><span class="v">${bp.minutesWatched || 0} min · ${bp.dropsClaimed || 0} claimed</span></div>`;
-  }).join('') : '';
+  // Totals: shared aggregate headline numbers, plus a byPlatform breakdown
+  // (single profile with >1 platform, today's behavior) or a per-profile
+  // breakdown (>1 profile) below them - never both.
+  const stats = multiProfile ? combineStats(profiles) : ((profiles[0] && profiles[0].stats) || {});
+  const totalsRows = multiProfile
+    ? profiles.map(p => `<div class="kv"><span class="k">${esc(p.displayName)}</span><span class="v">${((p.stats || {}).minutesWatched) || 0} min · ${((p.stats || {}).dropsClaimed) || 0} claimed</span></div>`).join('')
+    : (soloMulti ? visiblePlatforms((profiles[0] || {}).platforms).map(p => {
+        const bp = (((profiles[0] || {}).stats || {}).byPlatform || {})[p.platform] || {};
+        return `<div class="kv"><span class="k">${pfBadge(p.platform)}</span><span class="v">${bp.minutesWatched || 0} min · ${bp.dropsClaimed || 0} claimed</span></div>`;
+      }).join('') : '');
 
   const side = el(`<div class="stack">
-    <div class="card mini"><h3>Up next</h3><div class="upnext">${upnext.length ? upnext.map((q, i) => `
-      <div class="up"><span class="idx">${i + 1}</span><div class="t"><div class="n">${multi ? pfBadge(q.platform) + ' ' : ''}${esc(q.dropName)}</div><div class="g">${esc(q.game)} · ${esc(q.reason || '')}</div></div><span class="m mono">${q.currentMinutes}/${q.requiredMinutes}</span></div>`).join('') : '<div class="empty">Queue is empty.</div>'}</div></div>
+    <div class="card mini"><h3>Up next</h3><div class="upnext">${upnextHTML}</div></div>
     <div class="card mini"><h3>Totals</h3>
-      <div class="kv"><span class="k">Drops earned</span><span class="v">${stats.dropsEarned}</span></div>
-      <div class="kv"><span class="k">Drops claimed</span><span class="v">${stats.dropsClaimed}</span></div>
-      <div class="kv"><span class="k">Minutes watched</span><span class="v">${stats.minutesWatched}</span></div>
-      <div class="kv"><span class="k">Sessions</span><span class="v">${stats.sessions}</span></div>
-      <div class="kv"><span class="k">Success rate</span><span class="v">${stats.successRate}%</span></div>
-      ${platRows}
+      <div class="kv"><span class="k">Drops earned</span><span class="v">${stats.dropsEarned || 0}</span></div>
+      <div class="kv"><span class="k">Drops claimed</span><span class="v">${stats.dropsClaimed || 0}</span></div>
+      <div class="kv"><span class="k">Minutes watched</span><span class="v">${stats.minutesWatched || 0}</span></div>
+      <div class="kv"><span class="k">Sessions</span><span class="v">${stats.sessions || 0}</span></div>
+      <div class="kv"><span class="k">Success rate</span><span class="v">${stats.successRate || 0}%</span></div>
+      ${totalsRows}
     </div>
   </div>`);
 
+  const grid = el(`<div class="grid2"></div>`);
   grid.append(left, side);
   v.append(grid);
 }
 
 async function renderQueue() {
   const state = await api.state();
-  const multi = isMulti(state.platforms);
+  const { profiles, profile, multiProfile } = pickProfile(state);
+  const prof = profile || { name: '', platforms: [], queue: [] };
+  const multi = isMulti(prof.platforms);
   // Only current, workable items belong here; claimed/expired live in History.
-  const queue = (state.queue || []).filter(q => q.status !== 'claimed' && q.status !== 'expired');
+  const queue = (prof.queue || []).filter(q => q.status !== 'claimed' && q.status !== 'expired');
   const v = $('#v-queue');
   v.innerHTML = '';
   v.append(el(`<div class="qhead">
@@ -227,6 +339,7 @@ async function renderQueue() {
       </select>
     </div>
   </div>`));
+  if (multiProfile) v.append(profilePillBar(profiles, () => renderQueue()));
   if (cfg) $('#prio', v).value = cfg.priorityMode;
   $('#prio', v).addEventListener('change', async e => {
     try {
@@ -250,7 +363,7 @@ async function renderQueue() {
       const on = !sw.classList.contains('on');
       sw.classList.toggle('on', on);
       sw.setAttribute('aria-checked', String(on));
-      try { await api.setEnabled(q.dropID, on); }
+      try { await api.setEnabled(q.dropID, on, prof.name); }
       catch (_) { sw.classList.toggle('on', !on); sw.setAttribute('aria-checked', String(!on)); }
     };
     sw.addEventListener('click', flipSwitch);
@@ -258,7 +371,7 @@ async function renderQueue() {
     list.append(row);
   }
   v.append(list);
-  if (queue.length > 1) attachQueueDrag(list);
+  if (queue.length > 1) attachQueueDrag(list, prof.name);
 }
 
 let dragRow = null;
@@ -274,7 +387,7 @@ function queueDragAfter(list, y) {
   return best.el;
 }
 
-function attachQueueDrag(list) {
+function attachQueueDrag(list, profile) {
   list.querySelectorAll('.qrow').forEach(row => {
     row.addEventListener('dragstart', e => {
       dragRow = row;
@@ -287,7 +400,7 @@ function attachQueueDrag(list) {
       const ids = [...list.querySelectorAll('.qrow')].map(r => r.dataset.id).filter(Boolean);
       // dragRow clears only after the order is saved: it also gates the poll
       // re-render, which would otherwise snap the list back mid-save.
-      try { await api.setOrder(ids); } catch (_) {}
+      try { await api.setOrder(ids, profile); } catch (_) {}
       dragRow = null;
       // A manual reorder implies top-down priority; switch so it takes effect.
       if (cfg && cfg.priorityMode !== 'top_down') {
@@ -310,14 +423,17 @@ function attachQueueDrag(list) {
 
 async function renderHistory() {
   const state = await api.state();
-  const multi = isMulti(state.platforms);
-  const claims = state.claims || [];
-  const stats = state.stats || {};
-  const spark = state.spark || [];
+  const { profiles, profile, multiProfile } = pickProfile(state);
+  const prof = profile || { platforms: [], claims: [], stats: {}, spark: [] };
+  const multi = isMulti(prof.platforms);
+  const claims = prof.claims || [];
+  const stats = prof.stats || {};
+  const spark = prof.spark || [];
   const v = $('#v-history');
   const hours = ((stats.minutesWatched || 0) / 60).toFixed(1);
   v.innerHTML = '';
   v.append(el(`<div><h2 class="title">History &amp; report</h2><p class="sub">Lifetime totals from the local SQLite database${multi ? ', across every platform' : ''}. A session is one continuous watch of a single channel toward a single drop (page refreshes do not end it); it ends on completion or claim, channel loss (offline, raid, stall), a skip or pause, or the max-session rotation (default 4h). Minutes watched is wall-clock time on stream — simultaneous drops credit in parallel, so per-drop progress can outpace it. The session in progress is included live.</p></div>`));
+  if (multiProfile) v.append(profilePillBar(profiles, () => renderHistory()));
   v.append(el(`<div class="stat-row">
     <div class="card stat"><div class="big ok">${stats.dropsEarned}</div><div class="cap">Drops earned</div></div>
     <div class="card stat"><div class="big ok">${stats.dropsClaimed}</div><div class="cap">Drops claimed</div></div>
@@ -339,6 +455,9 @@ async function renderHistory() {
 
 let settingsPane = 'games';
 let lastDebug = null;
+// debugProfile scopes the Debugging view; independent of selectedProfile
+// because debug data also lists disabled profiles.
+let debugProfile = null;
 
 const SETTINGS_PANES = [
   { key: 'games', label: 'Games', icon: '◵', tint: 'var(--ok-dim)', fg: '#4bbd85' },
@@ -346,6 +465,7 @@ const SETTINGS_PANES = [
   { key: 'player', label: 'Player', icon: '▸', tint: 'var(--accent-dim)', fg: '#7cc0ff' },
   { key: 'browser', label: 'Browser', icon: '◱', tint: 'rgba(127,127,127,0.16)', fg: 'var(--text-primary)' },
   { key: 'app', label: 'App', icon: '◐', tint: 'rgba(127,127,127,0.16)', fg: 'var(--text-primary)' },
+  { key: 'profiles', label: 'Profiles', icon: '◈', tint: 'rgba(127,127,127,0.16)', fg: 'var(--text-primary)' },
 ];
 
 const toggleHTML = (id, on) => `<div class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${on}" tabindex="0" data-toggle="${id}"><i></i></div>`;
@@ -355,6 +475,12 @@ async function renderSettings() {
   const v = $('#v-settings');
   v.innerHTML = '';
   v.append(el(`<div><h2 class="title">Settings</h2><p class="sub">Saved to config.yaml. Browser and platform changes prompt a restart.</p></div>`));
+  const state = await api.state();
+  const allProfiles = state.profiles || [];
+  if (allProfiles.length > 1) {
+    const enabled = allProfiles.filter(p => p.enabled);
+    if (enabled.length) v.append(profilePillBar(enabled, () => renderSettings()));
+  }
   const wrap = el(`<div class="set-wrap"><nav class="set-nav" id="set-nav"></nav><div id="set-content"></div></div>`);
   v.append(wrap);
   const nav = $('#set-nav', wrap);
@@ -414,6 +540,14 @@ function settingsPaneHTML() {
 function renderSettingsContent() {
   const host = $('#set-content');
   if (!host) return;
+  // The Profiles pane edits its own data (per-profile overlay, not the shared
+  // cfg clone) through its own endpoints, so it skips the generic
+  // settingsPaneHTML()+Save/Discard wiring below entirely.
+  if (settingsPane === 'profiles') {
+    host.innerHTML = '<div class="empty">Loading profiles...</div>';
+    loadProfileEdits().then(() => { if (settingsPane === 'profiles') renderProfilesPane(host); });
+    return;
+  }
   host.innerHTML = settingsPaneHTML() +
     `<div class="foot-btns"><button class="btn primary" id="save">Save changes</button><button class="btn" id="discard">Discard changes</button><span id="savemsg" class="save-msg"></span></div>`;
 
@@ -465,6 +599,132 @@ function renderGamesCtl() {
   addInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addGame(); } });
 }
 
+// ---- Settings > Profiles pane ----
+
+// profileEdits is a mutable CLONE of GET /api/profiles (the loadCfg pattern,
+// applied to profile overlays instead of the shared config); profilePending
+// mirrors GET /api/state's pendingRestart per profile so the enabled toggle's
+// restart copy stays honest in both directions.
+let profileEdits = null;
+let profilePending = {};
+
+async function loadProfileEdits() {
+  const [list, state] = await Promise.all([api.profileConfigs(), api.state()]);
+  profilePending = {};
+  (state.profiles || []).forEach(p => { profilePending[p.name] = !!p.pendingRestart; });
+  profileEdits = (list || []).map(p => ({ ...p, games: [...(p.games || [])] }));
+}
+
+function renderProfilesPane(host) {
+  host.innerHTML = `
+    <div class="group"><div class="caption">Profiles</div><div class="card" id="prof-list"></div></div>
+    <div class="group"><div class="caption">Add profile</div><div class="card">
+      <div class="row stacked">
+        <div class="lab"><div class="l">New profile</div><div class="h">Name is a lowercase slug: letters, digits, hyphens, 1-24 characters. Restart the app after adding, then log in to Twitch/Kick in the new windows that open for this profile.</div></div>
+        <div class="ctl" style="display:flex;gap:8px;flex-wrap:wrap">
+          <input class="input" id="np-name" placeholder="slug, e.g. profile-two" style="flex:1;min-width:140px">
+          <input class="input" id="np-display" placeholder="Display name (optional)" style="flex:1;min-width:140px">
+          <button class="btn" id="np-add" type="button">Add profile</button>
+        </div>
+      </div>
+      <div class="row"><span id="np-msg" class="save-msg"></span></div>
+    </div></div>
+    <div class="foot-btns"><button class="btn primary" id="prof-save">Save changes</button><button class="btn" id="prof-discard">Discard changes</button><span id="prof-msg" class="save-msg"></span></div>`;
+  renderProfileRows(host);
+  host.querySelector('#prof-save').addEventListener('click', () => saveProfileEdits(host));
+  host.querySelector('#prof-discard').addEventListener('click', () => renderSettingsContent());
+  host.querySelector('#np-add').addEventListener('click', () => addProfileFlow(host));
+}
+
+function renderProfileRows(host) {
+  const list = host.querySelector('#prof-list');
+  if (!list) return;
+  list.innerHTML = '';
+  (profileEdits || []).forEach(p => {
+    const pending = profilePending[p.name];
+    const row = el(`<div class="row stacked">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <input class="input" data-pf="displayName" value="${esc(p.displayName)}" placeholder="${esc(p.name)}" style="width:160px">
+        <span class="mono" style="color:var(--text-tertiary);font-size:11.5px">${esc(p.name)}</span>
+        <div style="flex:1"></div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-secondary)">${pfBadge('kick')} ${toggleHTML('kickEnabled', p.kickEnabled)}</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-secondary)">Enabled ${toggleHTML('enabled', p.enabled)}</label>
+      </div>
+      ${pending ? `<div class="h" style="color:var(--warn)">${p.enabled ? 'Enabled' : 'Disabled'} - restart the app to apply.</div>` : ''}
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-secondary)">Inherit shared games list ${toggleHTML('inheritGames', p.inheritGames)}</label>
+      <div class="games-ctl" data-pf-games style="${p.inheritGames ? 'opacity:.45;pointer-events:none' : ''}"></div>
+    </div>`);
+    row.querySelectorAll('[data-toggle]').forEach(sw => {
+      sw.addEventListener('click', () => {
+        const on = !sw.classList.contains('on');
+        sw.classList.toggle('on', on);
+        sw.setAttribute('aria-checked', String(on));
+        p[sw.dataset.toggle] = on;
+        if (sw.dataset.toggle === 'inheritGames') {
+          const gc = row.querySelector('[data-pf-games]');
+          if (gc) { gc.style.opacity = on ? '.45' : '1'; gc.style.pointerEvents = on ? 'none' : 'auto'; }
+        }
+      });
+      sw.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); sw.click(); } });
+    });
+    row.querySelector('[data-pf="displayName"]').addEventListener('input', e => { p.displayName = e.target.value; });
+    renderProfileGamesChips(row.querySelector('[data-pf-games]'), p);
+    list.append(row);
+  });
+}
+
+// renderProfileGamesChips mirrors renderGamesCtl's chip editor, bound to one
+// profile's games override instead of the shared cfg.games.
+function renderProfileGamesChips(container, p) {
+  if (!container) return;
+  const chips = (p.games || []).map((g, i) => `<span class="chip">${esc(g)} <span class="x" data-rm="${i}" style="cursor:pointer" title="remove">×</span></span>`).join('');
+  container.innerHTML = `<div class="chips" style="justify-content:flex-start">${chips || '<span style="color:var(--text-tertiary);font-size:12px">no games override - add one or turn inherit back on</span>'}</div>
+    <div style="display:flex;gap:8px;margin-top:8px"><input class="input" placeholder="Exact game name" style="flex:1"><button class="btn" type="button">Add</button></div>`;
+  container.querySelectorAll('[data-rm]').forEach(x => x.addEventListener('click', () => { p.games.splice(+x.dataset.rm, 1); renderProfileGamesChips(container, p); }));
+  const input = container.querySelector('.input');
+  const btn = container.querySelector('button');
+  const add = () => { const val = input.value.trim(); if (val && !p.games.includes(val)) p.games.push(val); renderProfileGamesChips(container, p); };
+  btn.addEventListener('click', add);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+}
+
+async function saveProfileEdits(host) {
+  const msg = host.querySelector('#prof-msg');
+  try {
+    for (const p of profileEdits) {
+      await api.setProfileEnabled(p.name, p.enabled);
+      await api.updateProfile({ name: p.name, displayName: p.displayName, kickEnabled: p.kickEnabled, games: p.games, inheritGames: p.inheritGames });
+    }
+    if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--ok)'; }
+    await loadProfileEdits();
+    if (settingsPane === 'profiles') renderProfileRows(host);
+    refreshAll();
+  } catch (e) {
+    if (msg) { msg.textContent = 'Error: ' + (e.message || e); msg.style.color = 'var(--err)'; }
+  }
+  setTimeout(() => { const m = host.querySelector('#prof-msg'); if (m) m.textContent = ''; }, 4000);
+}
+
+async function addProfileFlow(host) {
+  const nameInp = host.querySelector('#np-name');
+  const dispInp = host.querySelector('#np-display');
+  const msg = host.querySelector('#np-msg');
+  const name = (nameInp.value || '').trim().toLowerCase();
+  if (!/^[a-z0-9-]{1,24}$/.test(name)) {
+    if (msg) { msg.textContent = 'Name must be lowercase letters, digits, hyphens (1-24 chars).'; msg.style.color = 'var(--err)'; }
+    return;
+  }
+  try {
+    await api.addProfile(name, dispInp.value.trim());
+    if (msg) { msg.textContent = 'Profile added - restart the app, then log in to Twitch/Kick in the new windows.'; msg.style.color = 'var(--ok)'; }
+    nameInp.value = ''; dispInp.value = '';
+    await loadProfileEdits();
+    if (settingsPane === 'profiles') renderProfileRows(host);
+  } catch (e) {
+    if (msg) { msg.textContent = 'Error: ' + (e.message || e); msg.style.color = 'var(--err)'; }
+  }
+}
+
 async function saveSettings() {
   const msg = document.querySelector('#savemsg');
   try {
@@ -479,16 +739,19 @@ async function saveSettings() {
   setTimeout(() => { const m = document.querySelector('#savemsg'); if (m) m.textContent = ''; }, 4000);
 }
 
-// refreshDiscovery kicks a discovery pass on every running, unpaused platform
-// engine (a paused engine ignores the request) and returns how many were asked.
+// refreshDiscovery kicks a discovery pass on every running, unpaused engine
+// across every profile (a paused engine ignores the request) and returns how
+// many were asked.
 async function refreshDiscovery() {
   let n = 0;
   try {
-    const plats = await api.platforms();
-    for (const p of plats) {
-      if (p.up && !(p.status && p.status.paused)) {
-        api.engine(p.platform).refresh().catch(() => {});
-        n++;
+    const profiles = await api.profiles();
+    for (const prof of profiles) {
+      for (const p of (prof.platforms || [])) {
+        if (p.up && !(p.status && p.status.paused)) {
+          api.engine(p.platform, prof.name).refresh().catch(() => {});
+          n++;
+        }
       }
     }
   } catch (_) {}
@@ -610,16 +873,32 @@ async function renderDebugPanel() {
   let d;
   try { d = await api.debug(); lastDebug = d; }
   catch (e) { host.innerHTML = '<div class="card mini"><div class="empty">Debug info needs the backend running (not a static preview).</div></div>'; return; }
-  const plats = d.platforms || {};
-  const paths = d.paths || {};
+  // One profile's sections at a time, with its own pill bar (this view sits
+  // outside the shared Queue/History/Settings selector).
+  const names = Object.keys(d.profiles || {});
+  if (!debugProfile || !names.includes(debugProfile)) debugProfile = names[0] || '';
+  const name = debugProfile;
+  const prof = (d.profiles || {})[name] || {};
+  const paths = ((d.paths || {}).profiles || {})[name] || {};
   const logText = (d.logTail || []).slice(-120).join('\n') || 'no log lines yet';
-  let cards = debugPlatformCard('twitch', plats.twitch || {});
-  if (plats.kick && plats.kick.enabled) cards += debugPlatformCard('kick', plats.kick);
-  host.innerHTML = cards + `<div class="card mini">
+  let pills = '';
+  if (names.length > 1) {
+    pills = `<div class="prof-pills">` + names.map(n => {
+      const dn = ((d.profiles || {})[n] || {}).displayName || n;
+      return `<button type="button" class="prof-pill ${n === name ? 'active' : ''}" data-dbgprof="${esc(n)}">${esc(dn)}</button>`;
+    }).join('') + `</div>`;
+  }
+  let cards = debugPlatformCard('twitch', prof.twitch || {});
+  if (prof.kick && prof.kick.enabled) cards += debugPlatformCard('kick', prof.kick);
+  host.innerHTML = pills + cards + `<div class="card mini">
     <div class="kv"><span class="k">Debug folder</span><span class="v mono" style="font-size:11px;max-width:62%;overflow:hidden;text-overflow:ellipsis" title="${esc(paths.debugDir || '')}">${esc(paths.debugDir || '')}</span></div>
     <div class="log-head"><div class="caption" style="margin:0">Log tail</div><button class="btn ghost btn-sm" id="dbg-log-copy" type="button">Copy</button></div>
     <pre id="dbg-log" class="log-pre">${esc(logText)}</pre>
   </div>`;
+  host.querySelectorAll('[data-dbgprof]').forEach(b => b.addEventListener('click', () => {
+    debugProfile = b.dataset.dbgprof;
+    renderDebugPanel();
+  }));
   const logEl = host.querySelector('#dbg-log');
   if (logEl) logEl.scrollTop = logEl.scrollHeight;
   const copyBtn = host.querySelector('#dbg-log-copy');

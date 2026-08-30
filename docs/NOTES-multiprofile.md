@@ -184,14 +184,20 @@ current platform-only wording. Tooltip: one segment per running engine.
 
 - Phase 0 - config + paths: profiles block, legacy `main` synthesis,
   ProfilePaths, per-profile validation. No behavior change single-profile.
+  DONE (2026-08-30, code in working tree, uncommitted).
 - Phase 1 - N runtimes + API: App.Profiles, ProfileBackend map, profile-
   dimensioned routes/state/debug, Status.Profile, tray generalization.
-  Single-profile UI keeps working against profiles[0].
+  Single-profile UI keeps working against profiles[0]. DONE (2026-08-30, code
+  in working tree, uncommitted).
 - Phase 2 - UI: unified dashboard sections, profile selector, Profiles
-  settings pane, footer/tray labels, SAMPLE data.
+  settings pane, footer/tray labels, SAMPLE data. DONE (2026-08-30, code in
+  working tree, uncommitted).
 - Phase 3 - polish + live: window tiling defaults, discovery stagger, Mac
   test pass (two profiles on the Mac = the full thin-client shape minus GTK),
-  docs/STATUS update.
+  docs/STATUS update. CODE DONE (2026-08-31, working tree, uncommitted): both
+  window tiling and the 90s discovery stagger are wired and unit-tested (see
+  STATUS.md). Mac test pass is the one item still PENDING - it needs a real
+  display and is not doable in-container.
 
 ## Risks / notes
 

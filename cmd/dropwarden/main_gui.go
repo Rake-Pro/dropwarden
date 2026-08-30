@@ -14,6 +14,7 @@ import (
 
 	webui "github.com/rake-pro/dropwarden/frontend"
 	"github.com/rake-pro/dropwarden/internal/app"
+	"github.com/rake-pro/dropwarden/internal/domain"
 	"github.com/rake-pro/dropwarden/internal/service"
 )
 
@@ -24,7 +25,11 @@ func main() {
 	}
 	defer a.Close()
 
-	backend := service.NewBackend(a.Store, nil, a.Cfg, a.ConfigPath)
+	profiles := make([]*service.ProfileBackend, 0, len(a.Profiles))
+	for _, pr := range a.Profiles {
+		profiles = append(profiles, service.NewProfileBackend(a.Cfg, pr.Name, pr.Store))
+	}
+	backend := service.NewBackend(a.Cfg, a.ConfigPath, profiles...)
 
 	// The webview talks to Go over a small JSON API on the same asset origin
 	// (no generated bindings needed): /api/* is the service layer, everything
@@ -63,13 +68,22 @@ func startRuntime(ctx context.Context, a *app.App, backend *service.Backend, emi
 		a.Log.Error().Err(err).Msg("runtime start failed; UI running disconnected")
 		return
 	}
-	backend.SetEngine(a.Engine)
-	backend.SetDiscoverer(a.Disco)
-	if a.KickEngine != nil {
-		backend.SetKickEngine(a.KickEngine)
-		backend.SetKickDiscoverer(a.KickDisco)
+	// Attach whatever came up: a profile (or one of its platforms) that failed
+	// to launch simply has no handles, and the UI reports it as not running.
+	for _, pr := range a.Profiles {
+		pb := backend.Profile(pr.Name)
+		if pb == nil {
+			continue
+		}
+		if pr.Twitch != nil {
+			pb.Attach(domain.PlatformTwitch, pr.Twitch.Engine, pr.Twitch.Disco)
+		}
+		if pr.Kick != nil {
+			pb.Attach(domain.PlatformKick, pr.Kick.Engine, pr.Kick.Disco)
+		}
 	}
-	a.Log.Info().Int("engines", len(a.Engines())).Msg("runtime up; watcher engine(s) attached")
+	a.Log.Info().Int("engines", len(a.Engines())).Int("profiles", len(a.Profiles)).
+		Msg("runtime up; watcher engine(s) attached")
 	// Run every platform engine; block until all exit (ctx cancellation).
 	done := make(chan struct{})
 	for _, e := range a.Engines() {

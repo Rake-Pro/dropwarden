@@ -70,8 +70,8 @@ browser:
   window:
     width: 640
     height: 400
-    x: 40
-    y: 40
+    # x/y omitted: computed from platform + profile window_slot (window
+    # tiling default); set both explicitly here to override for every profile.
     monitor: 0
     always_on_bottom: true
     never_focus: true
@@ -93,8 +93,8 @@ kick:
     window:
       width: 640
       height: 400
-      x: 700                   # offset so the two watcher windows do not stack
-      y: 40
+      # x/y omitted: computed from platform + profile window_slot, offset so
+      # the two watcher windows do not stack (window tiling default).
       always_on_bottom: true
       never_focus: true
       start_minimized: false
@@ -178,11 +178,11 @@ func (c *Config) ProfileDir() (string, error) {
 	if c.Browser.ProfileDir != "" {
 		return ExpandPath(c.Browser.ProfileDir), nil
 	}
-	dir, err := Dir()
+	pp, err := c.ProfilePaths(MainProfileName)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "chrome-profile"), nil
+	return pp.ChromeProfile, nil
 }
 
 // KickProfileDir resolves the Kick instance's Chrome profile directory.
@@ -190,11 +190,204 @@ func (c *Config) KickProfileDir() (string, error) {
 	if c.Kick.Browser.ProfileDir != "" {
 		return ExpandPath(c.Kick.Browser.ProfileDir), nil
 	}
-	dir, err := Dir()
+	pp, err := c.ProfilePaths(MainProfileName)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "chrome-profile-kick"), nil
+	return pp.ChromeProfileKick, nil
+}
+
+// ProfilePaths holds the on-disk paths for one profile, resolved from its
+// dir. Existing single-profile helpers (ProfileDir, KickProfileDir, DBPath,
+// LogPath) are thin wrappers over MainProfileName's paths.
+type ProfilePaths struct {
+	DB                string
+	ChromeProfile     string
+	ChromeProfileKick string
+	Debug             string
+}
+
+// ProfilePaths resolves the named profile's db, chrome-profile,
+// chrome-profile-kick, and debug paths from its dir.
+func (c *Config) ProfilePaths(name string) (ProfilePaths, error) {
+	p := c.Profile(name)
+	if p == nil {
+		return ProfilePaths{}, fmt.Errorf("config: unknown profile %q", name)
+	}
+	base, err := c.profileBaseDir(p)
+	if err != nil {
+		return ProfilePaths{}, err
+	}
+	return ProfilePaths{
+		DB:                filepath.Join(base, "dropwarden.db"),
+		ChromeProfile:     filepath.Join(base, "chrome-profile"),
+		ChromeProfileKick: filepath.Join(base, "chrome-profile-kick"),
+		Debug:             filepath.Join(base, "debug"),
+	}, nil
+}
+
+// profileBaseDir resolves a profile's data directory: "." roots it at the app
+// dir itself, "" (omitted) roots it at profiles/<name>/ under the app dir,
+// and anything else is resolved relative to the app dir (or used as-is if
+// absolute).
+func (c *Config) profileBaseDir(p *ProfileConfig) (string, error) {
+	root, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	switch p.Dir {
+	case ".":
+		return root, nil
+	case "":
+		return filepath.Join(root, "profiles", p.Name), nil
+	default:
+		d := ExpandPath(p.Dir)
+		if filepath.IsAbs(d) {
+			return d, nil
+		}
+		return filepath.Join(root, d), nil
+	}
+}
+
+// ProfileEffective is a profile's overlay resolved onto the root config: the
+// fields Phase 1 runtimes and API/UI code consume per profile.
+type ProfileEffective struct {
+	Name        string
+	DisplayName string
+	Enabled     bool
+	Games       []string
+	AnyGame     bool
+	KickEnabled bool
+	WindowSlot  int
+}
+
+// Effective resolves the named profile's overlay onto the root config.
+func (c *Config) Effective(name string) (*ProfileEffective, error) {
+	idx := -1
+	for i := range c.Profiles {
+		if c.Profiles[i].Name == name {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return nil, fmt.Errorf("config: unknown profile %q", name)
+	}
+	p := &c.Profiles[idx]
+	games, anyGame := c.effectiveGames(p)
+	return &ProfileEffective{
+		Name:        p.Name,
+		DisplayName: p.effectiveDisplayName(),
+		Enabled:     p.Enabled,
+		Games:       games,
+		AnyGame:     anyGame,
+		KickEnabled: c.effectiveKickEnabled(p),
+		WindowSlot:  c.effectiveWindowSlot(idx, p),
+	}, nil
+}
+
+// effectiveGames resolves a profile's games filter: omitted (no games, no
+// any_game override) inherits the root filter wholesale; otherwise the
+// profile's own games/any_game apply.
+func (c *Config) effectiveGames(p *ProfileConfig) ([]string, bool) {
+	if len(p.Games) == 0 && p.AnyGame == nil {
+		return c.Games, c.AnyGame
+	}
+	anyGame := false
+	if p.AnyGame != nil {
+		anyGame = *p.AnyGame
+	}
+	return p.Games, anyGame
+}
+
+// effectiveDisplayName defaults to the profile's Name.
+func (p *ProfileConfig) effectiveDisplayName() string {
+	if p.DisplayName != "" {
+		return p.DisplayName
+	}
+	return p.Name
+}
+
+// effectiveKickEnabled resolves a profile's Kick override, defaulting to the
+// root kick.enabled.
+func (c *Config) effectiveKickEnabled(p *ProfileConfig) bool {
+	if p.Kick.Enabled != nil {
+		return *p.Kick.Enabled
+	}
+	return c.Kick.Enabled
+}
+
+// effectiveWindowSlot defaults to the profile's position in the Profiles
+// list.
+func (c *Config) effectiveWindowSlot(idx int, p *ProfileConfig) int {
+	if p.WindowSlot != nil {
+		return *p.WindowSlot
+	}
+	return idx
+}
+
+// windowTileX and windowTileY are the window-tiling grid step: 660px wide
+// (clears the 640px window width plus a margin) and 420px tall (clears the
+// 400px window height plus a margin), so adjacent slots never overlap.
+const (
+	windowTileOriginX = 40
+	windowTileOriginY = 40
+	windowTileStepX   = 660
+	windowTileStepY   = 420
+)
+
+// windowTileDefault computes an engine's default window position from its
+// slot in the grid: col is the platform index (twitch 0, kick 1), row is the
+// profile's window_slot. Slot (0,0) reproduces today's single-profile Twitch
+// default (40,40); col 1 row 0 reproduces today's single-profile Kick default
+// (700,40).
+func windowTileDefault(col, row int) (x, y int) {
+	return windowTileOriginX + col*windowTileStepX, windowTileOriginY + row*windowTileStepY
+}
+
+// applyWindowTileDefault fills w.X/w.Y from the slot grid, but only when
+// neither has been set explicitly (both zero); an explicit x or y in the
+// config always wins over the computed default.
+func applyWindowTileDefault(w *WindowConfig, col, row int) {
+	if w.X != 0 || w.Y != 0 {
+		return
+	}
+	w.X, w.Y = windowTileDefault(col, row)
+}
+
+// ProfileRuntimeConfig builds the config the named profile's engines run with: a copy
+// of the root config with the profile's games overlay applied, and the
+// window-tiling default filled in for the Twitch window (col 0) when the
+// config left it unset.
+func (c *Config) ProfileRuntimeConfig(name string) (*Config, error) {
+	eff, err := c.Effective(name)
+	if err != nil {
+		return nil, err
+	}
+	cp := *c
+	cp.Games = eff.Games
+	cp.AnyGame = eff.AnyGame
+	applyWindowTileDefault(&cp.Browser.Window, 0, eff.WindowSlot)
+	return &cp, nil
+}
+
+// ProfileKickRuntimeConfig builds the config the named profile's Kick engine
+// runs with: the profile's games overlay applied to a copy of the root
+// config, then the same KickRuntimeConfig derivation used for the shared
+// (single-profile) case, with the window-tiling default filled in for the
+// Kick window (col 1) when the config left it unset.
+func (c *Config) ProfileKickRuntimeConfig(name string) (*Config, error) {
+	eff, err := c.Effective(name)
+	if err != nil {
+		return nil, err
+	}
+	cp, err := c.ProfileRuntimeConfig(name)
+	if err != nil {
+		return nil, err
+	}
+	kc := cp.KickRuntimeConfig()
+	applyWindowTileDefault(&kc.Browser.Window, 1, eff.WindowSlot)
+	return kc, nil
 }
 
 // KickRuntimeConfig builds the config the KICK engine runs with: a copy of the

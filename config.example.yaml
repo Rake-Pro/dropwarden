@@ -58,8 +58,8 @@ browser:
   window:
     width: 640
     height: 400
-    x: 40
-    y: 40
+    # x/y omitted: computed from platform + profile window_slot (window
+    # tiling default); set both explicitly here to override for every profile.
     monitor: 0
     always_on_bottom: true
     never_focus: true
@@ -81,8 +81,8 @@ kick:
     window:
       width: 640
       height: 400
-      x: 700                   # offset so the two watcher windows do not stack
-      y: 40
+      # x/y omitted: computed from platform + profile window_slot, offset so
+      # the two watcher windows do not stack (window tiling default).
       always_on_bottom: true
       never_focus: true
       start_minimized: false
@@ -103,3 +103,31 @@ logging:
 ui:
   start_minimized: true
   show_debug_pane: false
+
+# No profiles block = a single implicit profile named "main" rooted at this
+# app directory itself: existing single-profile installs need zero file
+# moves and zero behavior change. Add profiles to manage drops for more than
+# one person from this one app instance; every root section above (games,
+# queue, watcher, discovery, claim, browser, kick, auth, logging, ui, theme)
+# stays the DEFAULT for every profile unless overridden below.
+#
+# profiles:
+#   - name: greg                 # lowercase slug, [a-z0-9-]{1,24}
+#     dir: .                     # "." roots this profile at the app dir itself
+#                                 # (only the legacy/main profile should do this);
+#                                 # omitted => profiles/<name>/ under the app dir
+#     enabled: true
+#     display_name: Greg         # optional; UI label, defaults to name
+#     games:                     # optional; omitted => inherit root games/any_game
+#       - Rust
+#       - Once Human
+#     any_game: false
+#     kick:
+#       enabled: true            # optional; nil => inherit root kick.enabled
+#     window_slot: 0             # optional tiling row; defaults to list position
+#   - name: mel
+#     enabled: true
+#     display_name: Mel
+#     kick:
+#       enabled: false
+#     window_slot: 1
