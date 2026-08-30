@@ -47,6 +47,29 @@ NOTES-twitch.md, NOTES-wails.md.
   log tail (in-memory ring buffer in `logging`), Copy log / Copy JSON, and the
   `capture_gql_bodies` dump toggle (writes `~/.dropwarden/debug/*.json`, no auth).
 
+## ROADMAP - multi-profile + thin-client (decided 2026-08-30, NOT started)
+
+User decisions, locked: (1) MULTI-PROFILE inside ONE app instance - a profile
+= one person bundling their Twitch + Kick logins; per-profile subdirectory
+(own sqlite DB, own chrome-profile dirs, own queue/history; NO store
+migration - the app holds N profile runtimes, up to Nx2 engines/Chromes);
+per-profile game filters with a shared default. (2) UI = UNIFIED DASHBOARD:
+every profile's platform cards grouped by person, profile selector scoping
+queue/history/settings; keep it a standalone app (Wails), not browser-only.
+(3) Linux GUI = Wails GTK NATIVE (gtk3 tag; build works everywhere since
+2026-08-30, runtime unverified until the thin client exists). (4) Target
+hardware: sub-$150 N100/16GB-class mini PC (~$110-140 street; 4 streams max
+= 2 people x 2 platforms, well within it; Pi 5 ruled out - price + ARM
+fingerprint). OPEN QUESTION (never decided): an optional --listen serve mode
+alongside the GUI so the wife can manage her queue from her own devices via
+gpm+Authentik; without it, remote management = RustDesk to the box.
+DESIGN DOC WRITTEN 2026-08-30: docs/NOTES-multiprofile.md (read it before
+implementing - config profiles block w/ legacy zero-move migration, per-
+profile DBs, N ProfileRuntimes, /api/engine/{profile}/{platform}/{action},
+unified dashboard + profile selector, tray generalization, 4 phases).
+NEXT WORK ITEM: Phase 0 (config + paths). All development + testing stays on
+the user's Mac/Windows until the thin client is purchased.
+
 ## NEXT live milestone (where to resume)
 
 MULTI-PLATFORM UX OVERHAUL 2026-08-30 (Kick promoted from bolt-on to first
