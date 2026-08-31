@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rake-pro/dropwarden/internal/browser"
 	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rake-pro/dropwarden/internal/discovery"
 	"github.com/rake-pro/dropwarden/internal/domain"
@@ -561,5 +562,47 @@ func TestValidationPassIgnoresDropsIndicator(t *testing.T) {
 		if validationPass(gates[0], gates[1], gates[2], gates[3]) {
 			t.Fatalf("gate %d false must fail validation", i)
 		}
+	}
+}
+
+func TestLoginFromPathRejectsNonChannelURLs(t *testing.T) {
+	// Live 2026-08-31: the tab's buffered creation navigation to about:blank
+	// parsed as login "about:blank", an any-channel campaign deemed it
+	// "eligible", and the engine adopted it as a raid target off a healthy
+	// channel. Anything that is not a plausible channel login must parse to "".
+	for _, bad := range []string{
+		"about:blank",
+		"chrome-error://chromewebdata/",
+		"data:text/html,hi",
+		"https://example.com/somelogin",
+		"https://www.youtube.com/watch?v=x",
+	} {
+		if got := loginFromPath("twitch.tv", bad); got != "" {
+			t.Fatalf("loginFromPath(%q) = %q, want empty", bad, got)
+		}
+	}
+	for in, want := range map[string]string{
+		"https://www.twitch.tv/SomeLogin?x=1": "somelogin",
+		"/another_login/videos":               "another_login",
+		"twitch.tv/abc":                       "abc",
+	} {
+		if got := loginFromPath("twitch.tv", in); got != want {
+			t.Fatalf("loginFromPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := loginFromPath("kick.com", "https://kick.com/some-streamer"); got != "some-streamer" {
+		t.Fatalf("kick channel parse = %q", got)
+	}
+}
+
+func TestDrainEventsEmptiesBacklog(t *testing.T) {
+	ch := make(chan browser.Event, 8)
+	ch <- browser.Event{Kind: browser.EventNavigated, URL: "about:blank"}
+	ch <- browser.Event{Kind: browser.EventNavigated, URL: "https://www.twitch.tv/x"}
+	if n := drainEvents(ch); n != 2 {
+		t.Fatalf("expected 2 drained events, got %d", n)
+	}
+	if n := drainEvents(ch); n != 0 {
+		t.Fatalf("a drained channel should yield 0, got %d", n)
 	}
 }

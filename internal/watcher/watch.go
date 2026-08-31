@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"time"
 
@@ -38,6 +39,15 @@ func (e *Engine) runWatching(ctx context.Context) (State, string) {
 	tick := time.NewTimer(e.healthInterval())
 	defer tick.Stop()
 	events := e.deps.Ctrl.Session().Events()
+	// Drain the backlog before reacting to anything: the engine only reads
+	// events while watching, so navigations from tab creation, discovery, and
+	// channel opening sit buffered until now - and they are history (validation
+	// just confirmed the live state). Live 2026-08-31: the tab's own CREATION
+	// navigation to about:blank sat buffered and was adopted as a "raid" the
+	// moment watching began, burning a healthy channel.
+	if n := drainEvents(events); n > 0 {
+		e.deps.Log.Debug().Int("dropped", n).Msg("watching: discarded stale pre-watch browser events")
+	}
 
 	for {
 		select {
@@ -285,6 +295,24 @@ func (e *Engine) channelEligible(login string) bool {
 
 // loginFromPath extracts the channel login from a URL or pathname. host is the
 // platform's channel host (e.g. "twitch.tv", "kick.com"); empty means Twitch.
+// drainEvents empties a buffered browser-event channel without blocking and
+// returns how many events were discarded.
+func drainEvents(ch <-chan browser.Event) (n int) {
+	for {
+		select {
+		case <-ch:
+			n++
+		default:
+			return n
+		}
+	}
+}
+
+// loginValidRe is the conservative channel-login shape shared by the
+// platforms we drive; anything else (about:blank, chrome-error://..., data:
+// URLs) is NOT a channel and must never be treated as a raid target.
+var loginValidRe = regexp.MustCompile(`^[a-z0-9_-]{2,30}$`)
+
 func loginFromPath(host, p string) string {
 	if host == "" {
 		host = "twitch.tv"
@@ -292,6 +320,11 @@ func loginFromPath(host, p string) string {
 	s := p
 	if i := strings.Index(s, host+"/"); i >= 0 {
 		s = s[i+len(host)+1:]
+	} else if strings.Contains(s, "://") {
+		// A full URL that is NOT on this platform's channel host (about:blank
+		// counts once schemes like chrome-error:// are considered too) can
+		// never name one of its channels.
+		return ""
 	}
 	s = strings.TrimPrefix(s, "/")
 	// Cut at the next path/query separator.
@@ -304,6 +337,11 @@ func loginFromPath(host, p string) string {
 	// Reserved first-segment paths are not channels.
 	switch s {
 	case "", "directory", "drops", "settings", "videos", "downloads", "store", "subscriptions":
+		return ""
+	}
+	// Shape check last: "about:blank" (single colon, no ://) and every other
+	// non-channel URL survives the extraction above but can never pass this.
+	if !loginValidRe.MatchString(s) {
 		return ""
 	}
 	return s

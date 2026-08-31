@@ -67,23 +67,40 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 	// not land on the exact interval every time.
 	e.cur.nextPollAt = now.Add(e.fuzzed(interval))
 	var ps []domain.Progress
+	sessionFound := false
+	sessionChannel := ""
+	sessionMinutes := -1
 	if p, err := e.deps.Pages.FetchCurrentDrop(ctx); err != nil {
 		e.deps.Log.Warn().Err(err).Msg("current-drop poll failed")
 	} else if p != nil {
+		sessionFound = true
+		sessionChannel = p.ChannelLogin
+		sessionMinutes, _ = p.Effective()
 		if p.ChannelLogin != "" {
 			e.cur.creditChannel = p.ChannelLogin
 		}
 		ps = append(ps, *p)
 	}
+	invRows := 0
 	if inv, err := e.deps.Pages.FetchInventoryProgress(ctx); err != nil {
 		e.deps.Log.Warn().Err(err).Msg("inventory poll failed")
 	} else {
+		invRows = len(inv)
 		ps = append(ps, inv...)
 	}
-	if len(ps) == 0 {
-		return e.cur.lastMinutes, false
+	minutes, increased = e.cur.lastMinutes, false
+	if len(ps) > 0 {
+		minutes, increased = e.applyProgress(ps)
 	}
-	return e.applyProgress(ps)
+	// One line per poll (~1/min): a poll that SUCCEEDS but sees nothing is
+	// otherwise invisible in the log, indistinguishable from Twitch simply not
+	// having credited the first minute yet - the same blind spot the validation
+	// gate breakdown fixed.
+	e.deps.Log.Info().Bool("session_found", sessionFound).Str("session_channel", sessionChannel).
+		Int("session_minutes", sessionMinutes).Int("inventory_rows", invRows).
+		Int("minutes", minutes).Bool("increased", increased).
+		Msg("progress poll")
+	return minutes, increased
 }
 
 // applyProgress stores every progress observation (other drops' rows keep the
