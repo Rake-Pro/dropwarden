@@ -15,13 +15,14 @@ type LoginState struct {
 }
 
 // LoginProbe is the raw JS probe result. Exported so test fakes can populate
-// it through the Session.Eval seam. Keys carries the top-level body key NAMES
-// on an unrecognized 2xx (never values), so a shape drift can be mapped from
-// the diagnostic without another blind guess.
+// it through the Session.Eval seam. Tried carries one compact entry per
+// candidate endpoint attempted (path, status, content-type or body key NAMES -
+// never values), so endpoint drift is mapped from the diagnostic instead of
+// another blind guess.
 type LoginProbe struct {
 	State  string   `json:"state"`
 	Status int      `json:"status"`
-	Keys   []string `json:"keys"`
+	Tried  []string `json:"tried"`
 }
 
 // jsLoggedIn probes the session via kick.com's own authenticated user endpoint
@@ -33,14 +34,28 @@ type LoginProbe struct {
 const jsLoggedIn = `(async () => {
   try {
     if (!/(^|\.)kick\.com$/.test(location.hostname)) return { state: 'wrong-origin' };
-    const r = await fetch('/api/v1/user', { credentials: 'include', headers: { 'Accept': 'application/json' } });
-    if (r.status === 401 || r.status === 403) return { state: 'out', status: r.status };
-    if (!r.ok) return { state: 'unknown', status: r.status };
-    const b = await r.json().catch(() => null);
-    const authed = !!(b && (b.id || b.user_id || (b.user && b.user.id) || b.username));
-    // Key NAMES only (never values): enough to map a drifted body shape.
-    return { state: authed ? 'in' : 'unknown', status: r.status, keys: b ? Object.keys(b).slice(0, 12) : [] };
-  } catch (e) { return { state: 'unknown', status: 0 }; }
+    // Candidate authenticated endpoints, first decisive answer wins. A 200
+    // that is NOT JSON is the SPA catch-all serving the app shell for a dead
+    // API route (live finding 2026-08-31 for /api/v1/user) - never an answer.
+    const tried = [];
+    for (const u of ['/api/v1/user', '/api/v2/user', 'https://web.kick.com/api/v1/user']) {
+      try {
+        const r = await fetch(u, { credentials: 'include', headers: { 'Accept': 'application/json' } });
+        if (r.status === 401 || r.status === 403) return { state: 'out', status: r.status };
+        const ct = (r.headers.get('content-type') || '').split(';')[0];
+        if (r.ok && ct.includes('json')) {
+          const b = await r.json().catch(() => null);
+          const authed = !!(b && (b.id || b.user_id || (b.user && b.user.id) || b.username || (b.data && (b.data.id || b.data.username))));
+          if (authed) return { state: 'in', status: r.status };
+          // Key NAMES only (never values): enough to map a drifted shape.
+          tried.push(u + ' 200-json keys:' + (b ? Object.keys(b).slice(0, 8).join('|') : 'null'));
+          continue;
+        }
+        tried.push(u + ' ' + r.status + ' ' + ct);
+      } catch (e) { tried.push(u + ' fetch-error'); }
+    }
+    return { state: 'unknown', tried: tried };
+  } catch (e) { return { state: 'unknown', tried: [String(e)] }; }
 })()`
 
 // CheckLogin reports whether the Kick session is authenticated. The login flow
@@ -73,9 +88,9 @@ func CheckLogin(ctx context.Context, sess interface {
 	default:
 		// Unknown: name WHY, so the endpoint/shape drift is fixable from the
 		// UI message instead of another blind guess.
-		detail := fmt.Sprintf("probe status %d", out.Status)
-		if len(out.Keys) > 0 {
-			detail += ", body keys: " + strings.Join(out.Keys, ",")
+		detail := strings.Join(out.Tried, "; ")
+		if detail == "" {
+			detail = fmt.Sprintf("probe status %d", out.Status)
 		}
 		return LoginState{}, detail, nil
 	}
