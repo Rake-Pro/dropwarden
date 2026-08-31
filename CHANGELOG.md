@@ -1,0 +1,180 @@
+# Changelog
+
+All notable changes to dropwarden. No releases have been tagged yet; entries are
+grouped by day and theme on `main`. When semver releases start (vX.Y.Z), new
+entries get version headings.
+
+## 2026-08-31 - Live-debug arc: crediting, owned rewards, Kick login
+
+### Fixed
+- Drops-indicator selector made advisory for playback validation - a stale DOM
+  selector must never block watching; server-side progress + the stall ladder
+  are the real crediting check. Probe falls back to text-scanning the stream-tag
+  row for "Drops". (`00abcff`)
+- Already-claimed drops excluded from eligibility: details query now fetches
+  `self { isClaimed, currentMinutesWatched, dropInstanceID }`; discovery
+  self-heals stores detailed by pre-fix builds (re-details once until claim
+  state is captured). (`2cb4bbc`, `cf7edac`)
+- Minimized tab gets NO credit (confirmed live via visibility instrumentation):
+  the watcher window now stays visible + unfocused while watching
+  (`browser.window.minimize_while_watching` default false - cover, don't
+  minimize). (`2cb4bbc`)
+- Any-channel campaigns (empty ACL) only credit on participating drops-enabled
+  streams: drops indicator is now a GATE for any-channel selection (fast fail +
+  brief blacklist + reselect); ACL channels keep it advisory. (`b42ffc9`)
+- Stale-event raid bug: browser events buffered while not watching (e.g. the
+  tab-creation `about:blank` navigation) were adopted as raid targets - event
+  backlog drained at watch entry, raid-target host shape validated. (`75696ca`)
+- Login-check success auto-starts watching (login intent had no exit, windows
+  lingered). (`a348d58`)
+- Lock-reaper verifies the pid looks like Chrome before SIGKILL (pid-reuse
+  guard); launch failure renders "launching (check Debugging)" instead of a
+  fake "stopped"; `ui.start_minimized` default flipped to false. (`851ac1a`)
+
+### Added
+- Proactive owned-reward skip: inventory GQL (`gameEventDropsConnection` +
+  `earnedDropRewards`) parsed into an earned set, matched by NORMALIZED reward
+  name (reward IDs are campaign-instance-scoped, so cross-instance join must be
+  by name); `Progress.Owned` gates eligibility with reason "reward already
+  owned - Twitch will not credit it again". Confirmed working live. (`a1f7151`)
+- Manual "Watch anyway" per-drop override (`QueueItem.ForceWatch`, persisted,
+  bypasses only the Owned gate) - forces one owned drop past the skip to test
+  crediting. `POST /api/queue/force-watch`, amber toggle on owned queue rows.
+  (`914a620`)
+- Give-up on never-crediting drops: no Twitch session + zero minutes across the
+  stall window = needs_action "you may already own this reward", selection
+  skips it; tightened to a standalone 5-minute no-first-credit timeout.
+  (`2d675a7`, `7cc4141`)
+- Kick login probe (iterated live): `GET web.kick.com/api/v1/user/session` on
+  plain cookies; logged in = `data.session_id` present AND an auth token found
+  in the browser; full attempt detail surfaced in the UI card. (`20fc458`)
+- `watcher.timing_jitter` (default 0.2 in the starter config, range [0, 0.5])
+  fuzzes progress-poll, player-reassert, and max-session-rotation cadence;
+  30-90s random stagger when starting an engine within 2 minutes of another.
+  (`a348d58`)
+- Progress-poll instrumentation: one info line per poll (session_found /
+  channel / minutes / inventory_rows); raw inventory GQL dump to
+  `debug/inventory-gql.json` when `capture_gql_bodies` is on. (`75696ca`,
+  `da3d890`, `9902693`)
+- Kick drop-progress debug capture: passive fetch/XHR shim buffers
+  drops/inventory/campaign/quest/reward URLs, dumped to
+  `kick-drops-network.json` + `kick-inventory-raw.html` - records a real Kick
+  drop's shape when a campaign finally appears. (`a1f7151`)
+
+## 2026-08-31 - Live lifecycle, shared window, launch-on-demand
+
+### Added
+- Reconciler (`internal/app/reconcile.go`): profile/platform runtimes start and
+  stop live on every settings commit - "restart to apply" removed for profiles
+  and Kick; add/enable/disable/REMOVE profiles live (remove keeps the data dir,
+  refuses the last profile). Only browser LAUNCH settings stay
+  next-launch-bound. (`b9a9996`)
+- Shared Chrome window per profile (default): Kick runs as a TAB in the
+  profile's window; `kick.browser.separate_window: true` is the legacy
+  fallback. Group supervisor relaunches Chrome rebuilding all tabs + shims.
+  Tab activation is a PoC (one audited `TargetActivateTarget` call site) -
+  release-blocking backlog item. (`b9a9996`)
+- Welcome / needs-login flow: fresh session starts the engine paused with
+  `needsLogin` in state; Check-login button (`POST /api/profiles/login-check`);
+  unanswered prompt persisted as `.dw-<platform>-login-pending`. (`b9a9996`,
+  `8ae2c59`)
+- Launch-on-demand (debugged live on Windows): Chrome exists only when the
+  per-(profile,platform) run intent says so (off | watch | login); dashboard
+  Stop CLOSES Chrome (pause stays tray-only); ref-counted shared window closes
+  with its last tab. (`7edcaca`)
+- Orphan cleanup: Windows = suspended-start + kill-on-close Job Object (an
+  orphaned Chrome held SingletonLock and wedged relaunches - the "black
+  window" bug); POSIX = SingletonLock pid reap + process-group kill.
+  (`7edcaca`)
+
+## 2026-08-30 - Multi-platform UX, multi-profile, Linux GUI
+
+### Added
+- Kick promoted to first class: `/api/state` exposes a uniform `platforms`
+  array; engine actions are `POST /api/engine/{platform}/{action}` (old
+  `/api/watch/*` + `/api/kick/*` routes removed). Per-platform now-watching
+  cards, platform badges (only when >1 platform visible), platform-split
+  totals, per-platform Debugging cards and tray items; Settings restructured
+  (Platforms pane, App pane with theme picker). 13 adversarial-review findings
+  fixed, notably: Kick inherits shared browser config from the root block,
+  settings Save hot-reloads BOTH engines, Save validates against a config copy,
+  cooldown status reset no longer wipes `Status.Platform` (Kick minutes could
+  credit Twitch). (`feca81b`)
+- Linux GUI is real: Wails GTK3 backend (`-tags gtk3`), `stub_linux.go`
+  deleted, builds and passes `task check` in-container; runtime on real
+  hardware still verify-live. (`feca81b`)
+- Multi-profile design locked + phases 0-3 implemented: profile = person with
+  its own SQLite DB and Chrome profile dirs under
+  `~/.dropwarden/profiles/<name>/` (no store migration; legacy data becomes
+  the zero-move `main` profile). `profiles:` config block, N ProfileRuntimes,
+  `POST /api/engine/{profile}/{platform}/{action}`, profile CRUD API, unified
+  dashboard with profile pill bar, window tiling defaults + 90s per-profile
+  first-discovery stagger. (`7380929` design, `a2da217` code)
+
+## 2026-08-27..28 - Platform-neutral engine, Kick phase 0-2
+
+### Added
+- Platform-neutral plumbing: `internal/platform` interfaces, platform column
+  through the store (composite keys on channel_stats/blacklist), per-platform
+  engine, shared per-platform queue reconcile. (`f1d9351`)
+- Kick runtime behind `kick.enabled` (default off): unofficial web.kick.com
+  campaigns endpoint via page-context fetch, second Chrome profile, KICK
+  badges, `/api/kick/*` controls (later unified). No proactive refresh and
+  long stall windows - Kick's FAQ says refreshes hurt credit. All selectors
+  verify-live; first-run dump protocol in `docs/STATUS.md`. (`4679aed`)
+- Self-healing browser session (`browser.Managed`): supervises the CDP event
+  stream and relaunches Chrome with capped backoff forever, swapping the
+  session in place - found after a 90-minute dead-socket retry loop.
+  (`25ebfa4`)
+
+### Fixed
+- Twitch mature/content-classification gate treated as not-offline; ClickPlay
+  accepts it (Start Watching), acknowledged once per channel. (`c3abc06`)
+- Link-gate doctrine: Twitch flags cannot distinguish link-to-earn from
+  link-optional, so server-credited progress (real minutes > 0 or claimable)
+  overrides the account-link gate; `skip_account_link_drops` is a real switch
+  (off = watch everything, failed claims go to manual reconcile). (`0229f9b`)
+
+## 2026-08-27 - MVP and Twitch core
+
+### Added
+- MVP: tray-first Twitch drops watcher driving one real, unfocused Chrome via
+  go-rod CDP (not API-spoofed). CLI harness (`cmd/dropwarden-cli`: doctor /
+  login / discover / inventory / watch / report) + Wails v3 GUI; frontend talks
+  to Go via `/api/*` JSON on the Wails asset origin, no generated bindings.
+  (`16fa27e`, `f955376`)
+- Active drop-progress poll (`watcher.progress_poll`, default 60s): Twitch
+  pushes progress over WebSocket the passive capture shim cannot see; poll
+  replays captured auth + integrity headers in page-context GQL and also reads
+  the full inventory (simultaneous multi-tier campaigns). (`4009c3a`,
+  `5dc6faf`)
+- Claim policy: ONE bounded 60-second attempt (restore window + toggle drops
+  panel first); failure = needs_action "claim manually" + banner, no
+  auto-retry. (`c291849`)
+- Set-coverage channel selection: rank current > coverage > stats > viewers -
+  park on the channel crediting the most eligible drops; stickiness drains the
+  set before moving. (`98400e7`)
+- Lifetime stats from SQLite; minutes watched = wall-clock session duration
+  (per-drop credited deltas undercount with simultaneous drops); live session
+  overlay; mid-watch revalidation no longer mints a new session. (`9376f38`,
+  `7cc21e4`, `e254d8a`)
+- Opt-in Chrome sink-level mute (`browser.mute_audio`, player stays at 1%
+  volume); credited-elsewhere stall handling (a different crediting channel
+  means another device is watching - stand down without blacklisting).
+  (`c797bd0`)
+- Opt-in start-minimized via CDP `Browser.setWindowBounds`; engine restores the
+  window for opening/validating and re-minimizes when watching begins.
+  (`6ffd97b`, `c27964c`)
+
+### Fixed
+- Discovery made real against live Twitch: actual GQL op name is
+  `ViewerDropsDashboard`; Twitch batches GraphQL (positional array responses
+  split in `twitch/capture.go`); campaign details/ACL fetched via page-context
+  GQL replaying captured auth + integrity headers (defeats
+  IntegrityCheckFailed). (`3412401`..`aa83f4f`)
+- Eligibility is time-window based, not status-string based; list upsert no
+  longer clobbers detailed ACL/slug; selection falls through to the next
+  available drop. (`353fdde`..`428c1fa`)
+- Account-link false positives: `self.isAccountConnected` is authoritative
+  (Twitch fills `accountLinkURL` on most campaigns); empty accountLinkURL with
+  nothing to link is eligible. (`4335cad`, `3bd84fa`)
