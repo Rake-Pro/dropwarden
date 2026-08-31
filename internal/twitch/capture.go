@@ -79,7 +79,7 @@ func Drain(ctx context.Context, sess interface {
 					res.CampaignsRaw = string(sub)
 				}
 			case gql.IsDetailsOp(op):
-				if c, err := gql.ParseCampaignDetails(sub); err == nil && c.ID != "" {
+				if c, _, err := gql.ParseCampaignDetails(sub); err == nil && c.ID != "" {
 					res.Details = append(res.Details, c)
 				}
 			case gql.IsInventoryOp(op):

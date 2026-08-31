@@ -89,6 +89,7 @@ type timeBasedDrop struct {
 	PreconditionDrops      []preconditionDrop `json:"preconditionDrops"`
 	StartAt                string             `json:"startAt"`
 	EndAt                  string             `json:"endAt"`
+	Self                   *inventoryDropSelf `json:"self"`
 }
 
 // campaignDetailsResponse is the shape of the "CampaignDetails" operation.

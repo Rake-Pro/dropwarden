@@ -378,3 +378,30 @@ func TestNextDrop_SkipLinkOffDisablesGate(t *testing.T) {
 		t.Fatalf("skip_account_link_drops=false must disable the gate, got %+v", got)
 	}
 }
+
+func TestNextDrop_ClaimedZeroMinutesSkipped(t *testing.T) {
+	// Live 2026-08-31: a fully-earned campaign's claimed drop can come back from
+	// the details query with currentMinutesWatched 0 but ClaimedAt set. Complete()
+	// is minutes-only, so eligibility must also gate on ClaimedAt or the watcher
+	// grinds forever on a drop the user already owns.
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	future := now.Add(24 * time.Hour)
+	claimedAt := now.Add(-72 * time.Hour)
+	camp := baseCampaign("c1", future,
+		domain.Drop{ID: "d1", CampaignID: "c1", RequiredMinutes: 60},
+	)
+	items := []domain.QueueItem{
+		{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending},
+	}
+	campaigns := map[string]domain.Campaign{"c1": camp}
+	progress := map[string]domain.Progress{
+		"d1": {DropID: "d1", RealMinutes: 0, RequiredMinutes: 60, Source: domain.SourceInventory, ClaimedAt: &claimedAt},
+	}
+	got, err := NextDrop(items, campaigns, progress, map[string]bool{}, domain.PriorityTopDown, true, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("a claimed drop with 0 reported minutes must be skipped, got %+v", got)
+	}
+}

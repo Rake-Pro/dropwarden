@@ -115,7 +115,9 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 	// The dashboard list has no drops or channel ACL; fetch details for the
 	// campaigns we care about (matching the game filter, active) so they become
 	// watchable. Capped per cycle to stay gentle.
-	res.Details += d.fetchDetails(ctx, captured.Campaigns)
+	dn, pn := d.fetchDetails(ctx, captured.Campaigns)
+	res.Details += dn
+	res.Progress += pn
 
 	prog, err := d.pages.ReadInventory(ctx)
 	if err != nil {
@@ -150,8 +152,10 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 
 // fetchDetails fetches full campaign details (drops + ACL) for filter-matching
 // active campaigns that do not yet have drops, capped at details_per_cycle. It
-// returns the number of campaigns whose details were fetched and stored.
-func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign) int {
+// returns the number of campaigns whose details were fetched and stored, and
+// the number of per-drop progress rows saved alongside them (including
+// already-claimed drops, so the next eligibility check excludes them).
+func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign) (details, progress int) {
 	limit := d.cfg.Discovery.DetailsPerCycle
 	if limit <= 0 {
 		limit = 8
@@ -186,18 +190,18 @@ func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign)
 			d.logger.Info().Bool("any_game", d.cfg.AnyGame).Strs("games", d.cfg.Games).
 				Msg("discovery: no active campaigns matched the game filter; nothing to detail-fetch")
 		}
-		return 0
+		return 0, 0
 	}
 
 	login, err := d.pages.FetchLogin(ctx)
 	if err != nil {
 		d.logger.Warn().Err(err).Msg("discovery: cannot fetch login; skipping campaign details this cycle")
-		return 0
+		return 0, 0
 	}
 
-	n := 0
+	n, pn := 0, 0
 	for _, c := range targets {
-		full, raw, err := d.pages.FetchCampaignDetails(ctx, login, c.ID)
+		full, prog, raw, err := d.pages.FetchCampaignDetails(ctx, login, c.ID)
 		if d.cfg.Logging.CaptureGQLBodies && raw != "" {
 			d.dumpDebug("details-"+safeName(c.ID)+".json", []byte(raw))
 		}
@@ -212,11 +216,23 @@ func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign)
 			d.logger.Warn().Err(err).Str("campaign", c.ID).Msg("discovery: store details failed")
 			continue
 		}
+		// A drop with a "self" field in the details response is either
+		// in-progress or fully claimed; either way, save it so a claimed drop
+		// (which the inventory/dashboard views omit once the whole campaign is
+		// claimed) is excluded from eligibility on the next reconcile.
+		for _, p := range prog {
+			if err := d.store.SaveProgress(p); err != nil {
+				d.logger.Warn().Err(err).Str("campaign", c.ID).Str("drop", p.DropID).
+					Msg("discovery: save details progress failed")
+				continue
+			}
+			pn++
+		}
 		d.logger.Info().Str("campaign", full.Name).Str("game", full.GameName).
 			Int("drops", len(full.Drops)).Int("acl", len(full.AllowedChannels)).Msg("discovery: fetched details")
 		n++
 	}
-	return n
+	return n, pn
 }
 
 // reconcileQueue applies the shared platform-scoped reconciliation for Twitch.

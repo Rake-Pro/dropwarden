@@ -58,7 +58,7 @@ func TestParseCampaigns(t *testing.T) {
 
 func TestParseCampaignDetails(t *testing.T) {
 	body := readFixture(t, "campaign_details.json")
-	c, err := ParseCampaignDetails(body)
+	c, _, err := ParseCampaignDetails(body)
 	if err != nil {
 		t.Fatalf("ParseCampaignDetails: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestParseCampaignDetails_WithACL(t *testing.T) {
 			}
 		}
 	}`)
-	c, err := ParseCampaignDetails(body)
+	c, _, err := ParseCampaignDetails(body)
 	if err != nil {
 		t.Fatalf("ParseCampaignDetails: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestParseCampaignDetails_ConnectedSelfOverridesLinkURL(t *testing.T) {
 			}
 		}
 	}`)
-	c, err := ParseCampaignDetails(body)
+	c, _, err := ParseCampaignDetails(body)
 	if err != nil {
 		t.Fatalf("ParseCampaignDetails: %v", err)
 	}
@@ -153,6 +153,82 @@ func TestParseCampaignDetails_ConnectedSelfOverridesLinkURL(t *testing.T) {
 	}
 	if c.RequiresAccountLink() {
 		t.Errorf("expected RequiresAccountLink() false when self.isAccountConnected is true, despite non-empty accountLinkURL")
+	}
+}
+
+func TestParseCampaignDetails_SelfProgress(t *testing.T) {
+	body := []byte(`{
+		"data": {
+			"user": {
+				"dropCampaign": {
+					"id": "camp-1",
+					"name": "Test Campaign One",
+					"status": "ACTIVE",
+					"startAt": "2026-08-01T00:00:00Z",
+					"endAt": "2026-09-01T00:00:00Z",
+					"game": {"id": "game-1", "displayName": "Test Game", "slug": "test-game"},
+					"timeBasedDrops": [
+						{
+							"id": "drop-1",
+							"name": "Tier 1",
+							"requiredMinutesWatched": 60,
+							"self": {"currentMinutesWatched": 60, "isClaimed": true, "dropInstanceID": "user1#camp-1#drop-1"}
+						},
+						{
+							"id": "drop-2",
+							"name": "Tier 2",
+							"requiredMinutesWatched": 120,
+							"self": {"currentMinutesWatched": 45, "isClaimed": false}
+						}
+					]
+				}
+			}
+		}
+	}`)
+	c, progress, err := ParseCampaignDetails(body)
+	if err != nil {
+		t.Fatalf("ParseCampaignDetails: %v", err)
+	}
+	if len(c.Drops) != 2 {
+		t.Fatalf("expected 2 drops, got %d", len(c.Drops))
+	}
+	if len(progress) != 2 {
+		t.Fatalf("expected 2 progress entries, got %d", len(progress))
+	}
+
+	byID := map[string]domain.Progress{}
+	for _, p := range progress {
+		byID[p.DropID] = p
+		if p.Source != domain.SourceInventory {
+			t.Errorf("drop %s source = %q, want %q", p.DropID, p.Source, domain.SourceInventory)
+		}
+	}
+
+	// drop-1: already claimed on Twitch -> ClaimedAt set, not claimable.
+	p1 := byID["drop-1"]
+	if p1.ClaimedAt == nil {
+		t.Errorf("drop-1 expected ClaimedAt to be set (isClaimed true)")
+	}
+	if p1.Claimable {
+		t.Errorf("drop-1 already claimed, should not be claimable")
+	}
+	if p1.RealMinutes != 60 {
+		t.Errorf("drop-1 RealMinutes = %d, want 60", p1.RealMinutes)
+	}
+	if p1.ClaimID != "user1#camp-1#drop-1" {
+		t.Errorf("drop-1 ClaimID = %q", p1.ClaimID)
+	}
+
+	// drop-2: in progress, not claimed -> no ClaimedAt.
+	p2 := byID["drop-2"]
+	if p2.ClaimedAt != nil {
+		t.Errorf("drop-2 should not be claimed yet")
+	}
+	if p2.Claimable {
+		t.Errorf("drop-2 expected not claimable (45 < 120)")
+	}
+	if p2.RealMinutes != 45 {
+		t.Errorf("drop-2 RealMinutes = %d, want 45", p2.RealMinutes)
 	}
 }
 
@@ -287,7 +363,7 @@ func TestParsers_GarbageInput(t *testing.T) {
 	if _, err := ParseCampaigns(garbage); err == nil {
 		t.Errorf("ParseCampaigns: expected error on truncated JSON")
 	}
-	if _, err := ParseCampaignDetails(garbage); err == nil {
+	if _, _, err := ParseCampaignDetails(garbage); err == nil {
 		t.Errorf("ParseCampaignDetails: expected error on truncated JSON")
 	}
 	if _, err := ParseInventory(garbage); err == nil {

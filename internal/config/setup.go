@@ -77,6 +77,7 @@ browser:
     always_on_bottom: true
     never_focus: true
     start_minimized: false     # minimize the watcher Chrome after launch (progress watchdogs still verify playback)
+    minimize_while_watching: false  # keep it false: a minimized tab reads visibilityState "hidden" and Twitch stops crediting drops (cover the window instead of minimizing it)
   burnin:
     dim_opacity: 0.55          # 0 disables the overlay
     shift_interval: 20m

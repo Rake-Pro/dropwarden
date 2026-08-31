@@ -116,7 +116,10 @@ func eligibleNow(item domain.QueueItem, campaigns map[string]domain.Campaign, pr
 	if claimed[item.DropID] {
 		return domain.Campaign{}, domain.Drop{}, false
 	}
-	if p, ok := progress[item.DropID]; ok && p.Complete() {
+	// Exclude an already-claimed drop even when Twitch reports its minutes as 0
+	// (a claimed drop from a fully-earned campaign can come back with
+	// currentMinutesWatched 0, so Complete() alone would let it back in).
+	if p, ok := progress[item.DropID]; ok && (p.Complete() || p.ClaimedAt != nil) {
 		return domain.Campaign{}, domain.Drop{}, false
 	}
 	if !preconditionsMet(drop.PreconditionIDs, claimed) {

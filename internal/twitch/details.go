@@ -74,25 +74,27 @@ func (p *Pages) FetchLogin(ctx context.Context) (string, error) {
 // detailsQuery is a full DropCampaignDetails query (not a persisted hash, so it
 // is immune to hash rotation). It returns data.user.dropCampaign, matching
 // gql.ParseCampaignDetails.
-const detailsQuery = `query($login:String!,$id:ID!){user(login:$login){dropCampaign(id:$id){id name status startAt endAt accountLinkURL self{isAccountConnected} game{id displayName slug} allow{channels{id name displayName}} timeBasedDrops{id name requiredMinutesWatched startAt endAt benefitEdges{benefit{id name imageAssetURL}} preconditionDrops{id}}}}}`
+const detailsQuery = `query($login:String!,$id:ID!){user(login:$login){dropCampaign(id:$id){id name status startAt endAt accountLinkURL self{isAccountConnected} game{id displayName slug} allow{channels{id name displayName}} timeBasedDrops{id name requiredMinutesWatched startAt endAt benefitEdges{benefit{id name imageAssetURL}} preconditionDrops{id} self{currentMinutesWatched isClaimed dropInstanceID hasPreconditionsMet}}}}}`
 
 // FetchCampaignDetails fetches and parses one campaign's full details (drops +
-// channel ACL) via a page-context GraphQL call. It also returns the raw response
-// body for the debug dump.
-func (p *Pages) FetchCampaignDetails(ctx context.Context, login, campaignID string) (domain.Campaign, string, error) {
+// channel ACL) via a page-context GraphQL call. It also returns per-drop viewer
+// progress (including already-claimed drops, which the dashboard/inventory
+// views omit once a campaign is fully claimed) and the raw response body for
+// the debug dump.
+func (p *Pages) FetchCampaignDetails(ctx context.Context, login, campaignID string) (domain.Campaign, []domain.Progress, string, error) {
 	body, _ := json.Marshal(map[string]any{
 		"query":     detailsQuery,
 		"variables": map[string]string{"login": login, "id": campaignID},
 	})
 	var raw string
 	if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
-		return domain.Campaign{}, raw, fmt.Errorf("twitch: fetch details %s: %w", campaignID, err)
+		return domain.Campaign{}, nil, raw, fmt.Errorf("twitch: fetch details %s: %w", campaignID, err)
 	}
-	c, err := gql.ParseCampaignDetails([]byte(raw))
+	c, prog, err := gql.ParseCampaignDetails([]byte(raw))
 	if err != nil {
-		return domain.Campaign{}, raw, fmt.Errorf("twitch: parse details %s (%.160s): %w", campaignID, raw, err)
+		return domain.Campaign{}, nil, raw, fmt.Errorf("twitch: parse details %s (%.160s): %w", campaignID, raw, err)
 	}
-	return c, raw, nil
+	return c, prog, raw, nil
 }
 
 // currentDropQuery is a full dropCurrentSession query (not a persisted hash).

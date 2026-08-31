@@ -168,8 +168,13 @@ func (e *Engine) beginWatching(ctx context.Context) (State, string) {
 	}
 	e.cur.lastProgress = now
 	e.setStatus(func(s *Status) { s.Current = e.cur.lastMinutes })
-	// Playback is confirmed; tuck the window away again if running minimized.
-	e.setWindowMinimized(ctx, true)
+	// Keep the window VISIBLE while watching: a minimized tab reads
+	// visibilityState "hidden" and Twitch pauses minute-watched heartbeats for
+	// a hidden tab, so drops never credit (confirmed live 2026-08-31). Only
+	// re-minimize when the user explicitly opts in and accepts that tradeoff.
+	if e.deps.Cfg.Browser.Window.MinimizeWhileWatching {
+		e.setWindowMinimized(ctx, true)
+	}
 	return StateWatching, "playback validated"
 }
 

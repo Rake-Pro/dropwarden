@@ -67,14 +67,18 @@ func ParseCampaigns(body []byte) ([]domain.Campaign, error) {
 }
 
 // ParseCampaignDetails parses a "CampaignDetails" operation response into a
-// single fully-expanded campaign, including its drop tiers and channel ACL.
-func ParseCampaignDetails(body []byte) (domain.Campaign, error) {
+// single fully-expanded campaign, including its drop tiers and channel ACL. It
+// also returns per-drop viewer progress for every drop that carries a "self"
+// field, so a fully-claimed campaign (which the dashboard/inventory views
+// exclude once every drop is claimed) is still recorded as claimed at
+// discovery.
+func ParseCampaignDetails(body []byte) (domain.Campaign, []domain.Progress, error) {
 	var resp campaignDetailsResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return domain.Campaign{}, fmt.Errorf("gql: parse campaign details response: %w", err)
+		return domain.Campaign{}, nil, fmt.Errorf("gql: parse campaign details response: %w", err)
 	}
 	if resp.Data.User == nil || resp.Data.User.DropCampaign == nil {
-		return domain.Campaign{}, fmt.Errorf("gql: parse campaign details response: no dropCampaign in response")
+		return domain.Campaign{}, nil, fmt.Errorf("gql: parse campaign details response: no dropCampaign in response")
 	}
 	dc := resp.Data.User.DropCampaign
 
@@ -107,6 +111,8 @@ func ParseCampaignDetails(body []byte) (domain.Campaign, error) {
 		}
 	}
 
+	now := time.Now()
+	var progress []domain.Progress
 	for _, d := range dc.TimeBasedDrops {
 		drop := domain.Drop{
 			ID:              d.ID,
@@ -130,9 +136,28 @@ func ParseCampaignDetails(body []byte) (domain.Campaign, error) {
 			drop.PreconditionIDs = append(drop.PreconditionIDs, pd.ID)
 		}
 		c.Drops = append(c.Drops, drop)
+
+		if d.Self != nil {
+			p := domain.Progress{
+				DropID:          d.ID,
+				RequiredMinutes: d.RequiredMinutesWatched,
+				Source:          domain.SourceInventory,
+				ObservedAt:      now,
+			}
+			p.RealMinutes = d.Self.CurrentMinutesWatched
+			p.Claimable = p.RealMinutes >= p.RequiredMinutes && !d.Self.IsClaimed
+			if d.Self.DropInstanceID != nil {
+				p.ClaimID = *d.Self.DropInstanceID
+			}
+			if d.Self.IsClaimed {
+				t := now
+				p.ClaimedAt = &t
+			}
+			progress = append(progress, p)
+		}
 	}
 
-	return c, nil
+	return c, progress, nil
 }
 
 // ParseInventory parses an "Inventory" operation response into one Progress

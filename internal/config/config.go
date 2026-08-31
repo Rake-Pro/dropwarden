@@ -189,6 +189,15 @@ type WindowConfig struct {
 	AlwaysOnBottom bool `yaml:"always_on_bottom"`
 	NeverFocus     bool `yaml:"never_focus"`
 	StartMinimized bool `yaml:"start_minimized"` // minimize the watcher Chrome window after launch (CDP)
+
+	// MinimizeWhileWatching re-minimizes the window once playback is validated.
+	// OFF by default and it SHOULD stay off: a minimized window's tab reports
+	// document.visibilityState "hidden", and Twitch (and platforms like it)
+	// pause their minute-watched heartbeats for a hidden tab, so drops never
+	// credit (confirmed live 2026-08-31). The window stays visible-but-
+	// unfocused while watching instead - cover it with another window if it is
+	// in the way; the occlusion flags keep a covered window crediting.
+	MinimizeWhileWatching bool `yaml:"minimize_while_watching,omitempty"`
 }
 
 type BurninConfig struct {
