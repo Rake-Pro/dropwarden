@@ -70,7 +70,14 @@ const jsLoggedIn = `(async () => {
           // The live shape is { data, message }: dig into data (and its
           // nested user/session) for anything account-shaped.
           const cands = [b, b && b.data, b && b.data && b.data.user, b && b.data && b.data.session, b && b.user];
-          const authed = cands.some(c => !!(c && typeof c === 'object' && (c.id || c.user_id || c.username || c.email || c.slug)));
+          let authed = cands.some(c => !!(c && typeof c === 'object' && (c.id || c.user_id || c.username || c.email || c.slug)));
+          // Live shape 2026-08-31: { data: { session_id }, message } - a
+          // SESSION endpoint, not a user object. A bare session_id could be an
+          // anonymous session, so it only counts as logged in when an auth
+          // token was also found in the browser (the session_token cookie only
+          // exists on an authenticated kick.com). verify live on a LOGGED-OUT
+          // browser: confirm session_token is absent there.
+          if (!authed && b && b.data && b.data.session_id && tokens.length > 0) authed = true;
           if (authed) return { state: 'in', status: r.status };
           let dataDesc = 'absent';
           if (b && 'data' in b) {
