@@ -45,6 +45,13 @@ func (e *Engine) runValidating(ctx context.Context) (State, string) {
 	// Also covers mid-watch hard refreshes, which re-enter this state while the
 	// window is minimized - the player must be visible to (re)start playback.
 	e.setWindowMinimized(ctx, false)
+	// For an ANY-CHANNEL campaign, drops only credit on a PARTICIPATING stream
+	// (Twitch: "go to a participating live channel"), so the drops indicator is
+	// a real gate: healthy playback on a non-participating Once Human streamer
+	// earns nothing forever (live 2026-08-31). For an ACL campaign the
+	// allowlisted channels are known participating, so the indicator stays
+	// advisory there (its selector can false-negative).
+	requireDrops := e.cur.campaign.AnyChannel()
 	deadline := e.deps.Now().Add(e.deps.Cfg.Watcher.ValidateTimeout)
 	var prevTime float64
 	var prevSet bool
@@ -108,13 +115,17 @@ func (e *Engine) runValidating(ctx context.Context) (State, string) {
 		}
 
 		if validationPass(pathOK, playing, volOK, advancing) {
-			// The drops indicator is ADVISORY, not a gate (live finding
-			// 2026-08-31: healthy playback on every channel with the indicator
-			// selector matching nothing, so requiring it wedged validation into
-			// a reselect loop). The authoritative "is this crediting" signal is
-			// server-side progress, which the watch phase already enforces via
-			// the stall ladder and the credited-elsewhere handling; a stale DOM
-			// selector must never be able to block watching.
+			// Playback is healthy. For an any-channel campaign a missing drops
+			// indicator now means "not a participating stream": fail fast and
+			// reselect rather than watch it for nothing (there is no point
+			// waiting the full timeout once playback is confirmed good). For an
+			// ACL campaign it stays advisory - the channel is allowlisted, and
+			// server-side progress plus the stall ladder are the real check.
+			if requireDrops && !h.DropsIndicator {
+				return e.failChannel(domain.OutcomeAbortedStall,
+					"channel not participating in drops (playback ok, no drops indicator)",
+					e.deps.Cfg.Watcher.OfflineBlacklistTTL)
+			}
 			if !h.DropsIndicator {
 				e.deps.Log.Info().Str("login", e.cur.login).
 					Msg("validating: drops indicator not detected (selector may be stale); relying on server-side progress")
