@@ -34,26 +34,52 @@ type LoginProbe struct {
 const jsLoggedIn = `(async () => {
   try {
     if (!/(^|\.)kick\.com$/.test(location.hostname)) return { state: 'wrong-origin' };
-    // Candidate authenticated endpoints, first decisive answer wins. A 200
-    // that is NOT JSON is the SPA catch-all serving the app shell for a dead
-    // API route (live finding 2026-08-31 for /api/v1/user) - never an answer.
+    // The site's own who-am-I call is GET web.kick.com/api/v1/user/session
+    // (found live 2026-08-31 via its CORS preflight - which also proves it
+    // carries a non-simple header, i.e. a bearer token). The SPA reads that
+    // token from a JS-accessible store, so hunt the usual places: cookies and
+    // local/sessionStorage keys that look like a session/auth token.
     const tried = [];
-    for (const u of ['/api/v1/user', '/api/v2/user', 'https://web.kick.com/api/v1/user']) {
+    const tokens = [];
+    try {
+      for (const kv of document.cookie.split('; ')) {
+        const i = kv.indexOf('=');
+        if (i < 0) continue;
+        const name = kv.slice(0, i);
+        if (/session_token|kick_session|auth[-_]?token/i.test(name)) tokens.push([ 'cookie:' + name, decodeURIComponent(kv.slice(i + 1)) ]);
+      }
+      for (const store of [localStorage, sessionStorage]) {
+        for (let i = 0; i < store.length; i++) {
+          const k = store.key(i);
+          if (/session[-_]?token|auth[-_]?token|access[-_]?token/i.test(k)) tokens.push([ 'storage:' + k, store.getItem(k) ]);
+        }
+      }
+    } catch (e) { tried.push('token-hunt-error'); }
+
+    const url = 'https://web.kick.com/api/v1/user/session';
+    const attempts = [['plain', null]].concat(tokens.slice(0, 4));
+    let sawTokenReject = false;
+    for (const [label, tok] of attempts) {
       try {
-        const r = await fetch(u, { credentials: 'include', headers: { 'Accept': 'application/json' } });
-        if (r.status === 401 || r.status === 403) return { state: 'out', status: r.status };
+        const headers = { 'Accept': 'application/json' };
+        if (tok) headers['Authorization'] = 'Bearer ' + tok.replace(/^"|"$/g, '');
+        const r = await fetch(url, { credentials: 'include', headers: headers });
         const ct = (r.headers.get('content-type') || '').split(';')[0];
         if (r.ok && ct.includes('json')) {
           const b = await r.json().catch(() => null);
-          const authed = !!(b && (b.id || b.user_id || (b.user && b.user.id) || b.username || (b.data && (b.data.id || b.data.username))));
+          const authed = !!(b && (b.id || b.user_id || b.username || (b.user && (b.user.id || b.user.username)) || (b.data && (b.data.id || b.data.username))));
           if (authed) return { state: 'in', status: r.status };
-          // Key NAMES only (never values): enough to map a drifted shape.
-          tried.push(u + ' 200-json keys:' + (b ? Object.keys(b).slice(0, 8).join('|') : 'null'));
+          tried.push(label + ' 200-json keys:' + (b ? Object.keys(b).slice(0, 8).join('|') : 'null'));
           continue;
         }
-        tried.push(u + ' ' + r.status + ' ' + ct);
-      } catch (e) { tried.push(u + ' fetch-error'); }
+        if ((r.status === 401 || r.status === 403) && tok) sawTokenReject = true;
+        tried.push(label + ' ' + r.status + ' ' + ct);
+      } catch (e) { tried.push(label + ' fetch-error'); }
     }
+    // Every found token was rejected outright: the session is stale - a
+    // definite logged-out, not an unknown.
+    if (sawTokenReject && tokens.length > 0) return { state: 'out', status: 401 };
+    if (tokens.length === 0) tried.push('no session-token cookie/storage found');
     return { state: 'unknown', tried: tried };
   } catch (e) { return { state: 'unknown', tried: [String(e)] }; }
 })()`
