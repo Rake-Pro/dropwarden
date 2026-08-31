@@ -120,7 +120,7 @@ func newHarness(t *testing.T, cfg *config.Config) *harness {
 		fresh:   map[pair]bool{},
 		session: map[pair]*fakeSession{},
 	}
-	a := &App{Cfg: cfg, ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), Log: zerolog.Nop(), desired: cfg}
+	a := &App{Cfg: cfg, ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), Log: zerolog.Nop(), desired: cfg, intents: map[intentKey]runIntent{}, seedWatchAll: true}
 	a.startPlat = func(ctx context.Context, pr *ProfileRuntime, plat domain.Platform, stagger time.Duration) (*PlatformRuntime, error) {
 		k := pair{pr.Name, plat}
 		h.mu.Lock()
@@ -445,9 +445,10 @@ func TestChromeDirFresh(t *testing.T) {
 type fakeWindow struct {
 	profileDir string
 
-	mu    sync.Mutex
-	owner *fakeSession
-	tabs  []*fakeSession
+	mu        sync.Mutex
+	owner     *fakeSession
+	keeperOut bool
+	tabs      []*fakeSession
 
 	done      chan struct{}
 	closed    atomic.Bool
@@ -458,8 +459,6 @@ func newFakeWindow(dir string) *fakeWindow {
 	return &fakeWindow{profileDir: dir, owner: newFakeSession(), done: make(chan struct{})}
 }
 
-func (w *fakeWindow) Owner() browser.Session { return w.owner }
-
 func (w *fakeWindow) NewTab(context.Context) (browser.Session, error) {
 	s := newFakeSession()
 	w.mu.Lock()
@@ -468,10 +467,22 @@ func (w *fakeWindow) NewTab(context.Context) (browser.Session, error) {
 	return s, nil
 }
 
+// CloseInitialTab drops the keeper once a platform tab holds the window open.
+func (w *fakeWindow) CloseInitialTab() {
+	w.mu.Lock()
+	w.keeperOut = true
+	w.mu.Unlock()
+	w.owner.Close()
+}
+
+func (w *fakeWindow) SetMinimized(context.Context, bool) error { return nil }
+
 func (w *fakeWindow) Alive() bool           { return !w.closed.Load() }
 func (w *fakeWindow) Done() <-chan struct{} { return w.done }
 
-func (w *fakeWindow) extraTabs() []*fakeSession {
+// platformTabs returns the per-platform tabs opened on this window (the keeper
+// is not one of them).
+func (w *fakeWindow) platformTabs() []*fakeSession {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return append([]*fakeSession(nil), w.tabs...)
@@ -480,7 +491,7 @@ func (w *fakeWindow) extraTabs() []*fakeSession {
 func (w *fakeWindow) Close() error {
 	w.closed.Store(true)
 	_ = w.owner.Close()
-	for _, t := range w.extraTabs() {
+	for _, t := range w.platformTabs() {
 		_ = t.Close()
 	}
 	w.closeOnce.Do(func() { close(w.done) })
@@ -507,7 +518,7 @@ func newBrowserHarness(t *testing.T, cfg *config.Config) *bharness {
 	cfg.Watcher.EnabledOnStart = false
 
 	h := &bharness{binder: newFakeBinder()}
-	a := &App{Cfg: cfg, ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), Log: zerolog.Nop(), desired: cfg}
+	a := &App{Cfg: cfg, ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), Log: zerolog.Nop(), desired: cfg, intents: map[intentKey]runIntent{}, seedWatchAll: true}
 	a.openWindow = func(_ context.Context, _ config.BrowserConfig, dir string, _ float64, _ zerolog.Logger) (browser.WindowHost, error) {
 		w := newFakeWindow(dir)
 		h.mu.Lock()
@@ -553,8 +564,8 @@ func TestSharedWindowKickStartsAsATabOnTheLiveBrowser(t *testing.T) {
 	if len(wins) != 1 {
 		t.Fatalf("a profile must cost exactly one chrome window, got %d", len(wins))
 	}
-	if n := len(wins[0].extraTabs()); n != 0 {
-		t.Fatalf("twitch alone must not open extra tabs, got %d", n)
+	if n := len(wins[0].platformTabs()); n != 1 {
+		t.Fatalf("twitch alone must be one tab on the window, got %d", n)
 	}
 
 	on := clone(cfg)
@@ -567,8 +578,8 @@ func TestSharedWindowKickStartsAsATabOnTheLiveBrowser(t *testing.T) {
 	if got := len(h.windowList()); got != 1 {
 		t.Fatalf("enabling kick must NOT launch a second chrome: %d windows", got)
 	}
-	if n := len(wins[0].extraTabs()); n != 1 {
-		t.Fatalf("enabling kick must open one tab on the live window, got %d", n)
+	if n := len(wins[0].platformTabs()); n != 2 {
+		t.Fatalf("enabling kick must open a second tab on the live window, got %d", n)
 	}
 	if !h.binder.isAttached(config.MainProfileName, domain.PlatformKick) {
 		t.Fatal("the kick tab runtime should be attached")
@@ -585,10 +596,10 @@ func TestSharedWindowKickStopClosesOnlyItsTab(t *testing.T) {
 	h.app.ReconcileSync()
 
 	wins := h.windowList()
-	if len(wins) != 1 || len(wins[0].extraTabs()) != 1 {
-		t.Fatalf("expected one window with one kick tab, got %d windows", len(wins))
+	if len(wins) != 1 || len(wins[0].platformTabs()) != 2 {
+		t.Fatalf("expected one window with a twitch and a kick tab, got %d windows", len(wins))
 	}
-	kickTab := wins[0].extraTabs()[0]
+	twitchTab, kickTab := wins[0].platformTabs()[0], wins[0].platformTabs()[1]
 
 	off := clone(cfg)
 	off.Profile(config.MainProfileName).Kick.Enabled = boolPtr(false)
@@ -603,7 +614,7 @@ func TestSharedWindowKickStopClosesOnlyItsTab(t *testing.T) {
 	if !kickTab.closed.Load() {
 		t.Fatal("stopping kick must close its tab")
 	}
-	if wins[0].owner.closed.Load() {
+	if twitchTab.closed.Load() {
 		t.Fatal("stopping kick must leave the twitch tab running")
 	}
 	if !h.binder.isAttached(config.MainProfileName, domain.PlatformTwitch) {
@@ -618,7 +629,7 @@ func TestSharedWindowKickStopClosesOnlyItsTab(t *testing.T) {
 	if got := len(h.windowList()); got != 1 {
 		t.Fatalf("re-enabling kick must reuse the live window: %d windows", got)
 	}
-	if n := len(wins[0].extraTabs()); n != 2 {
+	if n := len(wins[0].platformTabs()); n != 3 {
 		t.Fatalf("re-enabling kick should have opened one more tab, got %d", n)
 	}
 }
@@ -699,6 +710,11 @@ func TestSharedModeKickNeedsLoginOnItsFirstStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Chrome opens for a first-run platform only via an explicit Log in: bring
+	// Kick up in login mode (Twitch keeps the seedWatchAll watch default so the
+	// shared window exists for Kick's tab to attach to).
+	h.app.setIntent(config.MainProfileName, domain.PlatformKick, intentLogin)
+
 	h.app.ReconcileSync()
 	h.binder.mu.Lock()
 	first := h.binder.needsLogin[pair{config.MainProfileName, domain.PlatformKick}]
@@ -735,9 +751,11 @@ func TestSharedModeKickNeedsLoginOnItsFirstStart(t *testing.T) {
 		t.Fatal("an unanswered prompt must survive a runtime restart")
 	}
 
-	// Answering it (login-check success or a manual Start) persists the ack;
-	// only then does a restart stop re-prompting.
+	// Answering it (login-check success or a manual Start) persists the ack and
+	// flips the intent to watch, exactly as WatcherService.Start does; only then
+	// does a restart stop re-prompting.
 	h.app.MarkSessionReady(config.MainProfileName, domain.PlatformKick)
+	h.app.setIntent(config.MainProfileName, domain.PlatformKick, intentWatch)
 	restartKick()
 	h.binder.mu.Lock()
 	third := h.binder.needsLogin[pair{config.MainProfileName, domain.PlatformKick}]
@@ -795,5 +813,111 @@ func TestPausedConfigDisablesEnabledOnStart(t *testing.T) {
 	}
 	if !cfg.Watcher.EnabledOnStart {
 		t.Fatal("pausedConfig must not mutate the caller's config")
+	}
+}
+
+// ---- run intent: Chrome launches only when a watcher (or login) is wanted ----
+
+// TestBootGateSkipsFreshProfile is the core of the launch-only-when-watching
+// rule: a fresh (never-logged-in) profile must NOT open Chrome at boot even
+// though it is enabled and enabled_on_start defaults on. Starting it by hand
+// launches it, and stopping it closes the window.
+func TestBootGateSkipsFreshProfile(t *testing.T) {
+	cfg := testConfig(t, config.MainProfileName)
+	h := newHarness(t, cfg)
+	h.app.seedWatchAll = false // exercise the real boot policy, not the seam
+
+	h.app.ReconcileSync()
+	if got := h.startCount(config.MainProfileName, domain.PlatformTwitch); got != 0 {
+		t.Fatalf("a fresh profile must not auto-launch Chrome at boot, got %d starts", got)
+	}
+	if !h.app.NeedsLogin(config.MainProfileName, domain.PlatformTwitch) {
+		t.Fatal("a fresh profile must report needsLogin so the dashboard can offer Log in")
+	}
+
+	// The user presses Start: launch now.
+	h.app.setIntent(config.MainProfileName, domain.PlatformTwitch, intentWatch)
+	h.app.ReconcileSync()
+	if got := h.startCount(config.MainProfileName, domain.PlatformTwitch); got != 1 {
+		t.Fatalf("Start must launch the runtime, got %d starts", got)
+	}
+	if !h.binder.isAttached(config.MainProfileName, domain.PlatformTwitch) {
+		t.Fatal("a started runtime must be attached")
+	}
+
+	// Stop closes the window: no watcher, no Chrome.
+	sess := h.sessionFor(config.MainProfileName, domain.PlatformTwitch)
+	h.app.setIntent(config.MainProfileName, domain.PlatformTwitch, intentOff)
+	h.app.ReconcileSync()
+	if h.binder.isAttached(config.MainProfileName, domain.PlatformTwitch) {
+		t.Fatal("Stop must detach the runtime")
+	}
+	if sess == nil || !sess.closed.Load() {
+		t.Fatal("Stop must close the browser")
+	}
+}
+
+// TestBootGateHonoursEnabledOnStart confirms the other half: a logged-in
+// platform whose config enables it on start DOES auto-launch at boot, while one
+// with enabled_on_start off stays dark until Start.
+func TestBootGateHonoursEnabledOnStart(t *testing.T) {
+	cfg := testConfig(t, config.MainProfileName)
+	h := newHarness(t, cfg)
+	h.app.seedWatchAll = false
+
+	// Make the profile look logged in (a used chrome dir), so first-run login is
+	// not what is gating the launch - enabled_on_start is.
+	paths, err := cfg.ProfilePaths(config.MainProfileName)
+	if err != nil {
+		t.Fatalf("ProfilePaths: %v", err)
+	}
+	if err := os.MkdirAll(paths.ChromeProfile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(paths.ChromeProfile, "Local State"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// enabled_on_start off: no launch.
+	off := clone(cfg)
+	off.Watcher.EnabledOnStart = false
+	h.setConfig(off)
+	h.app.ReconcileSync()
+	if got := h.startCount(config.MainProfileName, domain.PlatformTwitch); got != 0 {
+		t.Fatalf("enabled_on_start off must not auto-launch, got %d", got)
+	}
+
+	// A fresh app with enabled_on_start on and a logged-in dir DOES launch.
+	h2 := newHarness(t, cfg)
+	h2.app.seedWatchAll = false
+	paths2, _ := h2.app.Config().ProfilePaths(config.MainProfileName)
+	_ = os.MkdirAll(paths2.ChromeProfile, 0o700)
+	_ = os.WriteFile(filepath.Join(paths2.ChromeProfile, "Local State"), []byte("{}"), 0o600)
+	h2.app.ReconcileSync()
+	if got := h2.startCount(config.MainProfileName, domain.PlatformTwitch); got != 1 {
+		t.Fatalf("logged-in + enabled_on_start must auto-launch at boot, got %d", got)
+	}
+}
+
+// TestStartWatchingUnpausesInPlace verifies a login-mode window that is already
+// up is unpaused in place when the user finishes logging in and presses Start -
+// no churn of the browser.
+func TestStartWatchingUnpausesInPlace(t *testing.T) {
+	cfg := testConfig(t, config.MainProfileName)
+	h := newHarness(t, cfg)
+	h.app.seedWatchAll = false
+
+	h.app.setIntent(config.MainProfileName, domain.PlatformTwitch, intentLogin)
+	h.app.ReconcileSync()
+	if got := h.startCount(config.MainProfileName, domain.PlatformTwitch); got != 1 {
+		t.Fatalf("Log in must launch the login-mode window, got %d", got)
+	}
+
+	h.app.StartWatching(config.MainProfileName, domain.PlatformTwitch)
+	if got := h.startCount(config.MainProfileName, domain.PlatformTwitch); got != 1 {
+		t.Fatalf("starting an already-up login-mode runtime must not relaunch, got %d", got)
+	}
+	if !h.binder.isAttached(config.MainProfileName, domain.PlatformTwitch) {
+		t.Fatal("the runtime must stay attached across an in-place start")
 	}
 }

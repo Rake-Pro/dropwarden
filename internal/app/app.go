@@ -107,6 +107,18 @@ type App struct {
 	// for, in the order they came up. Read it via ProfileList under the lock.
 	Profiles []*ProfileRuntime
 
+	// intents is the desired RUN state per (profile, platform): whether its
+	// Chrome should be up, and if so whether it is watching or parked on the
+	// login page. An absent entry has never been seeded; reconcileOnce fills the
+	// boot default. A user Start/Stop/Login overwrites it live. Guarded by mu.
+	intents map[intentKey]runIntent
+
+	// seedWatchAll makes seedIntent default every enabled platform to watch,
+	// short-circuiting the enabled-on-start + first-run-login policy. It is a
+	// test seam so the reconcile-mechanics tests can exercise launch/stop plumbing
+	// without staging logged-in Chrome dirs; production leaves it false.
+	seedWatchAll bool
+
 	// cfgMu guards desired, the config the reconciler works from.
 	cfgMu   sync.RWMutex
 	desired *config.Config
@@ -155,7 +167,7 @@ func Open(opts Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{Cfg: cfg, ConfigPath: path, Log: logger, desired: cfg}
+	a := &App{Cfg: cfg, ConfigPath: path, Log: logger, desired: cfg, intents: map[intentKey]runIntent{}}
 	for _, p := range cfg.Profiles {
 		if !p.Enabled {
 			continue
@@ -470,7 +482,7 @@ func (a *App) ensureProfileGroup(ctx context.Context, pr *ProfileRuntime, pcfg *
 			return nil, err
 		}
 		if pcfg.Browser.Window.StartMinimized {
-			if err := host.Owner().SetMinimized(lctx, true); err != nil {
+			if err := host.SetMinimized(lctx, true); err != nil {
 				log.Warn().Err(err).Msg("app: minimize watcher window failed")
 			} else {
 				log.Info().Msg("app: watcher window minimized")
@@ -519,6 +531,11 @@ func (a *App) startTwitchRuntime(ctx context.Context, pr *ProfileRuntime, stagge
 	}
 	shared := a.sharedWindow()
 	needsLogin := platformFirstRun(dataDir, profileDir, domain.PlatformTwitch, shared)
+	if in, ok := a.intentOf(pr.Name, domain.PlatformTwitch); ok {
+		// The GUI drives login-vs-watch through the run intent; the filesystem
+		// first-run check is only the CLI's fallback, where nothing seeds one.
+		needsLogin = in == intentLogin
+	}
 	log := pr.Log.With().Str("platform", "twitch").Logger()
 
 	// initTab is what makes a raw tab Twitch-ready. The supervisor re-runs it on
@@ -618,7 +635,7 @@ func (a *App) startKickRuntime(ctx context.Context, pr *ProfileRuntime, stagger 
 	if err != nil {
 		return nil, err
 	}
-	_, profileDir, err := a.chromeDirs(pr.Name)
+	twitchDir, profileDir, err := a.chromeDirs(pr.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -628,6 +645,11 @@ func (a *App) startKickRuntime(ctx context.Context, pr *ProfileRuntime, stagger 
 	}
 	shared := a.sharedWindow()
 	needsLogin := platformFirstRun(dataDir, profileDir, domain.PlatformKick, shared)
+	if in, ok := a.intentOf(pr.Name, domain.PlatformKick); ok {
+		// The GUI drives login-vs-watch through the run intent; the filesystem
+		// first-run check is only the CLI's fallback, where nothing seeds one.
+		needsLogin = in == intentLogin
+	}
 	klog := pr.Log.With().Str("platform", "kick").Logger()
 
 	var (
@@ -636,15 +658,19 @@ func (a *App) startKickRuntime(ctx context.Context, pr *ProfileRuntime, stagger 
 		coord *browser.WindowCoordinator
 	)
 	if shared {
-		// Kick cannot own the shared window: Twitch does, and Twitch is always
-		// on by design. An absent group means the profile's browser is down, so
-		// fail and let the next reconcile pass retry once Twitch is back.
-		a.mu.Lock()
-		group, coord = pr.browser, pr.window
-		a.mu.Unlock()
-		if group == nil || group.Closed() {
-			return nil, fmt.Errorf("app: kick shares the profile's twitch chrome window, which is not up")
+		// The shared window is the PROFILE's one Chrome (Twitch's config and
+		// user-data dir - Kick rides the same session as a tab). It is
+		// reference-counted by its tabs, so Kick can bring it up itself when
+		// Twitch is not running rather than depend on Twitch having opened it.
+		pcfg, err := cfg.ProfileRuntimeConfig(pr.Name)
+		if err != nil {
+			return nil, err
 		}
+		g, w, err := a.ensureProfileGroup(ctx, pr, pcfg, twitchDir)
+		if err != nil {
+			return nil, fmt.Errorf("app: bring up the profile window for kick: %w", err)
+		}
+		group, coord = g, w
 		if sess, err = group.Session(ctx, string(domain.PlatformKick), nil); err != nil {
 			return nil, fmt.Errorf("app: open kick tab: %w", err)
 		}

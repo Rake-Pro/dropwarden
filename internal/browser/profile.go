@@ -48,6 +48,11 @@ func lockNames() []string {
 // probe that pid before deleting, so a genuinely live second instance is left
 // alone instead of being stomped.
 func clearStaleLock(dir string, logger zerolog.Logger) {
+	// A lock present at launch means the previous run died without cleaning up.
+	// On POSIX that Chrome may still be alive and holding the profile via its
+	// singleton, so reap it before removing the stale lock; on Windows the job
+	// object already guarantees it is gone (killLockOwner is a no-op there).
+	killLockOwner(dir, logger)
 	for _, name := range lockNames() {
 		path := filepath.Join(dir, name)
 		if _, err := os.Lstat(path); err != nil {

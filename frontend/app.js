@@ -78,16 +78,15 @@ function switchView(view) {
 // a "Greg - Twitch" prefix.
 function footRow(row, displayName, multiProfile, p) {
   const label = multiProfile ? `${displayName} - ${platLabel(p.platform)}` : platLabel(p.platform);
-  const twitchUp = !!(p._twitchUp);
   if (!p.up) {
-    // Enabling is live now, so a platform that is enabled but not up is either
-    // still launching or failed. Runtimes attach together: if Twitch is up but
-    // this platform is not, its launch failed rather than being merely slow.
-    return twitchUp ? row('off', label + ' failed to start') : row('warn', label + ': starting Chrome...');
+    // Chrome launches only while a watcher runs, so a down platform is stopped
+    // by design (Start closes/opens the window). Offer the login hint when it
+    // has never signed in.
+    return p.needsLogin ? row('warn', label + ' needs login') : row('off', label + ' stopped');
   }
   const st = p.status || {};
-  // A fresh Chrome profile has never been logged in: the engine is parked.
-  if (p.needsLogin) return row('warn', label + ' needs login');
+  // Up but never logged in: the window is parked on the login page.
+  if (p.needsLogin) return row('warn', label + ' logging in');
   if (st.paused) return row('warn', label + ' paused');
   return row('ok', label + ' running');
 }
@@ -104,9 +103,8 @@ async function renderFoot() {
   }
   let rows = '';
   for (const prof of profiles) {
-    const twitchUp = !!(prof.platforms && prof.platforms[0] && prof.platforms[0].up);
     for (const p of visiblePlatforms(prof.platforms)) {
-      rows += footRow(row, prof.displayName, multiProfile, { ...p, _twitchUp: twitchUp });
+      rows += footRow(row, prof.displayName, multiProfile, p);
     }
   }
   foot.innerHTML = rows || row('warn', 'No profiles configured');
@@ -136,9 +134,17 @@ function nowCardEl(p, multi, profile) {
   const disabled = api.offline ? 'disabled' : '';
   const volPct = Math.round(((cfg && cfg.volume) || 0.01) * 100);
 
+  // Chrome launches only while a watcher runs, so a down platform is stopped
+  // (Start opens the window, Stop closes it), not mid-launch.
+  const stopped = !p.up;
+
   let body;
-  if (!p.up) {
-    body = `<div class="empty">${platLabel(p.platform)} runtime is not running - it is starting Chrome, or the launch failed. Check the Debugging view and the log.</div>`;
+  if (stopped && p.needsLogin) {
+    body = `<div class="empty" style="text-align:left;padding:18px 2px">
+      <p style="margin:0 0 12px">${esc(platLabel(p.platform))} is not signed in yet. Open the login window, sign in, then press Start.</p>
+    </div>`;
+  } else if (stopped) {
+    body = `<div class="empty">Stopped. Press Start to launch Chrome and begin working the queue.</div>`;
   } else if (p.needsLogin) {
     // Mode-agnostic wording: in shared-window mode Kick is a TAB in Twitch's
     // window, so this must never promise a separate "new window" for Kick.
@@ -165,14 +171,28 @@ function nowCardEl(p, multi, profile) {
     body = `<div class="empty">Not watching. Press ${st.paused ? 'Resume' : 'Start'} to begin working the queue.</div>`;
   }
 
-  // A paused engine sits in waitIdle and never runs a requested discovery, so
-  // Refresh is disabled (not lying) until Resume.
-  const btns = !p.up ? '' : `<div class="foot-btns">
-    ${watching ? `<button class="btn" data-act="skip" ${disabled}>Skip drop</button>` : ''}
-    ${state === 'idle' ? `<button class="btn primary" data-act="start" ${disabled}>${st.paused && !p.needsLogin ? 'Resume' : 'Start'}</button>` : ''}
-    <button class="btn ghost" data-act="refresh" ${st.paused ? 'disabled title="paused — resume to refresh"' : disabled}>Refresh campaigns</button>
-    ${state !== 'idle' ? `<button class="btn ghost danger" data-act="stop" ${disabled}>Pause</button>` : ''}
-  </div>`;
+  // Down: Start launches the window (Log in opens it parked on the login page
+  // first, the one launch with no watcher). Up: Stop closes the window, and a
+  // paused engine can't run a requested discovery, so Refresh is disabled until
+  // Start.
+  let btns;
+  if (stopped && p.needsLogin) {
+    btns = `<div class="foot-btns">
+      <button class="btn primary" data-act="login" ${disabled}>Log in</button>
+      <button class="btn ghost" data-act="start" ${disabled}>Start anyway</button>
+    </div>`;
+  } else if (stopped) {
+    btns = `<div class="foot-btns">
+      <button class="btn primary" data-act="start" ${disabled}>Start</button>
+    </div>`;
+  } else {
+    btns = `<div class="foot-btns">
+      ${watching ? `<button class="btn" data-act="skip" ${disabled}>Skip drop</button>` : ''}
+      ${state === 'idle' ? `<button class="btn primary" data-act="start" ${disabled}>Start</button>` : ''}
+      <button class="btn ghost" data-act="refresh" ${st.paused ? 'disabled title="paused — start to refresh"' : disabled}>Refresh campaigns</button>
+      <button class="btn ghost danger" data-act="stop" ${disabled}>Stop</button>
+    </div>`;
+  }
 
   const card = el(`<div class="card now">
     <div class="head">
@@ -206,6 +226,7 @@ function nowCardEl(p, multi, profile) {
     const a = api.engine(p.platform, profile);
     try {
       if (act === 'start') await a.start();
+      if (act === 'login') await a.login();
       if (act === 'stop') await a.stop();
       if (act === 'skip') await a.skip();
       if (act === 'refresh') await a.refresh();
@@ -656,14 +677,13 @@ function arraysEqual(a, b) {
 
 // platformRuntimeStatus resolves one platform's live status for the Profiles
 // pane row, reusing the footer's enabled/up semantics (footRow above): a
-// disabled platform reads "stopped"; enabled but not up reads "failed" when
-// Twitch is already up on this profile (runtimes attach together, so a
-// platform still down while Twitch runs means its own launch failed) and
-// "starting" otherwise; needs login takes priority over a bare "running".
-function platformRuntimeStatus(p, twitchUp) {
+// disabled platform reads "stopped"; enabled but down reads "needs login" when
+// it has never signed in and "stopped" otherwise (Chrome launches only while a
+// watcher runs); an up window parked on the login page reads "logging in".
+function platformRuntimeStatus(p) {
   if (!p || !p.enabled) return { cls: 'off', label: 'stopped' };
-  if (!p.up) return twitchUp ? { cls: 'off', label: 'failed' } : { cls: 'warn', label: 'starting' };
-  if (p.needsLogin) return { cls: 'warn', label: 'needs login' };
+  if (!p.up) return p.needsLogin ? { cls: 'warn', label: 'needs login' } : { cls: 'off', label: 'stopped' };
+  if (p.needsLogin) return { cls: 'warn', label: 'logging in' };
   return { cls: 'ok', label: 'running' };
 }
 
@@ -697,8 +717,8 @@ function renderProfileRows(host) {
     const livePlats = profileLive[p.name] || [];
     const twitchLive = livePlats[0] || { enabled: p.enabled, up: false, needsLogin: false };
     const kickLive = livePlats[1] || { enabled: false, up: false, needsLogin: false };
-    const twStatus = platformRuntimeStatus(twitchLive, twitchLive.up);
-    const kStatus = platformRuntimeStatus(kickLive, twitchLive.up);
+    const twStatus = platformRuntimeStatus(twitchLive);
+    const kStatus = platformRuntimeStatus(kickLive);
     const showKick = kickLive.enabled || kickLive.up;
     const row = el(`<div class="row stacked">
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">

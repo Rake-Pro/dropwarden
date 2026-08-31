@@ -8,14 +8,18 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 )
 
-// launchChrome starts Chrome as an ordinary child process. This is the Linux
+// launchChrome starts Chrome as a child process in its OWN process group, so the
+// whole Chrome tree can be killed together on shutdown. This is the Linux
 // development path; the focus-stealing problem the Windows file solves does not
 // apply the same way here, and X11/Wayland window placement is left to the
-// --window-position flag.
+// --window-position flag. The process group plus the startup lock reap
+// (profile_posix.go) are the stand-in for the Windows kill-on-close job object.
 func launchChrome(path string, flags []string) (*launchedChrome, error) {
 	cmd := exec.Command(path, flags...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("browser: start chrome: %w", err)
 	}
@@ -24,6 +28,10 @@ func launchChrome(path string, flags []string) (*launchedChrome, error) {
 	kill := func() error {
 		var err error
 		once.Do(func() {
+			// Kill the process group (negative pid) so Chrome's helpers go too.
+			if pgid, perr := syscall.Getpgid(cmd.Process.Pid); perr == nil {
+				_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			}
 			if kerr := cmd.Process.Kill(); kerr != nil && !errors.Is(kerr, os.ErrProcessDone) {
 				err = fmt.Errorf("browser: kill chrome: %w", kerr)
 			}

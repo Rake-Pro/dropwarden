@@ -174,6 +174,55 @@ func (b *Backend) SetReconciler(r Reconciler) {
 	b.mu.Unlock()
 }
 
+func (b *Backend) reconciler() Reconciler {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.rec
+}
+
+// startWatching, stopWatching, and beginLogin drive the app's per-(profile,
+// platform) run intent: launching Chrome to watch, tearing it down, or bringing
+// it up parked on the login page. They go through the optional run-control
+// interface the reconciler (internal/app) implements; the CLI and the recording
+// fakes in tests do not, so the call is a no-op there.
+func (b *Backend) startWatching(profile string, plat domain.Platform) {
+	if c, ok := b.reconciler().(interface {
+		StartWatching(string, domain.Platform)
+	}); ok {
+		c.StartWatching(profile, plat)
+	}
+}
+
+func (b *Backend) stopWatching(profile string, plat domain.Platform) {
+	if c, ok := b.reconciler().(interface {
+		StopWatching(string, domain.Platform)
+	}); ok {
+		c.StopWatching(profile, plat)
+	}
+}
+
+func (b *Backend) beginLogin(profile string, plat domain.Platform) {
+	if c, ok := b.reconciler().(interface {
+		BeginLogin(string, domain.Platform)
+	}); ok {
+		c.BeginLogin(profile, plat)
+	}
+}
+
+// needsLoginDown reports whether a (profile, platform) still needs its first
+// login while its runtime is DOWN, read from the reconciler's on-disk first-run
+// markers. When a runtime is up the ProfileBackend flag is authoritative; this
+// fills the gap so the dashboard can offer a Log in button before any Chrome has
+// launched.
+func (b *Backend) needsLoginDown(profile string, plat domain.Platform) bool {
+	if q, ok := b.reconciler().(interface {
+		NeedsLogin(string, domain.Platform) bool
+	}); ok {
+		return q.NeedsLogin(profile, plat)
+	}
+	return false
+}
+
 // AddProfile registers a profile the reconciler has just opened a store for.
 func (b *Backend) AddProfile(name string, st *store.Store) {
 	b.mu.Lock()
@@ -496,7 +545,19 @@ func (s *WatcherService) Start(profile string, plat domain.Platform) error {
 		p.ClearNeedsLogin(plat)
 		s.b.markSessionReady(profile, plat)
 	}
-	return s.engineDo(profile, plat, func(e *watcher.Engine) { e.Start() })
+	// Chrome exists only while a watcher runs: launch the window if it is down,
+	// or unpause a login-mode window in place. The launch takes seconds, so this
+	// returns immediately and the UI polls /api/state to see the runtime appear.
+	s.b.startWatching(profile, plat)
+	return nil
+}
+
+// Login brings a (profile, platform) up parked on its login page so the user can
+// authenticate before any watching starts - the one time a window opens with no
+// watcher running.
+func (s *WatcherService) Login(profile string, plat domain.Platform) error {
+	s.b.beginLogin(profile, plat)
+	return nil
 }
 
 // LoginCheck probes whether one (profile, platform) session is authenticated.
@@ -535,7 +596,11 @@ func (s *WatcherService) LoginCheck(ctx context.Context, profile string, plat do
 }
 
 func (s *WatcherService) Stop(profile string, plat domain.Platform) error {
-	return s.engineDo(profile, plat, func(e *watcher.Engine) { e.Stop() })
+	// Stop closes the window entirely: with no watcher running there is no
+	// reason to keep Chrome up. A down runtime is already stopped, so this is a
+	// harmless no-op then.
+	s.b.stopWatching(profile, plat)
+	return nil
 }
 
 func (s *WatcherService) SkipCurrent(profile string, plat domain.Platform) error {

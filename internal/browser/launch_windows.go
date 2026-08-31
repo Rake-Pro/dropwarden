@@ -27,10 +27,58 @@ var (
 	procSetWindowPos             = user32.NewProc("SetWindowPos")
 )
 
+// jobObjectExtendedLimitInformation is the JobObjectInformationClass for
+// SetInformationJobObject (winnt.h JOBOBJECTINFOCLASS value 9); x/sys/windows
+// ships the struct but not this named constant.
+const jobObjectExtendedLimitInformation = 9
+
+var (
+	jobOnce   sync.Once
+	chromeJob windows.Handle
+	jobErr    error
+)
+
+// killOnCloseJob returns a process-wide job object whose members Windows kills
+// the instant the job handle closes - which the OS does automatically when
+// dropwarden exits for ANY reason: clean quit, panic, or an outright kill. Every
+// Chrome dropwarden launches joins it, so no watcher browser can outlive the app
+// as an orphan. Orphans are the whole problem: a leftover Chrome keeps the
+// exclusive profile's singleton lock, so the next launch is forwarded to the
+// dead instance (opening stray about:blank windows) and never gets its own
+// DevTools port. The handle is intentionally never closed for the app's
+// lifetime; process teardown closes it and triggers the kill.
+func killOnCloseJob() (windows.Handle, error) {
+	jobOnce.Do(func() {
+		h, err := windows.CreateJobObject(nil, nil)
+		if err != nil {
+			jobErr = fmt.Errorf("browser: create job object: %w", err)
+			return
+		}
+		info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{
+			BasicLimitInformation: windows.JOBOBJECT_BASIC_LIMIT_INFORMATION{
+				LimitFlags: windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+			},
+		}
+		if _, err := windows.SetInformationJobObject(h, jobObjectExtendedLimitInformation,
+			uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+			_ = windows.CloseHandle(h)
+			jobErr = fmt.Errorf("browser: set job kill-on-close: %w", err)
+			return
+		}
+		chromeJob = h
+	})
+	return chromeJob, jobErr
+}
+
 // launchChrome starts Chrome through CreateProcess rather than os/exec so the
 // STARTF_USESHOWWINDOW + SW_SHOWNOACTIVATE hint can be passed in the startup
 // info. That hint is what keeps the watcher window from stealing focus from
 // whatever the user is doing when dropwarden starts or restarts the browser.
+//
+// The process starts SUSPENDED so it can be joined to the kill-on-close job
+// (killOnCloseJob) before it runs a single instruction - a Chrome that never
+// executes outside the job can never spawn a child that escapes it. Once
+// assigned, the main thread is resumed.
 //
 // verify live: Chrome does not always honour the startup ShowWindow hint for
 // its first browser window. If it still activates on a real desktop, the
@@ -56,12 +104,26 @@ func launchChrome(path string, flags []string) (*launchedChrome, error) {
 	err = windows.CreateProcess(
 		appName, cmdLine,
 		nil, nil, false,
-		windows.CREATE_NEW_PROCESS_GROUP,
+		windows.CREATE_NEW_PROCESS_GROUP|windows.CREATE_SUSPENDED,
 		nil, nil,
 		&si, &pi,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("browser: create chrome process: %w", err)
+	}
+
+	// Join the kill-on-close job before resuming. Best effort: if the job could
+	// not be created, Chrome still runs - it just falls back to relying on the
+	// explicit Kill() and the startup stale-lock sweep instead of the OS.
+	if job, jerr := killOnCloseJob(); jerr == nil {
+		_ = windows.AssignProcessToJobObject(job, pi.Process)
+	}
+
+	if _, err := windows.ResumeThread(pi.Thread); err != nil {
+		_ = windows.TerminateProcess(pi.Process, 1)
+		_ = windows.CloseHandle(pi.Thread)
+		_ = windows.CloseHandle(pi.Process)
+		return nil, fmt.Errorf("browser: resume chrome: %w", err)
 	}
 	_ = windows.CloseHandle(pi.Thread)
 

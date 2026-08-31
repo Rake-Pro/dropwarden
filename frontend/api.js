@@ -152,6 +152,8 @@ export const api = {
     const base = `/api/engine/${encodeURIComponent(profile)}/${encodeURIComponent(platform)}`;
     return {
       start() { return post(`${base}/start`); },
+      // Launches the watcher window parked on the login page (no watcher yet).
+      login() { return post(`${base}/login`); },
       stop() { return post(`${base}/stop`); },
       skip() { return post(`${base}/skip`); },
       refresh() { return post(`${base}/refresh`); },

@@ -47,6 +47,79 @@ NOTES-twitch.md, NOTES-wails.md.
   log tail (in-memory ring buffer in `logging`), Copy log / Copy JSON, and the
   `capture_gql_bodies` dump toggle (writes `~/.dropwarden/debug/*.json`, no auth).
 
+## SESSION 2026-08-30: launch-on-demand + ref-counted window + orphan cleanup
+
+Debugged live on the user's Windows box (first Windows run of the multi-profile
+build). Three fixes, all in the working tree, COMMITTED this session.
+
+- SYMPTOM 1 "black Chrome, no Wails UI": the black window was the watcher Chrome
+  (dimmed via the burn-in overlay + dark emulation on a blank/login page), NOT
+  the dashboard - the dashboard was hidden in the tray because `ui.start_minimized`
+  was true. The deeper issue: Chrome launched on boot before the user had logged
+  in or configured anything.
+- SYMPTOM 2 "Log in opens 3 about:blank, DevToolsActivePort timeout": orphaned
+  Chrome from force-killed prior runs held the exclusive profile's singleton
+  lock, so each new launch was FORWARDED to the orphan (the stray about:blanks)
+  and exited without publishing a DevTools port. Root cause of the orphans:
+  nothing killed dropwarden's Chrome when the app died uncleanly.
+- SYMPTOM 3 "Kick Log in does nothing": shared-window coupling - Kick was a tab
+  in Twitch's window and the reconcile gate silently dropped Kick whenever
+  Twitch's window was down.
+
+LAUNCH ONLY WHEN A WATCHER RUNS (`internal/app/reconcile.go`,`app.go`;
+`internal/service/{services,httpapi}.go`; `frontend/{app.js,api.js}`). Chrome
+now exists for a (profile, platform) exactly when its intent is watch or login,
+never merely because it is enabled. A per-(profile, platform) run intent
+(off | watch | login) lives on `App.intents`, guarded by `App.mu`, seeded at
+boot: watch only when the platform is enabled-on-start AND already past its
+first login (read from the on-disk markers via `App.NeedsLogin`, no Chrome
+needed), otherwise off. Run-control seams `StartWatching` / `StopWatching` /
+`BeginLogin` set the intent and reconcile; the service layer reaches them
+through optional interfaces on the reconciler (same pattern as
+`markSessionReady`). `WatcherService.Start` launches (or unpauses an up
+login-mode window in place); `Stop` tears the window down (no watcher -> no
+Chrome); new `Login` brings the window up parked on the login page - the ONE
+launch with no watcher, because logging in needs the browser. The engine action
+route no longer requires a live engine for start/login/stop; only skip/refresh
+keep the "not running" error. `/api/state` reports `needsLogin` while a runtime
+is DOWN (via `Backend.needsLoginDown` -> `App.NeedsLogin`) so the dashboard can
+offer a Log in button before any Chrome exists. Frontend: a down+enabled
+platform shows Start (+ "Log in" / "Start anyway" when it has never signed in);
+Stop closes Chrome; the footer/profiles-pane status reads "stopped" / "needs
+login" / "logging in" instead of "starting/failed". Boot honors
+`enabled_on_start`: a logged-in platform with it on still auto-launches and
+watches. CLI path unchanged (no intents seeded -> filesystem first-run check is
+the fallback in `startTwitch/KickRuntime`).
+
+REFERENCE-COUNTED SHARED WINDOW (`internal/browser/group.go`,`instance.go`;
+`internal/app/app.go`,`reconcile.go`). Replaces the owner-tab model: the
+window's initial page is a KEEPER dropped (`Instance.CloseInitialTab`) once the
+first platform tab exists, every platform is an equal `NewTab`, and the window
+closes only when its LAST tab goes (`Group.CloseSession` counts remaining tabs).
+So stopping Twitch now leaves Kick running (and vice versa), and EITHER platform
+brings the profile window up - `startKickRuntime` calls `ensureProfileGroup`
+(with the Twitch profile dir/config the shared window uses) instead of erroring
+when Twitch is down, and the reconcile gate that dropped Kick without Twitch is
+gone. `WindowHost` changed: `Owner()` removed, `CloseInitialTab()` and window-
+level `SetMinimized()` added (launch-time minimize no longer needs an owner tab).
+`tab.Close`'s owner->instance.Close special-case is UNCHANGED (the separate-
+window Managed path still relies on it). Group/shared-window tests reworked to
+the ref-count model (`TestGroupWindowClosesOnlyWithLastTab` replaces the old
+owner-close test; fakes gained `CloseInitialTab`/`SetMinimized`).
+
+CLEAN UP AFTER ITSELF - CROSS-PLATFORM ORPHAN PREVENTION. Windows
+(`launch_windows.go`): every launched Chrome is created SUSPENDED, joined to a
+kill-on-close Job Object, then resumed - Windows kills the whole Chrome tree the
+instant dropwarden exits for any reason (clean, panic, force-kill), so no orphan
+can wedge the next launch. POSIX parity (`profile_posix.go`,`launch_darwin.go`,
+`launch_other.go`): a startup reap reads Chrome's `SingletonLock` symlink
+(`hostname-pid`) and kills a live orphan still holding the exclusive watcher
+profile before the stale lock is cleared, and Chrome is launched in its own
+process group and killed as a group on shutdown. `killLockOwner` is a no-op on
+Windows (the job object already guarantees it). `clearStaleLock` calls it first.
+Verified: darwin/linux/windows all cross-compile, `task check`-equivalent green.
+(Pre-fix Windows orphans are cleared once with `~/dropwarden/kill-orphans.ps1`.)
+
 ## ROADMAP - multi-profile + thin-client (decided 2026-08-30, NOT started)
 
 User decisions, locked: (1) MULTI-PROFILE inside ONE app instance - a profile
@@ -249,11 +322,11 @@ second instance.
   initialized` written when the runtime first comes up; Twitch (and either
   platform in separate mode) still keys on Chrome-dir freshness. `/api/state`
   `needsLogin` semantics are unchanged.
-- LIFECYCLE: in shared mode Twitch OWNS the window. Starting Kick on a live
-  profile opens a tab; stopping Kick closes only that tab; stopping Twitch (or
-  the profile) closes the whole browser, and Kick cannot run without it -
-  reconcile-level Twitch-only-off does not exist, since every enabled profile
-  always runs Twitch by design.
+- LIFECYCLE: SUPERSEDED 2026-08-30 by the reference-counted window (see the
+  SESSION 2026-08-30 block above). No platform owns the window now: starting
+  either opens a tab, stopping either closes only that tab, and the window closes
+  only when the last tab goes. Kick no longer depends on Twitch - either can
+  bring the profile window up.
 - TESTS: browser `TestWindowCoordinator*` (refcounted holds, activation only for
   the holding tab, single-tab windows never activate, start_minimized off skips
   window state, unregister releases the hold, activation error not fatal) and

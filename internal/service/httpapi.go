@@ -74,22 +74,44 @@ func NewHTTPHandler(b *Backend) http.Handler {
 			writeErr(w, fmt.Errorf("unknown platform %q", r.PathValue("platform")))
 			return
 		}
-		e := b.EngineFor(eff.Name, p)
-		if e == nil {
+		// start/login/stop drive the runtime lifecycle, so they must work with no
+		// engine up: start and login LAUNCH Chrome, and stop tears it down. Only
+		// skip and refresh need a live engine; they keep the richer down-reason.
+		enabled := eff.Enabled && (p != domain.PlatformKick || eff.KickEnabled)
+		needsEngine := func() bool {
+			if e := b.EngineFor(eff.Name, p); e != nil {
+				return true
+			}
 			writeErr(w, engineDownError(b, eff, p))
-			return
+			return false
 		}
 		// Routed through the service rather than the engine handle so "start"
 		// also answers the needs-login prompt (see WatcherService.Start).
 		var actErr error
 		switch r.PathValue("action") {
 		case "start":
+			if !enabled {
+				writeErr(w, engineDownError(b, eff, p))
+				return
+			}
 			actErr = watch.Start(eff.Name, p)
+		case "login":
+			if !enabled {
+				writeErr(w, engineDownError(b, eff, p))
+				return
+			}
+			actErr = watch.Login(eff.Name, p)
 		case "stop":
 			actErr = watch.Stop(eff.Name, p)
 		case "skip":
+			if !needsEngine() {
+				return
+			}
 			actErr = watch.SkipCurrent(eff.Name, p)
 		case "refresh":
+			if !needsEngine() {
+				return
+			}
 			actErr = watch.ForceRefresh(eff.Name, p)
 		default:
 			writeErr(w, fmt.Errorf("unknown action %q", r.PathValue("action")))
@@ -310,7 +332,7 @@ func profileStates(b *Backend, queue *QueueService, history *HistoryService) []m
 		pb := b.Profile(eff.Name)
 		entry := map[string]any{
 			"name": eff.Name, "displayName": eff.DisplayName, "enabled": eff.Enabled,
-			"platforms": platformStates(eff, pb),
+			"platforms": platformStates(b, eff, pb),
 			"queue":     []QueueItemDTO{},
 			"claims":    []ClaimDTO{},
 			"stats":     StatsDTO{OutcomeCounts: map[string]int{}, ByPlatform: map[string]PlatformTotalsDTO{}},
@@ -337,15 +359,24 @@ func profileStates(b *Backend, queue *QueueService, history *HistoryService) []m
 // says everything: enabled + up = running; enabled + not up = starting or
 // failed to start; not enabled = off. needsLogin marks a runtime that came up
 // against a fresh Chrome profile and is paused until the user logs in.
-func platformStates(eff *config.ProfileEffective, pb *ProfileBackend) []map[string]any {
+func platformStates(b *Backend, eff *config.ProfileEffective, pb *ProfileBackend) []map[string]any {
 	entry := func(p domain.Platform, enabled bool) map[string]any {
 		m := map[string]any{"platform": string(p), "enabled": enabled, "up": false, "needsLogin": false, "status": nil}
 		if pb != nil {
+			up := false
 			if e := pb.Engine(p); e != nil {
+				up = true
 				m["up"] = true
 				m["status"] = e.Status()
 			}
-			m["needsLogin"] = pb.NeedsLogin(p)
+			// While up the attached flag is authoritative (login mode vs
+			// watching); while down it is always false, so read the on-disk
+			// first-run state so the dashboard still knows to offer Log in.
+			if up {
+				m["needsLogin"] = pb.NeedsLogin(p)
+			} else if enabled {
+				m["needsLogin"] = b.needsLoginDown(eff.Name, p)
+			}
 		}
 		return m
 	}

@@ -100,11 +100,19 @@ func TestHTTPStateAndActions(t *testing.T) {
 		t.Fatalf("invalid priority should be 400, got %d", rr.Code)
 	}
 
-	// POST /api/engine/main/twitch/start with nil engine -> 400 "not running".
+	// POST /api/engine/main/twitch/start LAUNCHES the runtime, so it no longer
+	// needs a live engine: an enabled platform is accepted (200) and the
+	// reconciler brings Chrome up. Skip/refresh still need a live engine (below).
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/main/twitch/start", nil))
+	if rr.Code != 200 {
+		t.Fatalf("start on an enabled platform should be accepted (200), got %d %s", rr.Code, rr.Body.String())
+	}
+	// Skip on a down engine keeps the honest "not running" error.
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/main/twitch/skip", nil))
 	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "not running") {
-		t.Fatalf("start with nil engine should be 400 not-running, got %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("skip with nil engine should be 400 not-running, got %d %s", rr.Code, rr.Body.String())
 	}
 
 	// Kick disabled -> 400 with a settings hint; bogus profile/platform/action -> 400.
@@ -185,11 +193,18 @@ func TestHTTPStateListsUnstartedProfile(t *testing.T) {
 		}
 	}
 
-	// Engine actions against it are honest about needing a restart.
+	// Start LAUNCHES: on an added-but-unstarted profile it is accepted (200) and
+	// the reconciler opens the store and brings Chrome up. Skip, which needs a
+	// live engine, is the one that stays honest about the missing store.
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/greg/twitch/start", nil))
+	if rr.Code != 200 {
+		t.Fatalf("start on an added profile should be accepted (200), got %d %s", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/greg/twitch/skip", nil))
 	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "no store open") {
-		t.Fatalf("start on a profile with no store should be 400 and say so, got %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("skip on a profile with no store should be 400 and say so, got %d %s", rr.Code, rr.Body.String())
 	}
 
 	// A bad slug is rejected by the config validator and never reaches the live

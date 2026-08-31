@@ -3,6 +3,7 @@ package browser
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,12 +13,16 @@ import (
 )
 
 // fakeHost is a WindowHost that hands out stub tabs instead of launching Chrome.
+// The keeper (owner) holds the window open until the first platform tab is
+// created and then CloseInitialTab drops it; every platform tab is an equal
+// NewTab, matching the reference-counted group model.
 type fakeHost struct {
 	name string
 
-	mu    sync.Mutex
-	owner *stubSession
-	tabs  []*stubSession
+	mu        sync.Mutex
+	owner     *stubSession
+	keeperOut bool
+	tabs      []*stubSession
 
 	done      chan struct{}
 	closed    atomic.Bool
@@ -29,22 +34,33 @@ func newFakeHost(name string) *fakeHost {
 	return &fakeHost{name: name, owner: newStubSession(name + "-owner"), done: make(chan struct{})}
 }
 
-func (h *fakeHost) Owner() Session { return h.owner }
-
 func (h *fakeHost) NewTab(context.Context) (Session, error) {
 	if h.newTabErr != nil {
 		return nil, h.newTabErr
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	s := newStubSession(h.name + "-tab")
+	s := newStubSession(fmt.Sprintf("%s-tab%d", h.name, len(h.tabs)+1))
 	h.tabs = append(h.tabs, s)
 	return s, nil
 }
 
+// CloseInitialTab drops the keeper, leaving the window on its platform tabs.
+func (h *fakeHost) CloseInitialTab() {
+	h.mu.Lock()
+	h.keeperOut = true
+	h.mu.Unlock()
+	h.owner.closed.Store(true)
+}
+
+func (h *fakeHost) SetMinimized(context.Context, bool) error { return nil }
+
 func (h *fakeHost) Alive() bool               { return !h.closed.Load() }
 func (h *fakeHost) Done() <-chan struct{}     { return h.done }
 func (h *fakeHost) extraTabs() []*stubSession { h.mu.Lock(); defer h.mu.Unlock(); return h.tabs }
+
+// keeperDropped reports whether CloseInitialTab has run.
+func (h *fakeHost) keeperDropped() bool { h.mu.Lock(); defer h.mu.Unlock(); return h.keeperOut }
 
 // die simulates a CDP loss: the window is gone but nobody asked for it.
 func (h *fakeHost) die() { h.closed.Store(true); h.closeOnce.Do(func() { close(h.done) }) }
@@ -85,22 +101,26 @@ func TestGroupSecondPlatformGetsATabOnTheLiveWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("twitch session: %v", err)
 	}
-	if urlOf(t, tw) != "h1-owner" {
-		t.Fatalf("the first platform must adopt the window's own tab, got %q", urlOf(t, tw))
+	if urlOf(t, tw) != "h1-tab1" {
+		t.Fatalf("the first platform must get its own tab, got %q", urlOf(t, tw))
+	}
+	// The keeper is dropped once a platform tab holds the window open.
+	if !host.keeperDropped() {
+		t.Fatal("the first platform tab must drop the window's keeper page")
 	}
 
 	kk, err := g.Session(ctx, "kick", nil)
 	if err != nil {
 		t.Fatalf("kick session: %v", err)
 	}
-	if urlOf(t, kk) != "h1-tab" {
-		t.Fatalf("the second platform must get a new tab, got %q", urlOf(t, kk))
+	if urlOf(t, kk) != "h1-tab2" {
+		t.Fatalf("the second platform must get its own new tab, got %q", urlOf(t, kk))
 	}
 	if launches != 1 {
 		t.Fatalf("a second platform must not relaunch chrome: %d launches", launches)
 	}
-	if n := len(host.extraTabs()); n != 1 {
-		t.Fatalf("expected exactly one extra tab, got %d", n)
+	if n := len(host.extraTabs()); n != 2 {
+		t.Fatalf("two platforms must be two tabs, got %d", n)
 	}
 
 	// Asking again returns the same handle instead of opening a duplicate tab.
@@ -108,7 +128,7 @@ func TestGroupSecondPlatformGetsATabOnTheLiveWindow(t *testing.T) {
 	if err != nil || again != kk {
 		t.Fatalf("re-requesting a live platform must reuse its handle (%v)", err)
 	}
-	if n := len(host.extraTabs()); n != 1 {
+	if n := len(host.extraTabs()); n != 2 {
 		t.Fatalf("re-requesting a live platform must not open a tab, got %d", n)
 	}
 }
@@ -121,6 +141,7 @@ func TestGroupCloseSessionDropsOnlyThatTab(t *testing.T) {
 
 	tw, _ := g.Session(ctx, "twitch", nil)
 	_, _ = g.Session(ctx, "kick", nil)
+	twTab, kkTab := host.extraTabs()[0], host.extraTabs()[1]
 
 	if err := g.CloseSession("kick"); err != nil {
 		t.Fatalf("close kick: %v", err)
@@ -128,10 +149,10 @@ func TestGroupCloseSessionDropsOnlyThatTab(t *testing.T) {
 	if host.closed.Load() {
 		t.Fatal("stopping kick must not close the shared window")
 	}
-	if !host.extraTabs()[0].closed.Load() {
+	if !kkTab.closed.Load() {
 		t.Fatal("stopping kick must close its tab")
 	}
-	if !tw.Alive() {
+	if twTab.closed.Load() || !tw.Alive() {
 		t.Fatal("stopping kick must leave the twitch session running")
 	}
 
@@ -139,30 +160,46 @@ func TestGroupCloseSessionDropsOnlyThatTab(t *testing.T) {
 	if _, err := g.Session(ctx, "kick", nil); err != nil {
 		t.Fatalf("restarting kick on a live window: %v", err)
 	}
-	if n := len(host.extraTabs()); n != 2 {
+	if n := len(host.extraTabs()); n != 3 {
 		t.Fatalf("restarting kick should open one more tab, got %d", n)
 	}
 }
 
-func TestGroupClosingTheOwnerClosesTheWindow(t *testing.T) {
+// TestGroupWindowClosesOnlyWithLastTab is the point of the reference-counted
+// window: stopping either platform closes just its tab and leaves the sibling
+// (and the window) running; only closing the LAST tab tears the window down.
+func TestGroupWindowClosesOnlyWithLastTab(t *testing.T) {
 	ctx := context.Background()
 	host := newFakeHost("h1")
 	g, _ := NewGroup(ctx, func(context.Context) (WindowHost, error) { return host, nil }, zerolog.Nop())
 
 	_, _ = g.Session(ctx, "twitch", nil)
-	_, _ = g.Session(ctx, "kick", nil)
+	kk, _ := g.Session(ctx, "kick", nil)
+	twTab := host.extraTabs()[0]
 
+	// Stop Twitch first: the window and Kick must survive.
 	if err := g.CloseSession("twitch"); err != nil {
 		t.Fatalf("close twitch: %v", err)
 	}
+	if host.closed.Load() || g.Closed() {
+		t.Fatal("stopping one of two platforms must not close the shared window")
+	}
+	if !twTab.closed.Load() {
+		t.Fatal("stopping twitch must close its tab")
+	}
+	if !kk.Alive() {
+		t.Fatal("kick must keep running after twitch stops")
+	}
+
+	// Stop the last platform: now the window goes.
+	if err := g.CloseSession("kick"); err != nil {
+		t.Fatalf("close kick: %v", err)
+	}
 	if !host.closed.Load() {
-		t.Fatal("twitch owns the shared window: stopping it must close the browser")
+		t.Fatal("closing the last tab must close the window")
 	}
 	if !g.Closed() {
-		t.Fatal("the group must be closed for good once its window is gone")
-	}
-	if !host.extraTabs()[0].closed.Load() {
-		t.Fatal("kick cannot outlive the window it was a tab in")
+		t.Fatal("the group must be closed for good once its last tab is gone")
 	}
 }
 
@@ -200,15 +237,19 @@ func TestGroupRelaunchRebuildsEveryTabAndItsInit(t *testing.T) {
 		t.Fatalf("a relaunch must re-run every tab's init (capture shims): twitch=%d kick=%d",
 			twInits.Load(), kkInits.Load())
 	}
-	// Both stable handles must now point at the REBUILT window's tabs.
-	if got := urlOf(t, tw); got != "h2-owner" {
+	// Both stable handles must now point at the REBUILT window's tabs, recreated
+	// as equal tabs in registration order (twitch first, then kick).
+	if got := urlOf(t, tw); got != "h2-tab1" {
 		t.Fatalf("twitch handle not swapped to the rebuilt window: %q", got)
 	}
-	if got := urlOf(t, kk); got != "h2-tab" {
+	if got := urlOf(t, kk); got != "h2-tab2" {
 		t.Fatalf("kick handle not swapped to the rebuilt window: %q", got)
 	}
-	if n := len(h2.extraTabs()); n != 1 {
-		t.Fatalf("the rebuilt window should carry exactly one extra tab, got %d", n)
+	if n := len(h2.extraTabs()); n != 2 {
+		t.Fatalf("the rebuilt window should carry both platform tabs, got %d", n)
+	}
+	if !h2.keeperDropped() {
+		t.Fatal("the rebuilt window must drop its keeper once tabs are restored")
 	}
 }
 

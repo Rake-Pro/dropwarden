@@ -99,8 +99,21 @@ func TestWatcherServiceNilEngine(t *testing.T) {
 	if ws.Status(config.MainProfileName, domain.PlatformTwitch).State != "idle" {
 		t.Fatal("nil engine should report idle")
 	}
-	if err := ws.Start(config.MainProfileName, domain.PlatformTwitch); err == nil {
-		t.Fatal("start with nil engine should error")
+	// Start/Stop/Login are lifecycle intents handed to the reconciler, not
+	// engine calls: with none wired (this test backend) they are accepted
+	// no-ops rather than errors - the runtime is what launches.
+	if err := ws.Start(config.MainProfileName, domain.PlatformTwitch); err != nil {
+		t.Fatalf("start should be accepted without a reconciler: %v", err)
+	}
+	if err := ws.Stop(config.MainProfileName, domain.PlatformTwitch); err != nil {
+		t.Fatalf("stop should be accepted without a reconciler: %v", err)
+	}
+	if err := ws.Login(config.MainProfileName, domain.PlatformTwitch); err != nil {
+		t.Fatalf("login should be accepted without a reconciler: %v", err)
+	}
+	// Skip still operates on a live engine, so it stays honest when there is none.
+	if err := ws.SkipCurrent(config.MainProfileName, domain.PlatformTwitch); err == nil {
+		t.Fatal("skip with nil engine should error")
 	}
 }
 

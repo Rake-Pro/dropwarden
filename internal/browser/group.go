@@ -15,15 +15,21 @@ import (
 // a relaunched browser comes back with the same shims installed.
 type TabInit func(ctx context.Context, s Session) error
 
-// WindowHost is everything a Group needs from a Chrome window: its owner tab,
-// extra tabs, liveness, and a signal for when it died. *Instance is the real
-// implementation; tests substitute a fake so the shared-window lifecycle can be
-// exercised without launching Chrome.
+// WindowHost is everything a Group needs from a Chrome window: a keeper tab that
+// holds the window open, per-platform tabs, liveness, and a signal for when it
+// died. *Instance is the real implementation; tests substitute a fake so the
+// shared-window lifecycle can be exercised without launching Chrome.
 type WindowHost interface {
-	// Owner returns the tab the window was opened on.
-	Owner() Session
-	// NewTab opens an additional tab in the same window.
+	// NewTab opens a tab in the window.
 	NewTab(ctx context.Context) (Session, error)
+	// CloseInitialTab closes the page the window was opened on (the keeper), once
+	// a real platform tab exists to hold the window open. It is what lets every
+	// platform be an equal tab: no single platform "owns" the window, so any one
+	// can be stopped without taking the others down.
+	CloseInitialTab()
+	// SetMinimized minimizes or restores the whole window, used at launch to
+	// apply the start-minimized policy before any platform tab exists.
+	SetMinimized(ctx context.Context, v bool) error
 	// Alive reports whether the window is still up.
 	Alive() bool
 	// Done is closed when the window dies (crash, kill, or Close).
@@ -55,9 +61,8 @@ type Group struct {
 // groupSlot is one platform's registration in the group: the stable handle its
 // engine holds, plus what the rebuild needs to recreate its tab.
 type groupSlot struct {
-	sess  *Managed
-	init  TabInit
-	owner bool
+	sess *Managed
+	init TabInit
 }
 
 // NewGroup launches the shared Chrome and starts supervising it. launch must
@@ -74,30 +79,26 @@ func NewGroup(ctx context.Context, launch func(ctx context.Context) (WindowHost,
 }
 
 // Session returns the stable handle for key, opening its tab on the live browser
-// the first time it is asked for. The FIRST key to register adopts the
-// instance's own page and becomes the owner: closing it closes the window.
-// Calling it again for a key already up returns the existing handle, so a
-// reconcile pass never opens a duplicate tab.
+// the first time it is asked for. Every platform gets its own equal tab; the
+// window's initial keeper page is dropped once the first platform tab exists, so
+// no platform owns the window and any one can be stopped on its own. Calling it
+// again for a key already up returns the existing handle, so a reconcile pass
+// never opens a duplicate tab.
 func (g *Group) Session(ctx context.Context, key string, init TabInit) (Session, error) {
 	g.mu.Lock()
 	if s := g.slots[key]; s != nil {
 		g.mu.Unlock()
 		return s.sess, nil
 	}
-	inst, owner := g.inst, len(g.order) == 0
+	inst, first := g.inst, len(g.order) == 0
 	g.mu.Unlock()
 
 	if g.closed.Load() || inst == nil || !inst.Alive() {
 		return nil, fmt.Errorf("browser: shared chrome window is not running")
 	}
 
-	var (
-		t   Session
-		err error
-	)
-	if owner {
-		t = inst.Owner()
-	} else if t, err = inst.NewTab(ctx); err != nil {
+	t, err := inst.NewTab(ctx)
+	if err != nil {
 		return nil, err
 	}
 	if init != nil {
@@ -106,19 +107,25 @@ func (g *Group) Session(ctx context.Context, key string, init TabInit) (Session,
 		}
 	}
 
-	slot := &groupSlot{sess: NewSwappable(t, g.logger.With().Str("tab", key).Logger()), init: init, owner: owner}
+	slot := &groupSlot{sess: NewSwappable(t, g.logger.With().Str("tab", key).Logger()), init: init}
 	g.mu.Lock()
 	g.slots[key] = slot
 	g.order = append(g.order, key)
 	g.mu.Unlock()
-	g.logger.Info().Str("tab", key).Bool("owner", owner).Msg("browser: platform tab attached to the shared window")
+	// The keeper only existed to hold the window open until a platform tab did;
+	// drop it now that one has, so the window has just platform tabs.
+	if first {
+		inst.CloseInitialTab()
+	}
+	g.logger.Info().Str("tab", key).Msg("browser: platform tab attached to the shared window")
 	return slot.sess, nil
 }
 
-// CloseSession drops one platform's tab. Closing the OWNER's (Twitch's) closes
-// the whole instance: the owner tab is the window, so the platforms sharing it
-// cannot outlive it. Any other key closes just that tab, leaving the window and
-// its siblings running.
+// CloseSession drops one platform's tab. The window is reference-counted by its
+// tabs: closing any one platform closes just that tab and leaves the window and
+// its siblings running, and only closing the LAST tab tears the whole window
+// down. That is what lets a profile keep Kick watching after Twitch is stopped
+// (and vice versa).
 func (g *Group) CloseSession(key string) error {
 	g.mu.Lock()
 	slot := g.slots[key]
@@ -134,9 +141,10 @@ func (g *Group) CloseSession(key string) error {
 		}
 	}
 	g.order = out
+	remaining := len(g.order)
 	g.mu.Unlock()
 
-	if slot.owner {
+	if remaining == 0 {
 		return g.Close()
 	}
 	g.logger.Info().Str("tab", key).Msg("browser: closing one platform tab in the shared window")
@@ -212,11 +220,9 @@ func (g *Group) rebuild(ctx context.Context) (WindowHost, error) {
 	g.mu.Unlock()
 
 	rebuilt := make(map[string]Session, len(order))
-	for i, k := range order {
-		var t Session
-		if i == 0 {
-			t = inst.Owner()
-		} else if t, err = inst.NewTab(ctx); err != nil {
+	for _, k := range order {
+		t, err := inst.NewTab(ctx)
+		if err != nil {
 			_ = inst.Close()
 			return nil, fmt.Errorf("browser: rebuild tab %s: %w", k, err)
 		}
@@ -226,6 +232,11 @@ func (g *Group) rebuild(ctx context.Context) (WindowHost, error) {
 			}
 		}
 		rebuilt[k] = t
+	}
+	// Every registered platform now has an equal tab, so the fresh window's
+	// keeper page can go too - matching the live layout the reconciler expects.
+	if len(order) > 0 {
+		inst.CloseInitialTab()
 	}
 
 	g.mu.Lock()

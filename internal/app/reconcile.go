@@ -25,6 +25,143 @@ var platformStopOrder = []domain.Platform{domain.PlatformKick, domain.PlatformTw
 // profile toggle forever.
 const engineStopTimeout = 10 * time.Second
 
+// runIntent is the desired lifecycle of one (profile, platform). Chrome exists
+// only for a runtime whose intent is not off: launching a browser nobody is
+// watching (or logging into) is pointless, so the reconciler brings a window up
+// exactly when the intent asks for one and tears it down the moment it does not.
+type runIntent int
+
+const (
+	intentOff   runIntent = iota // no Chrome, no engine
+	intentWatch                  // Chrome up, engine watching the queue
+	intentLogin                  // Chrome up on the login page, engine parked
+)
+
+// intentKey identifies one (profile, platform) intent. The platform is always
+// normalized through OrTwitch so an empty platform never forks a second entry.
+type intentKey struct {
+	profile string
+	plat    domain.Platform
+}
+
+// intentOf returns the recorded intent for a (profile, platform) and whether one
+// has been seeded yet.
+func (a *App) intentOf(profile string, plat domain.Platform) (runIntent, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	in, ok := a.intents[intentKey{profile, plat.OrTwitch()}]
+	return in, ok
+}
+
+// setIntent records a (profile, platform) intent. Callers reconcile afterwards.
+func (a *App) setIntent(profile string, plat domain.Platform, in runIntent) {
+	a.mu.Lock()
+	if a.intents == nil {
+		a.intents = map[intentKey]runIntent{}
+	}
+	a.intents[intentKey{profile, plat.OrTwitch()}] = in
+	a.mu.Unlock()
+}
+
+// StartWatching intends a (profile, platform) to watch. If its runtime is
+// already up (a login-mode window the user just finished logging into) the
+// engine is unpaused in place; otherwise the reconciler launches its Chrome. It
+// is the run-control seam the service layer drives from the dashboard.
+func (a *App) StartWatching(profile string, plat domain.Platform) {
+	a.setIntent(profile, plat, intentWatch)
+	a.mu.Lock()
+	pr := a.profileLocked(profile)
+	var rt *PlatformRuntime
+	if pr != nil {
+		rt = pr.platform(plat)
+	}
+	a.mu.Unlock()
+	if rt != nil && rt.Engine != nil {
+		// Already up (login mode, or a redundant Start): unpause in place rather
+		// than churn the window. The engine's discovery navigates off the login
+		// page on its own.
+		rt.Engine.Start()
+		return
+	}
+	a.Reconcile(nil)
+}
+
+// StopWatching intends a (profile, platform) to stop. Chrome exists only while a
+// watcher runs, so the reconcile pass this triggers tears the window down.
+func (a *App) StopWatching(profile string, plat domain.Platform) {
+	a.setIntent(profile, plat, intentOff)
+	a.Reconcile(nil)
+}
+
+// BeginLogin intends a (profile, platform) to come up parked on its login page:
+// the one time a window opens with no watcher running, because logging in needs
+// the browser. A no-op when the runtime is already up (the user has a window to
+// log into already).
+func (a *App) BeginLogin(profile string, plat domain.Platform) {
+	a.setIntent(profile, plat, intentLogin)
+	a.mu.Lock()
+	pr := a.profileLocked(profile)
+	up := pr != nil && pr.platform(plat) != nil
+	a.mu.Unlock()
+	if up {
+		return
+	}
+	a.Reconcile(nil)
+}
+
+// NeedsLogin reports whether a (profile, platform) still needs its first manual
+// login, read from the on-disk first-run markers so it is known even while the
+// runtime is down (nothing has launched Chrome). It seeds the boot intent and
+// tells the dashboard when to offer a Log in button.
+func (a *App) NeedsLogin(profile string, plat domain.Platform) bool {
+	dataDir, err := a.profileDataDir(profile)
+	if err != nil {
+		return false
+	}
+	twitchDir, kickDir, err := a.chromeDirs(profile)
+	if err != nil {
+		return false
+	}
+	chromeDir := twitchDir
+	if plat.OrTwitch() == domain.PlatformKick {
+		chromeDir = kickDir
+	}
+	return platformFirstRun(dataDir, chromeDir, plat, a.sharedWindow())
+}
+
+// enabledOnStart reads a (profile, platform)'s enabled-on-start preference from
+// the right derived runtime config (Kick runs on its own).
+func (a *App) enabledOnStart(cfg *config.Config, profile string, plat domain.Platform) bool {
+	if plat.OrTwitch() == domain.PlatformKick {
+		kcfg, err := cfg.ProfileKickRuntimeConfig(profile)
+		if err != nil {
+			return false
+		}
+		return kcfg.Watcher.EnabledOnStart
+	}
+	pcfg, err := cfg.ProfileRuntimeConfig(profile)
+	if err != nil {
+		return false
+	}
+	return pcfg.Watcher.EnabledOnStart
+}
+
+// seedIntent returns a (profile, platform)'s intent, defaulting one the first
+// time it is seen: watch when it is set to enable on start and is already past
+// its first login, otherwise off. A user Start/Stop/Login recorded later always
+// wins, because a seeded entry is never overwritten here.
+func (a *App) seedIntent(cfg *config.Config, profile string, plat domain.Platform) runIntent {
+	if in, ok := a.intentOf(profile, plat); ok {
+		return in
+	}
+	in := intentOff
+	if a.seedWatchAll || (a.enabledOnStart(cfg, profile, plat) && !a.NeedsLogin(profile, plat)) {
+		in = intentWatch
+	}
+	a.setIntent(profile, plat, in)
+	return in
+}
+
 // Binder receives runtime handles as (profile, platform) runtimes come up and
 // go down, so the service layer's view of the world follows the reconciler.
 // It is an interface here so internal/app never imports internal/service.
@@ -108,6 +245,10 @@ func (a *App) reconcileOnce() {
 		return // app shutting down
 	}
 
+	// desired holds only the platforms something INTENDS to run (watch or
+	// login): Chrome comes up for those and no others. A merely-enabled platform
+	// with intent off keeps its store and its dashboard slot but launches no
+	// browser.
 	desired := map[string][]domain.Platform{}
 	var order []string
 	configured := map[string]bool{}
@@ -117,12 +258,23 @@ func (a *App) reconcileOnce() {
 		if err != nil || !eff.Enabled {
 			continue
 		}
+		order = append(order, eff.Name)
 		plats := []domain.Platform{domain.PlatformTwitch}
 		if eff.KickEnabled {
 			plats = append(plats, domain.PlatformKick)
 		}
-		desired[eff.Name] = plats
-		order = append(order, eff.Name)
+		var run []domain.Platform
+		for _, plat := range plats {
+			if a.seedIntent(cfg, eff.Name, plat) != intentOff {
+				run = append(run, plat)
+			}
+		}
+		// The profile's shared window is reference-counted by its tabs and either
+		// platform can bring it up, so Kick no longer depends on Twitch running:
+		// every platform something intends to run gets launched.
+		if len(run) > 0 {
+			desired[eff.Name] = run
+		}
 	}
 
 	a.mu.Lock()

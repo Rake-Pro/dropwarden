@@ -274,6 +274,46 @@ func (in *Instance) NewTab(ctx context.Context) (Session, error) {
 	return t, nil
 }
 
+// CloseInitialTab closes the page Chrome opened at launch (the owner/keeper),
+// leaving the window running on the tabs opened since. It is a no-op once the
+// keeper is gone. The caller must have opened at least one other tab first, or
+// closing the last page would close the whole window.
+func (in *Instance) CloseInitialTab() {
+	in.mu.Lock()
+	keeper := in.owner
+	in.owner = nil
+	in.mu.Unlock()
+	if keeper == nil {
+		return
+	}
+	keeper.closing.Store(true)
+	keeper.alive.Store(false)
+	in.forget(keeper)
+	if _, err := (proto.TargetCloseTarget{TargetID: keeper.page.TargetID}).Call(in.browser); err != nil {
+		in.logger.Debug().Err(err).Msg("browser: close keeper tab")
+	}
+	keeper.closeEvents()
+}
+
+// SetMinimized minimizes or restores the whole Chrome window through any live
+// tab (the keeper at launch, or a platform tab afterwards). Window bounds are a
+// window property, so which tab drives the call does not matter.
+func (in *Instance) SetMinimized(ctx context.Context, v bool) error {
+	in.mu.Lock()
+	t := in.owner
+	if t == nil {
+		for _, any := range in.tabs {
+			t = any
+			break
+		}
+	}
+	in.mu.Unlock()
+	if t == nil {
+		return fmt.Errorf("browser: no tab to minimize the window through")
+	}
+	return t.SetMinimized(ctx, v)
+}
+
 // Done is closed when the CDP transport is gone (Chrome died, crashed, or was
 // closed). A supervisor waits on it to rebuild the instance and its tabs.
 func (in *Instance) Done() <-chan struct{} { return in.done }
