@@ -209,6 +209,19 @@ func (b *Backend) beginLogin(profile string, plat domain.Platform) {
 	}
 }
 
+// wantsRun reports whether a (profile, platform) has a live run intent while
+// its runtime is down: the UI renders "launching (or failed - see Debugging)"
+// instead of a plain "stopped" the user never asked for. False when no
+// reconciler is wired (CLI, tests).
+func (b *Backend) wantsRun(profile string, plat domain.Platform) bool {
+	if q, ok := b.reconciler().(interface {
+		WantsRun(string, domain.Platform) bool
+	}); ok {
+		return q.WantsRun(profile, plat)
+	}
+	return false
+}
+
 // needsLoginDown reports whether a (profile, platform) still needs its first
 // login while its runtime is DOWN, read from the reconciler's on-disk first-run
 // markers. When a runtime is up the ProfileBackend flag is authoritative; this

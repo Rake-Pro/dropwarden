@@ -3,7 +3,9 @@
 package browser
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -48,10 +50,34 @@ func killLockOwner(dir string, logger zerolog.Logger) {
 	if err := proc.Signal(syscall.Signal(0)); err != nil {
 		return // stale pid: the plain lock removal will clear the symlink
 	}
+	// A stale lock's pid can have been REUSED by an unrelated process (the lock
+	// file survives a reboot; pids do not). Killing a process group on the
+	// say-so of a stale file must never hit an innocent, so only a process that
+	// actually looks like Chrome is reaped; anything else is left alone and the
+	// plain lock removal below unwedges the launch.
+	if !processLooksLikeChrome(pid) {
+		logger.Warn().Int("pid", pid).Msg("stale profile lock names a live pid that is not chrome; leaving it alone")
+		return
+	}
 	logger.Warn().Int("pid", pid).Msg("killing orphaned chrome that still holds the watcher profile lock")
 	if pgid, perr := syscall.Getpgid(pid); perr == nil {
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 		return
 	}
 	_ = proc.Kill()
+}
+
+// processLooksLikeChrome reports whether a pid's command looks like a
+// Chrome/Chromium. Linux answers from /proc, macOS from ps; unknown = false
+// (when in doubt, do not kill). A browser.chrome_path pointing at some other
+// Chromium-family binary just skips the reap - the safe direction.
+func processLooksLikeChrome(pid int) bool {
+	if b, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid)); err == nil {
+		return strings.Contains(strings.ToLower(string(b)), "chrom")
+	}
+	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(string(out)), "chrom")
 }

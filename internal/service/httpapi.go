@@ -361,7 +361,7 @@ func profileStates(b *Backend, queue *QueueService, history *HistoryService) []m
 // against a fresh Chrome profile and is paused until the user logs in.
 func platformStates(b *Backend, eff *config.ProfileEffective, pb *ProfileBackend) []map[string]any {
 	entry := func(p domain.Platform, enabled bool) map[string]any {
-		m := map[string]any{"platform": string(p), "enabled": enabled, "up": false, "needsLogin": false, "status": nil}
+		m := map[string]any{"platform": string(p), "enabled": enabled, "up": false, "needsLogin": false, "wanted": false, "status": nil}
 		if pb != nil {
 			up := false
 			if e := pb.Engine(p); e != nil {
@@ -376,6 +376,10 @@ func platformStates(b *Backend, eff *config.ProfileEffective, pb *ProfileBackend
 				m["needsLogin"] = pb.NeedsLogin(p)
 			} else if enabled {
 				m["needsLogin"] = b.needsLoginDown(eff.Name, p)
+				// wanted only matters while down: a live run intent with no
+				// runtime up means Chrome is launching or its launch failed,
+				// which must not render as a plain user-chosen "stopped".
+				m["wanted"] = b.wantsRun(eff.Name, p)
 			}
 		}
 		return m

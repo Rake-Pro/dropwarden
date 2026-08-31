@@ -129,6 +129,15 @@ func (a *App) NeedsLogin(profile string, plat domain.Platform) bool {
 	return platformFirstRun(dataDir, chromeDir, plat, a.sharedWindow())
 }
 
+// WantsRun reports whether a (profile, platform) has a live run intent (watch
+// or login). The UI reads it to tell "launching, or its launch failed - see
+// Debugging" apart from plain stopped while the runtime is down: without it a
+// failed launch would render as an innocuous 'stopped' the user never asked for.
+func (a *App) WantsRun(profile string, plat domain.Platform) bool {
+	in, ok := a.intentOf(profile, plat)
+	return ok && in != intentOff
+}
+
 // enabledOnStart reads a (profile, platform)'s enabled-on-start preference from
 // the right derived runtime config (Kick runs on its own).
 func (a *App) enabledOnStart(cfg *config.Config, profile string, plat domain.Platform) bool {

@@ -124,7 +124,7 @@ logging:
   capture_gql_bodies: false    # debug only: writes raw GQL JSON next to the log
 
 ui:
-  start_minimized: true
+  start_minimized: false   # true = start hidden in the tray (the dashboard window can always be opened from the tray icon)
   show_debug_pane: false
 `
 

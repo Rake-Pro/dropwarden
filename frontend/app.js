@@ -80,8 +80,10 @@ function footRow(row, displayName, multiProfile, p) {
   const label = multiProfile ? `${displayName} - ${platLabel(p.platform)}` : platLabel(p.platform);
   if (!p.up) {
     // Chrome launches only while a watcher runs, so a down platform is stopped
-    // by design (Start closes/opens the window). Offer the login hint when it
-    // has never signed in.
+    // by design (Start closes/opens the window) - unless a run intent is live,
+    // in which case it is launching or its launch failed. Offer the login hint
+    // when it has never signed in.
+    if (p.wanted) return row('warn', label + ': launching (check Debugging if stuck)');
     return p.needsLogin ? row('warn', label + ' needs login') : row('off', label + ' stopped');
   }
   const st = p.status || {};
@@ -143,6 +145,8 @@ function nowCardEl(p, multi, profile) {
     body = `<div class="empty" style="text-align:left;padding:18px 2px">
       <p style="margin:0 0 12px">${esc(platLabel(p.platform))} is not signed in yet. Open the login window, sign in, then press Start.</p>
     </div>`;
+  } else if (stopped && p.wanted) {
+    body = `<div class="empty">Launching Chrome... if this persists, the launch failed - check the Debugging view and the log.</div>`;
   } else if (stopped) {
     body = `<div class="empty">Stopped. Press Start to launch Chrome and begin working the queue.</div>`;
   } else if (p.needsLogin) {
@@ -682,7 +686,10 @@ function arraysEqual(a, b) {
 // watcher runs); an up window parked on the login page reads "logging in".
 function platformRuntimeStatus(p) {
   if (!p || !p.enabled) return { cls: 'off', label: 'stopped' };
-  if (!p.up) return p.needsLogin ? { cls: 'warn', label: 'needs login' } : { cls: 'off', label: 'stopped' };
+  if (!p.up) {
+    if (p.wanted) return { cls: 'warn', label: 'launching' };
+    return p.needsLogin ? { cls: 'warn', label: 'needs login' } : { cls: 'off', label: 'stopped' };
+  }
   if (p.needsLogin) return { cls: 'warn', label: 'logging in' };
   return { cls: 'ok', label: 'running' };
 }
@@ -853,7 +860,7 @@ async function addProfileFlow(host) {
   try {
     await api.addProfile(name, dispInp.value.trim());
     if (msg) {
-      msg.textContent = "Profile added - its watcher window is opening. Log in to Twitch (and Kick if enabled) there, then press Start on the dashboard.";
+      msg.textContent = "Profile added. Chrome only opens on demand now: press Log in on its dashboard card to open the login window, sign in, then Start.";
       msg.style.color = 'var(--ok)';
     }
     nameInp.value = ''; dispInp.value = '';
