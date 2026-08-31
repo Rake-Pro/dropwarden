@@ -54,7 +54,15 @@ const jsHealthProbe = `(() => {
     const a = raid.querySelector("a[href^='/']");
     if (a) raidTarget = a.getAttribute('href').replace(/^\//,'').split(/[/?#]/)[0].toLowerCase();
   }
-  const drops = !!q("[data-test-selector='drops-campaign-details'], .drops-campaign-callout, button[aria-label*='Drops'], [data-a-target='drops-in-chat']");
+  // Advisory only (see watcher validation): element selectors first, then the
+  // stream-tag row scanned by TEXT, because the "Drops Enabled" tag has no
+  // stable data attribute. // verify live: 2026-08-31 the element selectors
+  // matched nothing on healthy drops channels.
+  let drops = !!q("[data-test-selector='drops-campaign-details'], .drops-campaign-callout, button[aria-label*='Drops'], [data-a-target='drops-in-chat']");
+  if (!drops) {
+    const tags = document.querySelectorAll("a[href*='/tags/'], [data-a-target='stream-tag'], button[data-a-target='tag'], .tw-tag");
+    for (const t of tags) { if (/drops/i.test(t.textContent || '')) { drops = true; break; } }
+  }
   return {
     pathname: location.pathname,
     readyState: v ? v.readyState : 0,

@@ -27,7 +27,16 @@ func (e *Engine) runOpening(ctx context.Context) (State, string) {
 	return StateValidating, "opened " + e.cur.login
 }
 
-// runValidating enforces the six-point playback checklist within the configured
+// validationPass is the playback gate: path, playing, volume, and time
+// advancing. The drops indicator is deliberately NOT part of it - it is
+// advisory (a stale DOM selector must never block watching; server-side
+// progress plus the stall ladder are the real crediting check). Pinned by
+// TestValidationPassIgnoresDropsIndicator.
+func validationPass(pathOK, playing, volOK, advancing bool) bool {
+	return pathOK && playing && volOK && advancing
+}
+
+// runValidating enforces the playback checklist within the configured
 // timeout. It is also re-run after every hard refresh.
 func (e *Engine) runValidating(ctx context.Context) (State, string) {
 	if e.cur == nil {
@@ -98,7 +107,18 @@ func (e *Engine) runValidating(ctx context.Context) (State, string) {
 				Msg("validating: first probe")
 		}
 
-		if pathOK && playing && volOK && advancing && h.DropsIndicator {
+		if validationPass(pathOK, playing, volOK, advancing) {
+			// The drops indicator is ADVISORY, not a gate (live finding
+			// 2026-08-31: healthy playback on every channel with the indicator
+			// selector matching nothing, so requiring it wedged validation into
+			// a reselect loop). The authoritative "is this crediting" signal is
+			// server-side progress, which the watch phase already enforces via
+			// the stall ladder and the credited-elsewhere handling; a stale DOM
+			// selector must never be able to block watching.
+			if !h.DropsIndicator {
+				e.deps.Log.Info().Str("login", e.cur.login).
+					Msg("validating: drops indicator not detected (selector may be stale); relying on server-side progress")
+			}
 			return e.beginWatching(ctx)
 		}
 	}

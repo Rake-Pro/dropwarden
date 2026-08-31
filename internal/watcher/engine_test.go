@@ -547,3 +547,19 @@ func TestMaxSessionTargetFuzzedOncePerSession(t *testing.T) {
 		t.Fatalf("maxSessionAt changed on re-entry: got %s want %s", e.cur.maxSessionAt, want)
 	}
 }
+
+func TestValidationPassIgnoresDropsIndicator(t *testing.T) {
+	// Live finding 2026-08-31: every healthy channel failed validation solely
+	// on drops_indicator=false (stale selector), wedging a reselect loop. The
+	// indicator must stay advisory: playback health alone passes the gate.
+	if !validationPass(true, true, true, true) {
+		t.Fatal("healthy playback must pass validation regardless of the drops indicator")
+	}
+	for i := 0; i < 4; i++ {
+		gates := []bool{true, true, true, true}
+		gates[i] = false
+		if validationPass(gates[0], gates[1], gates[2], gates[3]) {
+			t.Fatalf("gate %d false must fail validation", i)
+		}
+	}
+}
