@@ -88,6 +88,27 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 		invRows = len(inv)
 		ps = append(ps, inv...)
 	}
+	// Diagnostics: does the drop we are ACTUALLY watching for appear in the
+	// rows Twitch returned, and with what minutes? inventory_rows>0 while
+	// session_found=false and minutes=0 means the replay works but Twitch is
+	// crediting nothing for THIS drop - the question is whether our drop is
+	// even in the set (wrong campaign selected) or present-but-frozen (Twitch
+	// not registering the view, the minimized-tab-heartbeat suspect).
+	activeInRows, activeRowMinutes := false, -1
+	for _, p := range ps {
+		if p.DropID == e.cur.drop.ID {
+			activeInRows = true
+			activeRowMinutes, _ = p.Effective()
+			break
+		}
+	}
+	// Tab visibility at poll time: Twitch stops minute-watched heartbeats for a
+	// hidden tab, so a "hidden" here while progress stays 0 points straight at
+	// the re-minimize after validation. One extra probe/min is cheap.
+	visibility := ""
+	if h, err := e.probe(ctx); err == nil {
+		visibility = h.Visibility
+	}
 	minutes, increased = e.cur.lastMinutes, false
 	if len(ps) > 0 {
 		minutes, increased = e.applyProgress(ps)
@@ -98,6 +119,8 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 	// gate breakdown fixed.
 	e.deps.Log.Info().Bool("session_found", sessionFound).Str("session_channel", sessionChannel).
 		Int("session_minutes", sessionMinutes).Int("inventory_rows", invRows).
+		Str("active_drop", e.cur.drop.ID).Bool("active_in_rows", activeInRows).
+		Int("active_row_minutes", activeRowMinutes).Str("visibility", visibility).
 		Int("minutes", minutes).Bool("increased", increased).
 		Msg("progress poll")
 	return minutes, increased
