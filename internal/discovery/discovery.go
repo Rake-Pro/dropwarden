@@ -155,6 +155,20 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 // returns the number of campaigns whose details were fetched and stored, and
 // the number of per-drop progress rows saved alongside them (including
 // already-claimed drops, so the next eligibility check excludes them).
+// claimStateSynced reports whether we have captured per-drop claim/progress
+// state for a campaign: true once at least one of its drops has a progress row
+// (the details fetch records one per drop that carries a self field). A campaign
+// detailed by an older build - whose details query never requested self{isClaimed}
+// - has none, so it is treated as unsynced and re-detailed once to heal.
+func (d *Discoverer) claimStateSynced(c *domain.Campaign) bool {
+	for _, drop := range c.Drops {
+		if p, err := d.store.GetProgress(drop.ID); err == nil && p != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign) (details, progress int) {
 	limit := d.cfg.Discovery.DetailsPerCycle
 	if limit <= 0 {
@@ -169,11 +183,18 @@ func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign)
 		}
 		matched++
 		// Skip only when we already have COMPLETE details: drops, a game slug
-		// (needed for any-channel directory lookups), and the account-connected
-		// signal. A campaign missing any of those was left incomplete (e.g. a row
-		// written before that field existed), so re-fetch it.
+		// (needed for any-channel directory lookups), the account-connected
+		// signal, AND at least one drop's claim/progress state recorded. The
+		// last check is what heals a store detailed by an older build whose
+		// details query did not carry self{isClaimed}: such a campaign has no
+		// progress rows, so it is re-detailed once to capture claim state (the
+		// details fetch now writes a progress row for every drop with a self
+		// field, so after one re-fetch it is synced and skipped thereafter).
+		// Without this, an already-detailed campaign of claimed drops would be
+		// selected forever, earning nothing (live 2026-08-31).
 		if existing, err := d.store.GetCampaign(c.ID); err == nil && existing != nil &&
-			len(existing.Drops) > 0 && existing.GameSlug != "" && existing.AccountConnected != nil {
+			len(existing.Drops) > 0 && existing.GameSlug != "" && existing.AccountConnected != nil &&
+			d.claimStateSynced(existing) {
 			complete++
 			continue
 		}
