@@ -150,7 +150,24 @@ type BrowserConfig struct {
 	Window     WindowConfig `yaml:"window"`
 	Burnin     BurninConfig `yaml:"burnin"`
 	Player     PlayerConfig `yaml:"player"`
+
+	// SeparateWindow is read ONLY from the kick block
+	// (kick.browser.separate_window); see KickSeparateWindow. It is declared
+	// here because the kick block reuses this whole struct.
+	SeparateWindow bool `yaml:"separate_window,omitempty"`
 }
+
+// KickSeparateWindow reports whether Kick gets its OWN Chrome instance (its own
+// user-data dir and window) instead of a TAB in the profile's Twitch window.
+//
+// Default false = SHARED: one Chrome per profile, so four people running both
+// platforms cost four windows instead of eight. Setting
+// kick.browser.separate_window: true restores the legacy two-instance layout,
+// kept as the fallback if background-tab playback proves unreliable live.
+//
+// It is a LAUNCH setting: a change reaches a runtime on its next launch
+// (runtime toggle, crash relaunch, or app restart).
+func (c *Config) KickSeparateWindow() bool { return c.Kick.Browser.SeparateWindow }
 
 type WindowConfig struct {
 	Width          int  `yaml:"width"`

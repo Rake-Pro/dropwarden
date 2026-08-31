@@ -74,11 +74,20 @@ browser:
     reassert_interval: 30s
 
 kick:
-  enabled: false               # parallel Kick drops runtime (its own Chrome instance + engine)
+  enabled: false               # parallel Kick drops runtime (its own engine)
   browser:
-    profile_dir: ""            # blank = <approot>/chrome-profile-kick (never shared with Twitch)
+    # separate_window false (default) = SHARED WINDOW: Kick runs as a TAB in
+    # this profile's Twitch Chrome window, so one profile costs ONE Chrome
+    # instead of two (4 people x 2 platforms = 4 windows, not 8). The
+    # profile_dir and window settings below are then UNUSED, and Kick must be
+    # logged in ONCE in that shared window - an existing chrome-profile-kick
+    # login does NOT carry over, so the first shared start reports needsLogin.
+    # true restores the legacy layout: a second Chrome instance with its own
+    # profile dir and window. It is a launch setting (next launch to apply).
+    separate_window: false
+    profile_dir: ""            # separate_window only; blank = <approot>/chrome-profile-kick
     mute_audio: false
-    window:
+    window:                    # separate_window only
       width: 640
       height: 400
       # x/y omitted: computed from platform + profile window_slot, offset so

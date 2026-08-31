@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/rake-pro/dropwarden/internal/config"
 )
@@ -32,16 +33,15 @@ func (s *SettingsService) Save(dto ConfigDTO) error {
 
 // AddProfile appends a new profile and creates its data directories. The name
 // is validated by the config validator (lowercase slug, unique) on the copy, so
-// a bad name never reaches the live config or the filesystem. The new profile's
-// runtime starts on the next app start.
+// a bad name never reaches the live config or the filesystem. The directories
+// are created BEFORE the commit, because the commit reconciles the new
+// profile's runtime up immediately and its Chrome needs somewhere to live.
 func (s *SettingsService) AddProfile(name, displayName string) error {
 	cp := s.copyConfig()
 	cp.Profiles = append(cp.Profiles, config.ProfileConfig{Name: name, DisplayName: displayName, Enabled: true})
 	if err := config.Save(s.b.ConfigPath, cp); err != nil {
 		return err
 	}
-	s.commit(cp)
-
 	paths, err := cp.ProfilePaths(name)
 	if err != nil {
 		return err
@@ -51,11 +51,13 @@ func (s *SettingsService) AddProfile(name, displayName string) error {
 			return fmt.Errorf("create profile dir %s: %w", d, err)
 		}
 	}
+	s.commit(cp)
 	return nil
 }
 
-// SetProfileEnabled turns a profile on or off. Like kick.enabled it takes
-// effect on the next app start; /api/state reports pendingRestart until then.
+// SetProfileEnabled turns a profile on or off. It takes effect immediately: the
+// commit reconciles the profile's runtimes up or down. Disabling keeps the
+// profile's store open so the UI can still show its queue and history.
 func (s *SettingsService) SetProfileEnabled(name string, on bool) error {
 	cp := s.copyConfig()
 	p := cp.Profile(name)
@@ -68,6 +70,38 @@ func (s *SettingsService) SetProfileEnabled(name string, on bool) error {
 	}
 	s.commit(cp)
 	return nil
+}
+
+// RemoveProfile drops a profile from the config and returns its data
+// directory. The commit reconciles its runtimes down and closes its store; the
+// DIRECTORY IS NEVER DELETED, so the caller can tell the user where their
+// queue, history, and Chrome logins are still sitting. Removing the last
+// remaining profile is refused: the app has nothing to run without one.
+func (s *SettingsService) RemoveProfile(name string) (string, error) {
+	cp := s.copyConfig()
+	if cp.Profile(name) == nil {
+		return "", fmt.Errorf("unknown profile %q", name)
+	}
+	if len(cp.Profiles) <= 1 {
+		return "", fmt.Errorf("cannot remove %q: it is the only profile - add another one first", name)
+	}
+	paths, err := cp.ProfilePaths(name)
+	if err != nil {
+		return "", err
+	}
+	dataDir := filepath.Dir(paths.DB)
+	out := make([]config.ProfileConfig, 0, len(cp.Profiles)-1)
+	for _, p := range cp.Profiles {
+		if p.Name != name {
+			out = append(out, p)
+		}
+	}
+	cp.Profiles = out
+	if err := config.Save(s.b.ConfigPath, cp); err != nil {
+		return "", err
+	}
+	s.commit(cp)
+	return dataDir, nil
 }
 
 // Profiles returns every profile's editable overlay for the Profiles settings
@@ -98,8 +132,9 @@ func (s *SettingsService) Profiles() []ProfileDTO {
 
 // UpdateProfile saves one profile's editable overlay: display name, kick
 // on/off, and the games filter (or inherit-the-shared-list when inheritGames
-// is true). Like AddProfile, it validates on a copy before committing; kick
-// changes take effect on the next restart like kick.enabled elsewhere.
+// is true). Like AddProfile, it validates on a copy before committing; a kick
+// change takes effect immediately (the commit reconciles that runtime up or
+// down).
 func (s *SettingsService) UpdateProfile(name, displayName string, kickEnabled bool, games []string, inheritGames bool) error {
 	cp := s.copyConfig()
 	p := cp.Profile(name)
@@ -140,13 +175,19 @@ func (s *SettingsService) copyConfig() *config.Config {
 	return &cp
 }
 
-// commit swaps the validated, persisted copy in as the live config and
-// hot-reloads the engines.
+// commit swaps the validated, persisted copy in as the live config, pushes the
+// new values into the engines that are already running, and reconciles the set
+// of running runtimes against it: an enabled profile, an added profile, or a
+// kick toggle starts or stops its runtime without an app restart.
 func (s *SettingsService) commit(cp *config.Config) {
 	s.b.mu.Lock()
 	s.b.cfg = cp
+	rec := s.b.rec
 	s.b.mu.Unlock()
 	s.b.ReloadEngines()
+	if rec != nil {
+		rec.Reconcile(cp)
+	}
 }
 
 // ResetDefaults restores factory defaults and returns them (not yet persisted;

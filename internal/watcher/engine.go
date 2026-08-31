@@ -41,6 +41,15 @@ type Discoverer interface {
 }
 
 // Deps are the engine's collaborators.
+// WindowHolder is the engine's view of the coordinator that owns its Chrome
+// window. Restore takes a refcounted hold (the window is visible and this
+// engine's tab is in front); Release drops it, and the window only tucks itself
+// away again when no other platform is still holding one.
+type WindowHolder interface {
+	Restore(ctx context.Context)
+	Release(ctx context.Context)
+}
+
 type Deps struct {
 	Store *store.Store
 	Ctrl  platform.Controller
@@ -59,6 +68,13 @@ type Deps struct {
 	Platform    domain.Platform
 	ChannelHost string
 	Profile     string
+
+	// Window is this engine's handle on the Chrome WINDOW its tab lives in
+	// (browser.WindowHandle). In the default shared-window layout that window
+	// is shared with the profile's other platform, so restores are refcounted
+	// and the holding tab is brought to the front. nil in tests and anywhere no
+	// coordinator was wired, which falls back to the direct minimize policy.
+	Window WindowHolder
 
 	// DiscoveryStagger delays the engine's FIRST discovery pass only (0 for
 	// the first engine started), so N profiles' engines do not all hit their

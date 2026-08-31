@@ -50,7 +50,7 @@ function profilePillBar(profiles, onPick) {
 }
 
 // visiblePlatforms/isMulti: a platform is shown when it is enabled OR its
-// engine is still running (disabled in settings but not yet restarted) — a
+// engine is still running (just disabled in settings, still winding down) - a
 // running engine must never lose its controls. Badges and per-platform
 // breakdowns appear only when more than one platform is visible.
 const visiblePlatforms = (plats) => (plats || []).filter(p => p.enabled || p.up);
@@ -80,15 +80,14 @@ function footRow(row, displayName, multiProfile, p) {
   const label = multiProfile ? `${displayName} - ${platLabel(p.platform)}` : platLabel(p.platform);
   const twitchUp = !!(p._twitchUp);
   if (!p.up) {
-    // Just toggled on in settings: the runtime follows on restart, nothing
-    // has failed.
-    if (p.pendingRestart) return row('warn', label + ' enabled — restart app');
-    // Runtimes attach together: if Twitch is up but this platform is not,
-    // its launch failed rather than being merely slow.
-    return twitchUp ? row('off', label + ' failed to start') : row('warn', label + ': starting Chrome…');
+    // Enabling is live now, so a platform that is enabled but not up is either
+    // still launching or failed. Runtimes attach together: if Twitch is up but
+    // this platform is not, its launch failed rather than being merely slow.
+    return twitchUp ? row('off', label + ' failed to start') : row('warn', label + ': starting Chrome...');
   }
   const st = p.status || {};
-  if (!p.enabled) return row('warn', label + ' runs until restart');
+  // A fresh Chrome profile has never been logged in: the engine is parked.
+  if (p.needsLogin) return row('warn', label + ' needs login');
   if (st.paused) return row('warn', label + ' paused');
   return row('ok', label + ' running');
 }
@@ -139,9 +138,15 @@ function nowCardEl(p, multi, profile) {
 
   let body;
   if (!p.up) {
-    body = p.pendingRestart
-      ? `<div class="empty">${platLabel(p.platform)} is enabled — restart the app to start its runtime.</div>`
-      : `<div class="empty">${platLabel(p.platform)} runtime is not running — check the Debugging view and the log.</div>`;
+    body = `<div class="empty">${platLabel(p.platform)} runtime is not running - it is starting Chrome, or the launch failed. Check the Debugging view and the log.</div>`;
+  } else if (p.needsLogin) {
+    // Mode-agnostic wording: in shared-window mode Kick is a TAB in Twitch's
+    // window, so this must never promise a separate "new window" for Kick.
+    body = `<div class="empty" style="text-align:left;padding:18px 2px">
+      <p style="margin:0 0 12px">Log in to ${esc(platLabel(p.platform))} in this profile's watcher window, then check.</p>
+      <button class="btn" data-act="check-login" ${disabled}>Check login</button>
+      <div class="login-msg" style="margin-top:10px;font-size:12px;min-height:1.2em"></div>
+    </div>`;
   } else if (watching) {
     body = `<div class="drop-row">
       <div class="lbl"><span class="name">${esc(st.dropName)}</span><span class="mins mono">${st.current} / ${st.required} min</span></div>
@@ -164,7 +169,7 @@ function nowCardEl(p, multi, profile) {
   // Refresh is disabled (not lying) until Resume.
   const btns = !p.up ? '' : `<div class="foot-btns">
     ${watching ? `<button class="btn" data-act="skip" ${disabled}>Skip drop</button>` : ''}
-    ${state === 'idle' ? `<button class="btn primary" data-act="start" ${disabled}>${st.paused ? 'Resume' : 'Start'}</button>` : ''}
+    ${state === 'idle' ? `<button class="btn primary" data-act="start" ${disabled}>${st.paused && !p.needsLogin ? 'Resume' : 'Start'}</button>` : ''}
     <button class="btn ghost" data-act="refresh" ${st.paused ? 'disabled title="paused — resume to refresh"' : disabled}>Refresh campaigns</button>
     ${state !== 'idle' ? `<button class="btn ghost danger" data-act="stop" ${disabled}>Pause</button>` : ''}
   </div>`;
@@ -174,7 +179,7 @@ function nowCardEl(p, multi, profile) {
       <div class="avatar">${esc((showChannel && st.channelLogin ? st.channelLogin : '--').slice(0, 2).toUpperCase())}</div>
       <div class="who">
         <div class="ch"><span class="nm">${esc(headName)}</span> ${badge} ${watching ? '<span class="live">LIVE</span>' : ''}</div>
-        <div class="game">${esc(st.game || '')}${p.up && !p.enabled ? ' · disabled in settings — runs until restart' : ''}</div>
+        <div class="game">${esc(st.game || '')}${p.up && !p.enabled ? ' · disabled in settings, stopping' : ''}</div>
       </div>
       <span class="pill ${esc(state)} ${busy ? 'busy' : ''}"><span class="d"></span> ${esc(cap(state === 'offline' ? 'not running' : state))}</span>
     </div>
@@ -182,8 +187,23 @@ function nowCardEl(p, multi, profile) {
     ${btns}
   </div>`);
   card.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', async () => {
-    const a = api.engine(p.platform, profile);
     const act = b.dataset.act;
+    if (act === 'check-login') {
+      const out = card.querySelector('.login-msg');
+      if (out) { out.textContent = 'Checking...'; out.style.color = 'var(--text-secondary)'; }
+      try {
+        const r = await api.loginCheck(profile, p.platform);
+        if (out) {
+          if (r.loggedIn === true) { out.textContent = 'Logged in - press Start below to begin.'; out.style.color = 'var(--ok)'; }
+          else if (r.loggedIn === false) { out.textContent = 'Not logged in yet - finish logging in and check again.'; out.style.color = 'var(--warn)'; }
+          else { out.textContent = `Can't auto-detect login for ${platLabel(p.platform)} - once you're logged in, press Start.`; out.style.color = 'var(--text-secondary)'; }
+        }
+      } catch (e) {
+        if (out) { out.textContent = 'Check failed: ' + (e.message || e); out.style.color = 'var(--err)'; }
+      }
+      return; // no engine action, and no re-render - keep the result visible
+    }
+    const a = api.engine(p.platform, profile);
     try {
       if (act === 'start') await a.start();
       if (act === 'stop') await a.stop();
@@ -234,8 +254,8 @@ function combineStats(profiles) {
 async function renderDashboard() {
   const state = await api.state();
   const allProfiles = state.profiles || [];
-  // Visible mirrors the platform rule: enabled, OR still running after a
-  // mid-session disable (a profile's engines only stop on restart).
+  // Visible mirrors the platform rule: enabled, OR still running while a
+  // just-disabled profile's engines wind down.
   const profiles = allProfiles.filter(p => p.enabled || (p.platforms || []).some(pl => pl.up));
   const multiProfile = profiles.length > 1;
 
@@ -474,7 +494,7 @@ async function renderSettings() {
   cfg = await loadCfg();
   const v = $('#v-settings');
   v.innerHTML = '';
-  v.append(el(`<div><h2 class="title">Settings</h2><p class="sub">Saved to config.yaml. Browser and platform changes prompt a restart.</p></div>`));
+  v.append(el(`<div><h2 class="title">Settings</h2><p class="sub">Saved to config.yaml. Platform and profile changes apply immediately; Chrome launch settings apply the next time that window opens.</p></div>`));
   const state = await api.state();
   const allProfiles = state.profiles || [];
   if (allProfiles.length > 1) {
@@ -502,7 +522,7 @@ function settingsPaneHTML() {
         <div class="row"><div class="lab"><div class="l">Allow GQL claim fallback</div><div class="h">Off by design — replaying the claim mutation has triggered bot blocks.</div></div><div class="ctl">${toggleHTML('allowGqlFallback', cfg.allowGqlFallback)}</div></div>
       </div></div>
       <div class="group"><div class="caption">Kick</div><div class="card">
-        <div class="row"><div class="lab"><div class="l">${pfBadge('kick')} Kick drops</div><div class="h">Runs a second dedicated Chrome and watcher engine in parallel with Twitch, sharing the game filter and queue. Needs an app restart.</div></div><div class="ctl">${toggleHTML('kickEnabled', cfg.kickEnabled)}</div></div>
+        <div class="row"><div class="lab"><div class="l">${pfBadge('kick')} Kick drops</div><div class="h">Runs a second dedicated Chrome and watcher engine in parallel with Twitch, sharing the game filter and queue. Starts and stops immediately.</div></div><div class="ctl">${toggleHTML('kickEnabled', cfg.kickEnabled)}</div></div>
         <div class="row"><div class="lab"><div class="l">First run</div><div class="h">Log in to Kick once in its own Chrome window; the profile keeps the session. Kick account links are only needed at claim time, so unlinked campaigns are still watched. Kick rewards expire if left unclaimed — watch the needs-attention banner.</div></div></div>
       </div></div>`;
     case 'player': return `
@@ -545,7 +565,9 @@ function renderSettingsContent() {
   // settingsPaneHTML()+Save/Discard wiring below entirely.
   if (settingsPane === 'profiles') {
     host.innerHTML = '<div class="empty">Loading profiles...</div>';
-    loadProfileEdits().then(() => { if (settingsPane === 'profiles') renderProfilesPane(host); });
+    Promise.all([loadProfileEdits(), loadProfileLive()]).then(() => {
+      if (settingsPane === 'profiles') renderProfilesPane(host);
+    });
     return;
   }
   host.innerHTML = settingsPaneHTML() +
@@ -602,17 +624,47 @@ function renderGamesCtl() {
 // ---- Settings > Profiles pane ----
 
 // profileEdits is a mutable CLONE of GET /api/profiles (the loadCfg pattern,
-// applied to profile overlays instead of the shared config); profilePending
-// mirrors GET /api/state's pendingRestart per profile so the enabled toggle's
-// restart copy stays honest in both directions.
+// applied to profile overlays instead of the shared config). Every toggle here
+// is live: saving one starts or stops that profile's runtimes, so there is no
+// pending-restart state to track. profileSnapshot is the UNTOUCHED copy taken
+// at the same time, kept so saveProfileEdits can tell which profiles actually
+// changed instead of re-sending every toggle for every profile.
 let profileEdits = null;
-let profilePending = {};
+let profileSnapshot = null;
+// profileLive maps profile name -> its live platforms array (from /api/state),
+// used only to render runtime status dots in the Profiles pane - separate from
+// profileEdits, which holds the editable overlay, not runtime state.
+let profileLive = {};
 
 async function loadProfileEdits() {
-  const [list, state] = await Promise.all([api.profileConfigs(), api.state()]);
-  profilePending = {};
-  (state.profiles || []).forEach(p => { profilePending[p.name] = !!p.pendingRestart; });
+  const list = await api.profileConfigs();
   profileEdits = (list || []).map(p => ({ ...p, games: [...(p.games || [])] }));
+  profileSnapshot = (list || []).map(p => ({ ...p, games: [...(p.games || [])] }));
+}
+
+async function loadProfileLive() {
+  const state = await api.state();
+  const live = {};
+  (state.profiles || []).forEach(p => { live[p.name] = p.platforms || []; });
+  profileLive = live;
+}
+
+function arraysEqual(a, b) {
+  a = a || []; b = b || [];
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+// platformRuntimeStatus resolves one platform's live status for the Profiles
+// pane row, reusing the footer's enabled/up semantics (footRow above): a
+// disabled platform reads "stopped"; enabled but not up reads "failed" when
+// Twitch is already up on this profile (runtimes attach together, so a
+// platform still down while Twitch runs means its own launch failed) and
+// "starting" otherwise; needs login takes priority over a bare "running".
+function platformRuntimeStatus(p, twitchUp) {
+  if (!p || !p.enabled) return { cls: 'off', label: 'stopped' };
+  if (!p.up) return twitchUp ? { cls: 'off', label: 'failed' } : { cls: 'warn', label: 'starting' };
+  if (p.needsLogin) return { cls: 'warn', label: 'needs login' };
+  return { cls: 'ok', label: 'running' };
 }
 
 function renderProfilesPane(host) {
@@ -620,7 +672,7 @@ function renderProfilesPane(host) {
     <div class="group"><div class="caption">Profiles</div><div class="card" id="prof-list"></div></div>
     <div class="group"><div class="caption">Add profile</div><div class="card">
       <div class="row stacked">
-        <div class="lab"><div class="l">New profile</div><div class="h">Name is a lowercase slug: letters, digits, hyphens, 1-24 characters. Restart the app after adding, then log in to Twitch/Kick in the new windows that open for this profile.</div></div>
+        <div class="lab"><div class="l">New profile</div><div class="h">Name is a lowercase slug: letters, digits, hyphens, 1-24 characters. The profile starts immediately; log in to Twitch (and Kick if enabled) in its watcher window.</div></div>
         <div class="ctl" style="display:flex;gap:8px;flex-wrap:wrap">
           <input class="input" id="np-name" placeholder="slug, e.g. profile-two" style="flex:1;min-width:140px">
           <input class="input" id="np-display" placeholder="Display name (optional)" style="flex:1;min-width:140px">
@@ -640,8 +692,14 @@ function renderProfileRows(host) {
   const list = host.querySelector('#prof-list');
   if (!list) return;
   list.innerHTML = '';
+  const onlyOne = (profileEdits || []).length <= 1;
   (profileEdits || []).forEach(p => {
-    const pending = profilePending[p.name];
+    const livePlats = profileLive[p.name] || [];
+    const twitchLive = livePlats[0] || { enabled: p.enabled, up: false, needsLogin: false };
+    const kickLive = livePlats[1] || { enabled: false, up: false, needsLogin: false };
+    const twStatus = platformRuntimeStatus(twitchLive, twitchLive.up);
+    const kStatus = platformRuntimeStatus(kickLive, twitchLive.up);
+    const showKick = kickLive.enabled || kickLive.up;
     const row = el(`<div class="row stacked">
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
         <input class="input" data-pf="displayName" value="${esc(p.displayName)}" placeholder="${esc(p.name)}" style="width:160px">
@@ -650,9 +708,13 @@ function renderProfileRows(host) {
         <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-secondary)">${pfBadge('kick')} ${toggleHTML('kickEnabled', p.kickEnabled)}</label>
         <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-secondary)">Enabled ${toggleHTML('enabled', p.enabled)}</label>
       </div>
-      ${pending ? `<div class="h" style="color:var(--warn)">${p.enabled ? 'Enabled' : 'Disabled'} - restart the app to apply.</div>` : ''}
+      <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;color:var(--text-secondary)">
+        <span style="display:flex;align-items:center;gap:6px"><span class="fdot ${twStatus.cls}"></span>Twitch ${esc(twStatus.label)}</span>
+        ${showKick ? `<span style="display:flex;align-items:center;gap:6px"><span class="fdot ${kStatus.cls}"></span>Kick ${esc(kStatus.label)}</span>` : ''}
+      </div>
       <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-secondary)">Inherit shared games list ${toggleHTML('inheritGames', p.inheritGames)}</label>
       <div class="games-ctl" data-pf-games style="${p.inheritGames ? 'opacity:.45;pointer-events:none' : ''}"></div>
+      <div data-pf-remove style="display:flex;justify-content:flex-end;align-items:center;gap:8px"></div>
     </div>`);
     row.querySelectorAll('[data-toggle]').forEach(sw => {
       sw.addEventListener('click', () => {
@@ -669,8 +731,50 @@ function renderProfileRows(host) {
     });
     row.querySelector('[data-pf="displayName"]').addEventListener('input', e => { p.displayName = e.target.value; });
     renderProfileGamesChips(row.querySelector('[data-pf-games]'), p);
+    attachRemoveControl(row.querySelector('[data-pf-remove]'), p, onlyOne, host);
     list.append(row);
   });
+}
+
+// attachRemoveControl builds the Remove button and its inline two-step confirm
+// (no window.confirm): a first click flips the button to "Really remove
+// <name>?" and adds a Cancel button; a second click on the flipped button
+// calls the remove API. Disabled (with an explanatory title) when this is the
+// only profile - the backend refuses that with a 400 anyway, but greying it
+// out beats accept-then-error.
+function attachRemoveControl(wrap, p, onlyOne, host) {
+  if (!wrap) return;
+  const btn = el(`<button class="btn ghost danger" type="button" ${onlyOne ? 'disabled title="Cannot remove the only profile - add another one first"' : ''}>Remove profile</button>`);
+  let confirming = false;
+  let cancelBtn = null;
+  const reset = () => {
+    confirming = false;
+    btn.textContent = 'Remove profile';
+    if (cancelBtn) { cancelBtn.remove(); cancelBtn = null; }
+  };
+  btn.addEventListener('click', async () => {
+    if (onlyOne) return;
+    if (!confirming) {
+      confirming = true;
+      btn.textContent = `Really remove ${p.displayName || p.name}?`;
+      cancelBtn = el('<button class="btn ghost" type="button">Cancel</button>');
+      cancelBtn.addEventListener('click', reset);
+      wrap.append(cancelBtn);
+      return;
+    }
+    try {
+      const r = await api.removeProfile(p.name);
+      const msg = host.querySelector('#prof-msg');
+      if (msg) { msg.textContent = `Profile removed. Its queue, history and logins are still on disk at ${r.dataDir}.`; msg.style.color = 'var(--ok)'; }
+      await Promise.all([loadProfileEdits(), loadProfileLive()]);
+      if (settingsPane === 'profiles') renderProfileRows(host);
+    } catch (e) {
+      reset();
+      const msg = host.querySelector('#prof-msg');
+      if (msg) { msg.textContent = 'Error: ' + (e.message || e); msg.style.color = 'var(--err)'; }
+    }
+  });
+  wrap.append(btn);
 }
 
 // renderProfileGamesChips mirrors renderGamesCtl's chip editor, bound to one
@@ -688,15 +792,27 @@ function renderProfileGamesChips(container, p) {
   input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
 }
 
+// saveProfileEdits sends a request only for a profile field that actually
+// changed vs profileSnapshot (the untouched copy loaded alongside profileEdits)
+// - every save now triggers a live reconcile, so firing every toggle for every
+// profile would restart runtimes that never changed.
 async function saveProfileEdits(host) {
   const msg = host.querySelector('#prof-msg');
   try {
     for (const p of profileEdits) {
-      await api.setProfileEnabled(p.name, p.enabled);
-      await api.updateProfile({ name: p.name, displayName: p.displayName, kickEnabled: p.kickEnabled, games: p.games, inheritGames: p.inheritGames });
+      const orig = (profileSnapshot || []).find(o => o.name === p.name);
+      if (!orig) continue;
+      if (orig.enabled !== p.enabled) {
+        await api.setProfileEnabled(p.name, p.enabled);
+      }
+      const overlayChanged = orig.displayName !== p.displayName || orig.kickEnabled !== p.kickEnabled ||
+        orig.inheritGames !== p.inheritGames || !arraysEqual(orig.games, p.games);
+      if (overlayChanged) {
+        await api.updateProfile({ name: p.name, displayName: p.displayName, kickEnabled: p.kickEnabled, games: p.games, inheritGames: p.inheritGames });
+      }
     }
     if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--ok)'; }
-    await loadProfileEdits();
+    await Promise.all([loadProfileEdits(), loadProfileLive()]);
     if (settingsPane === 'profiles') renderProfileRows(host);
     refreshAll();
   } catch (e) {
@@ -716,10 +832,20 @@ async function addProfileFlow(host) {
   }
   try {
     await api.addProfile(name, dispInp.value.trim());
-    if (msg) { msg.textContent = 'Profile added - restart the app, then log in to Twitch/Kick in the new windows.'; msg.style.color = 'var(--ok)'; }
+    if (msg) {
+      msg.textContent = "Profile added - its watcher window is opening. Log in to Twitch (and Kick if enabled) there, then press Start on the dashboard.";
+      msg.style.color = 'var(--ok)';
+    }
     nameInp.value = ''; dispInp.value = '';
     await loadProfileEdits();
     if (settingsPane === 'profiles') renderProfileRows(host);
+    // Poll briefly so the new row's live status (starting -> running/needs
+    // login) appears without the user having to leave and reopen the pane.
+    for (let i = 0; i < 4 && settingsPane === 'profiles'; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      await loadProfileLive();
+      if (settingsPane === 'profiles') renderProfileRows(host);
+    }
   } catch (e) {
     if (msg) { msg.textContent = 'Error: ' + (e.message || e); msg.style.color = 'var(--err)'; }
   }

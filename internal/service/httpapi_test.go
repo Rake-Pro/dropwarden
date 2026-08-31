@@ -1,16 +1,20 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/rake-pro/dropwarden/internal/browser"
 	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rake-pro/dropwarden/internal/domain"
+	"github.com/rake-pro/dropwarden/internal/twitch"
 )
 
 // stateDTO is the /api/state shape the frontend consumes: shared config plus
@@ -18,15 +22,14 @@ import (
 type stateDTO struct {
 	Config   ConfigDTO `json:"config"`
 	Profiles []struct {
-		Name           string `json:"name"`
-		DisplayName    string `json:"displayName"`
-		Enabled        bool   `json:"enabled"`
-		PendingRestart bool   `json:"pendingRestart"`
-		Platforms      []struct {
-			Platform       string `json:"platform"`
-			Enabled        bool   `json:"enabled"`
-			Up             bool   `json:"up"`
-			PendingRestart bool   `json:"pendingRestart"`
+		Name        string `json:"name"`
+		DisplayName string `json:"displayName"`
+		Enabled     bool   `json:"enabled"`
+		Platforms   []struct {
+			Platform   string `json:"platform"`
+			Enabled    bool   `json:"enabled"`
+			Up         bool   `json:"up"`
+			NeedsLogin bool   `json:"needsLogin"`
 		} `json:"platforms"`
 		Queue  []QueueItemDTO `json:"queue"`
 		Claims []ClaimDTO     `json:"claims"`
@@ -79,8 +82,8 @@ func TestHTTPStateAndActions(t *testing.T) {
 	if p.Platforms[1].Enabled || p.Platforms[1].Up {
 		t.Fatalf("kick should be disabled by default: %+v", p.Platforms[1])
 	}
-	if p.PendingRestart {
-		t.Fatalf("an unchanged profile must not report pendingRestart: %+v", p)
+	if p.Platforms[0].NeedsLogin {
+		t.Fatalf("a profile with no runtime up cannot need a login: %+v", p.Platforms[0])
 	}
 
 	// POST /api/queue/priority (valid) - persists config, engine nil is fine.
@@ -165,11 +168,13 @@ func TestHTTPStateListsUnstartedProfile(t *testing.T) {
 	if greg.Name != "greg" || greg.DisplayName != "Greg" {
 		t.Fatalf("unexpected added profile: %+v", greg)
 	}
-	if !greg.Enabled || !greg.PendingRestart {
-		t.Fatalf("a profile added after startup must read enabled+pendingRestart: %+v", greg)
+	// Enabled + not up is the whole story now: the reconciler (absent in this
+	// test backend) is what brings the runtime up, and the UI reads the pair.
+	if !greg.Enabled || greg.Platforms[0].Up {
+		t.Fatalf("an added profile must read enabled and not yet up: %+v", greg)
 	}
-	if greg.Platforms[0].Up || len(greg.Queue) != 0 {
-		t.Fatalf("unstarted profile must report no engine and no data: %+v", greg)
+	if len(greg.Queue) != 0 {
+		t.Fatalf("a profile with no store open must report no data: %+v", greg)
 	}
 
 	// Its directories exist, so the next start finds them.
@@ -183,8 +188,8 @@ func TestHTTPStateListsUnstartedProfile(t *testing.T) {
 	// Engine actions against it are honest about needing a restart.
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/greg/twitch/start", nil))
-	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "restart") {
-		t.Fatalf("start on an unstarted profile should be 400 with a restart hint, got %d %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "no store open") {
+		t.Fatalf("start on a profile with no store should be 400 and say so, got %d %s", rr.Code, rr.Body.String())
 	}
 
 	// A bad slug is rejected by the config validator and never reaches the live
@@ -216,11 +221,11 @@ func TestHTTPProfileEnabledToggle(t *testing.T) {
 		t.Fatal("profile should be persisted as disabled")
 	}
 
-	// Disabling is effective on restart: the state must say so rather than
-	// pretending the runtime already stopped.
+	// Disabling is live: the state reports it off, and the reconciler (wired in
+	// the real app) stops its runtime.
 	p := getState(t, h).Profiles[0]
-	if p.Enabled || !p.PendingRestart {
-		t.Fatalf("disabled profile should read disabled + pendingRestart: %+v", p)
+	if p.Enabled || p.Platforms[0].Enabled {
+		t.Fatalf("disabled profile should read disabled: %+v", p)
 	}
 
 	rr = httptest.NewRecorder()
@@ -282,4 +287,181 @@ func jsonReq(method, path, body string) *http.Request {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	return r
+}
+
+// recordingReconciler stands in for internal/app: it only records that a
+// commit asked for a reconcile pass.
+type recordingReconciler struct {
+	mu    sync.Mutex
+	calls []*config.Config
+}
+
+func (r *recordingReconciler) Reconcile(cfg *config.Config) {
+	r.mu.Lock()
+	r.calls = append(r.calls, cfg)
+	r.mu.Unlock()
+}
+
+func (r *recordingReconciler) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.calls)
+}
+
+// TestLiveTogglesReconcile pins the whole point of the lifecycle work: every
+// config commit that changes desired runtime state asks the reconciler to
+// follow, instead of reporting a pending restart.
+func TestLiveTogglesReconcile(t *testing.T) {
+	b := testBackend(t)
+	rec := &recordingReconciler{}
+	b.SetReconciler(rec)
+	h := NewHTTPHandler(b)
+
+	cases := []struct {
+		name string
+		path string
+		body string
+	}{
+		{"root kick toggle", "/api/config", `{"theme":"dark","games":["Rust"],"priorityMode":"top_down","volume":0.01,"kickEnabled":true,"claimStrategy":"in_page","authMode":"manual","logLevel":"info"}`},
+		{"add profile", "/api/profiles", `{"name":"greg","displayName":"Greg"}`},
+		{"profile kick toggle", "/api/profiles/update", `{"name":"greg","displayName":"Greg","kickEnabled":false,"inheritGames":true}`},
+		{"profile enable toggle", "/api/profiles/enabled", `{"name":"greg","on":false}`},
+		{"profile remove", "/api/profiles/remove", `{"name":"greg"}`},
+	}
+	for i, tc := range cases {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, jsonReq("POST", tc.path, tc.body))
+		if rr.Code != 200 {
+			t.Fatalf("%s: code=%d body=%s", tc.name, rr.Code, rr.Body.String())
+		}
+		if rec.count() != i+1 {
+			t.Fatalf("%s must trigger a reconcile (calls=%d)", tc.name, rec.count())
+		}
+	}
+}
+
+func TestHTTPProfileRemove(t *testing.T) {
+	b := testBackend(t)
+	h := NewHTTPHandler(b)
+
+	// The only profile cannot be removed.
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, jsonReq("POST", "/api/profiles/remove", `{"name":"main"}`))
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "only profile") {
+		t.Fatalf("removing the last profile must be refused, got %d %s", rr.Code, rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, jsonReq("POST", "/api/profiles", `{"name":"greg","displayName":"Greg"}`))
+	if rr.Code != 200 {
+		t.Fatalf("add: %d %s", rr.Code, rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, jsonReq("POST", "/api/profiles/remove", `{"name":"nobody"}`))
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "unknown profile") {
+		t.Fatalf("removing an unknown profile must be 400, got %d %s", rr.Code, rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, jsonReq("POST", "/api/profiles/remove", `{"name":"greg"}`))
+	if rr.Code != 200 {
+		t.Fatalf("remove: %d %s", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		OK      bool   `json:"ok"`
+		DataDir string `json:"dataDir"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode remove: %v", err)
+	}
+	root, _ := config.Dir()
+	want := filepath.Join(root, "profiles", "greg")
+	if !out.OK || out.DataDir != want {
+		t.Fatalf("remove must return the untouched data dir %q, got %+v", want, out)
+	}
+	// The directory itself is NEVER deleted.
+	if _, err := os.Stat(filepath.Join(want, "chrome-profile")); err != nil {
+		t.Fatalf("a removed profile's data must stay on disk: %v", err)
+	}
+	if b.config().Profile("greg") != nil {
+		t.Fatal("removed profile must be gone from the live config")
+	}
+	reloaded, err := config.Load(b.ConfigPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Profile("greg") != nil {
+		t.Fatal("removed profile must be gone from the saved config")
+	}
+	if len(getState(t, h).Profiles) != 1 {
+		t.Fatal("state must stop listing the removed profile")
+	}
+}
+
+// probeSession is a browser.Session that answers only the login probe.
+type probeSession struct {
+	browser.Session
+	loggedIn bool
+}
+
+func (p *probeSession) Navigate(context.Context, string) error { return nil }
+func (p *probeSession) Eval(_ context.Context, _ string, out any) error {
+	if st, ok := out.(*twitch.LoginState); ok {
+		st.LoggedIn = p.loggedIn
+	}
+	return nil
+}
+
+func TestHTTPLoginCheck(t *testing.T) {
+	b := testBackend(t)
+	h := NewHTTPHandler(b)
+
+	loginCheck := func(body string) (int, string) {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, jsonReq("POST", "/api/profiles/login-check", body))
+		return rr.Code, strings.TrimSpace(rr.Body.String())
+	}
+
+	// No session up for that pair: unknowable, not an error.
+	code, body := loginCheck(`{"profile":"main","platform":"twitch"}`)
+	if code != 200 || !strings.Contains(body, `"loggedIn":null`) {
+		t.Fatalf("no session should report null, got %d %s", code, body)
+	}
+	if code, body := loginCheck(`{"profile":"main","platform":"mixer"}`); code != http.StatusBadRequest {
+		t.Fatalf("unknown platform should be 400, got %d %s", code, body)
+	}
+	if code, _ := loginCheck(`{"profile":"nobody","platform":"twitch"}`); code != http.StatusBadRequest {
+		t.Fatalf("unknown profile should be 400, got %d", code)
+	}
+
+	pb := b.FirstProfile()
+	// Kick has no login probe (see docs/NOTES-kick.md): null even with a
+	// session attached.
+	pb.Attach(domain.PlatformKick, nil, nil, &probeSession{loggedIn: true}, true)
+	if code, body := loginCheck(`{"profile":"main","platform":"kick"}`); code != 200 || !strings.Contains(body, `"loggedIn":null`) {
+		t.Fatalf("kick has no probe and must report null, got %d %s", code, body)
+	}
+	if !pb.NeedsLogin(domain.PlatformKick) {
+		t.Fatal("an unknowable kick probe must leave needsLogin alone")
+	}
+
+	pb.Attach(domain.PlatformTwitch, nil, nil, &probeSession{loggedIn: false}, true)
+	if code, body := loginCheck(`{"profile":"main","platform":"twitch"}`); code != 200 || !strings.Contains(body, `"loggedIn":false`) {
+		t.Fatalf("a logged-out session should report false, got %d %s", code, body)
+	}
+	if !pb.NeedsLogin(domain.PlatformTwitch) {
+		t.Fatal("a logged-out probe must keep needsLogin set")
+	}
+
+	pb.Attach(domain.PlatformTwitch, nil, nil, &probeSession{loggedIn: true}, true)
+	if code, body := loginCheck(`{"profile":"main","platform":"twitch"}`); code != 200 || !strings.Contains(body, `"loggedIn":true`) {
+		t.Fatalf("a logged-in session should report true, got %d %s", code, body)
+	}
+	if pb.NeedsLogin(domain.PlatformTwitch) {
+		t.Fatal("a successful login check must clear needsLogin")
+	}
+	if getState(t, h).Profiles[0].Platforms[0].NeedsLogin {
+		t.Fatal("state must mirror the cleared needsLogin flag")
+	}
 }

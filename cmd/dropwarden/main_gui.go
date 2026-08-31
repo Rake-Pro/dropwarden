@@ -7,14 +7,12 @@
 package main
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	webui "github.com/rake-pro/dropwarden/frontend"
 	"github.com/rake-pro/dropwarden/internal/app"
-	"github.com/rake-pro/dropwarden/internal/domain"
 	"github.com/rake-pro/dropwarden/internal/service"
 )
 
@@ -30,6 +28,9 @@ func main() {
 		profiles = append(profiles, service.NewProfileBackend(a.Cfg, pr.Name, pr.Store))
 	}
 	backend := service.NewBackend(a.Cfg, a.ConfigPath, profiles...)
+	// Every settings commit reconciles the running runtimes against the new
+	// config, so enabling a profile or a platform starts its Chrome live.
+	backend.SetReconciler(a)
 
 	// The webview talks to Go over a small JSON API on the same asset origin
 	// (no generated bindings needed): /api/* is the service layer, everything
@@ -50,53 +51,15 @@ func main() {
 	win := newDashboardWindow(wapp, a.Cfg.UI.StartMinimized)
 	buildTray(wapp, win, backend)
 
-	// Launch the browser + engine in the background so the window is responsive
-	// immediately. If Chrome cannot start (not installed, profile locked), the
-	// UI stays up in a disconnected state and surfaces the error via the log.
+	// Launch the browsers + engines in the background so the window is
+	// responsive immediately. If Chrome cannot start (not installed, profile
+	// locked), the UI stays up in a disconnected state and surfaces the error
+	// via the log. StartLive keeps following the config from here on.
 	emit := newWailsEmitter(wapp)
-	go startRuntime(wapp.Context(), a, backend, emit)
+	go a.StartLive(wapp.Context(), emit, backend)
 
 	if err := wapp.Run(); err != nil {
 		a.Log.Error().Err(err).Msg("wails run failed")
-	}
-}
-
-// startRuntime launches Chrome, attaches the engine to the backend, and runs the
-// engine loop until the app context is cancelled.
-func startRuntime(ctx context.Context, a *app.App, backend *service.Backend, emit *wailsEmitter) {
-	if err := a.StartRuntime(ctx, emit); err != nil {
-		a.Log.Error().Err(err).Msg("runtime start failed; UI running disconnected")
-		return
-	}
-	// Attach whatever came up: a profile (or one of its platforms) that failed
-	// to launch simply has no handles, and the UI reports it as not running.
-	for _, pr := range a.Profiles {
-		pb := backend.Profile(pr.Name)
-		if pb == nil {
-			continue
-		}
-		if pr.Twitch != nil {
-			pb.Attach(domain.PlatformTwitch, pr.Twitch.Engine, pr.Twitch.Disco)
-		}
-		if pr.Kick != nil {
-			pb.Attach(domain.PlatformKick, pr.Kick.Engine, pr.Kick.Disco)
-		}
-	}
-	a.Log.Info().Int("engines", len(a.Engines())).Int("profiles", len(a.Profiles)).
-		Msg("runtime up; watcher engine(s) attached")
-	// Run every platform engine; block until all exit (ctx cancellation).
-	done := make(chan struct{})
-	for _, e := range a.Engines() {
-		e := e
-		go func() {
-			if err := e.Run(ctx); err != nil && ctx.Err() == nil {
-				a.Log.Error().Err(err).Msg("engine loop exited")
-			}
-			done <- struct{}{}
-		}()
-	}
-	for range a.Engines() {
-		<-done
 	}
 }
 

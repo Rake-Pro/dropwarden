@@ -121,3 +121,31 @@ Phase 3 - claim + link:
   gentler; if Kick progress stalls, prefer waiting over reloading.
 - ToS: kick.com/kick-drops-terms was not fetchable (403); automation policy
   unverified. Same personal-use posture as the Twitch side.
+
+## TODO: login probe (needed by /api/profiles/login-check)
+
+There is NO login/auth signal in internal/kick today: no logged-in selector, no
+avatar/user-menu marker, no session endpoint. Twitch has one (`jsLoggedIn` in
+`twitch/selectors.go`, driven by `twitch.CheckLogin` / `WaitForLogin`), so
+`POST /api/profiles/login-check {profile, platform:"twitch"}` answers true or
+false; the same call for `platform:"kick"` returns `{"loggedIn": null}` -
+honestly "unknowable" rather than a guess.
+
+To close this, a live pass on kick.com is required (selectors here are never
+invented from memory - see the header of selectors.go):
+
+- Find the logged-in marker on kick.com while signed in vs signed out (likely
+  the avatar/user button in the top bar, or the presence of a "Log in" button;
+  confirm both states in the same session).
+- Add a `jsLoggedIn`-shaped probe to `kick/selectors.go` returning one JSON
+  object (`{loggedIn, hasLoginButton}`), plus a `kick.CheckLogin` mirroring
+  `twitch.CheckLogin`.
+- Then extend `WatcherService.LoginCheck` (internal/service/services.go) to
+  dispatch Kick to it; nothing else changes - the route, the null contract for
+  "no session up", and the needs-login flag clearing are already in place.
+
+Until then the needs-login prompt for Kick relies on the fresh-Chrome-profile
+heuristic only (a never-used `chrome-profile-kick` dir starts the engine paused
+and flags `needsLogin` in `/api/state`), which is exactly the case the owner hit:
+enabling Kick on an existing profile opened a brand-new Chrome profile with no
+login and no guidance.

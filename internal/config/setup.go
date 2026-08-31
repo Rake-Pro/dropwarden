@@ -86,11 +86,19 @@ browser:
     reassert_interval: 30s
 
 kick:
-  enabled: false               # parallel Kick drops runtime (its own Chrome instance + engine)
+  enabled: false               # parallel Kick drops runtime (its own engine)
   browser:
-    profile_dir: ""            # blank = <approot>/chrome-profile-kick (never shared with Twitch)
+    # separate_window false (default) = SHARED WINDOW: Kick runs as a TAB in
+    # this profile's Twitch Chrome window, so one profile costs ONE Chrome
+    # instead of two. The profile_dir and window settings below are then
+    # UNUSED (the shared window is the Twitch one), and Kick must be logged in
+    # once in that window - an existing chrome-profile-kick login does NOT
+    # carry over. true restores the legacy layout: a second Chrome instance
+    # with its own profile dir and window.
+    separate_window: false
+    profile_dir: ""            # separate_window only; blank = <approot>/chrome-profile-kick
     mute_audio: false
-    window:
+    window:                    # separate_window only
       width: 640
       height: 400
       # x/y omitted: computed from platform + profile window_slot, offset so
@@ -201,6 +209,9 @@ func (c *Config) KickProfileDir() (string, error) {
 // dir. Existing single-profile helpers (ProfileDir, KickProfileDir, DBPath,
 // LogPath) are thin wrappers over MainProfileName's paths.
 type ProfilePaths struct {
+	// Dir is the profile's data directory: the parent of everything below, and
+	// where per-platform first-run markers live.
+	Dir               string
 	DB                string
 	ChromeProfile     string
 	ChromeProfileKick string
@@ -219,6 +230,7 @@ func (c *Config) ProfilePaths(name string) (ProfilePaths, error) {
 		return ProfilePaths{}, err
 	}
 	return ProfilePaths{
+		Dir:               base,
 		DB:                filepath.Join(base, "dropwarden.db"),
 		ChromeProfile:     filepath.Join(base, "chrome-profile"),
 		ChromeProfileKick: filepath.Join(base, "chrome-profile-kick"),
@@ -374,8 +386,14 @@ func (c *Config) ProfileRuntimeConfig(name string) (*Config, error) {
 // ProfileKickRuntimeConfig builds the config the named profile's Kick engine
 // runs with: the profile's games overlay applied to a copy of the root
 // config, then the same KickRuntimeConfig derivation used for the shared
-// (single-profile) case, with the window-tiling default filled in for the
-// Kick window (col 1) when the config left it unset.
+// (single-profile) case, with the window-tiling default filled in when the
+// config left it unset.
+//
+// Geometry depends on the window layout. In the default SHARED layout Kick is a
+// tab in the profile's Twitch window, so there is no second window to place: the
+// slot stays the profile's own (col 0), matching the Twitch config, and the
+// kick.browser.window block is unused. In separate_window mode Kick keeps its
+// own window at col 1, beside the Twitch one.
 func (c *Config) ProfileKickRuntimeConfig(name string) (*Config, error) {
 	eff, err := c.Effective(name)
 	if err != nil {
@@ -386,7 +404,11 @@ func (c *Config) ProfileKickRuntimeConfig(name string) (*Config, error) {
 		return nil, err
 	}
 	kc := cp.KickRuntimeConfig()
-	applyWindowTileDefault(&kc.Browser.Window, 1, eff.WindowSlot)
+	col := 0
+	if c.KickSeparateWindow() {
+		col = 1
+	}
+	applyWindowTileDefault(&kc.Browser.Window, col, eff.WindowSlot)
 	return kc, nil
 }
 

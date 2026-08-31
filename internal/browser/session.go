@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -14,270 +12,53 @@ import (
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
-	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rs/zerolog"
 )
 
-const (
-	// portWaitTimeout bounds the poll for DevToolsActivePort.
-	//
-	// verify live: Chrome writes the file once the browser process is far enough
-	// along to have bound the debugging socket. 15s is generous for a warm
-	// profile but has not been measured on Windows with a cold profile on a slow
-	// disk; if launches start timing out, raise this before suspecting CDP.
-	portWaitTimeout = 15 * time.Second
-	portPollEvery   = 100 * time.Millisecond
+// tab is the rod-backed implementation of Session: exactly one page inside an
+// Instance, driven for its whole lifetime by exactly one platform engine.
+type tab struct {
+	inst   *Instance
+	logger zerolog.Logger
+	page   *rod.Page
+	sid    proto.TargetSessionID
+	frame  proto.PageFrameID
+	events chan Event
 
-	// loadTimeout bounds waiting for window.onload after a navigation.
-	loadTimeout = 45 * time.Second
-	// queryTimeout bounds locating an element for a click.
-	queryTimeout = 10 * time.Second
-	// closeTimeout bounds waiting for the event pump to drain on Close.
-	closeTimeout = 2 * time.Second
-
-	// eventBuffer is deep enough that a watcher busy handling one event does not
-	// lose the next. Overflow is logged, never blocked on.
-	eventBuffer = 32
-)
-
-// session is the rod-backed implementation of Session. It owns exactly one
-// Chrome process and exactly one page inside it for its whole lifetime.
-type session struct {
-	logger  zerolog.Logger
-	chrome  *launchedChrome
-	browser *rod.Browser
-	page    *rod.Page
-	events  chan Event
-
-	cancel   context.CancelFunc
-	pumpDone chan struct{}
+	// owner marks the tab Chrome opened at launch. Closing it closes the whole
+	// Instance (see Close): the owner's tab is the window, so the platforms
+	// sharing it cannot outlive it.
+	owner bool
 
 	alive     atomic.Bool
 	closing   atomic.Bool
 	closeOnce sync.Once
-}
-
-// Launch starts a dedicated Chrome, attaches to it over CDP, and adopts its
-// single page. ctx bounds the startup handshake only: once Launch returns, the
-// session owns the browser until Close, independent of ctx.
-func Launch(ctx context.Context, cfg *config.Config, logger zerolog.Logger) (Session, error) {
-	profileDir, err := cfg.ProfileDir()
-	if err != nil {
-		return nil, err
-	}
-	return LaunchWith(ctx, cfg.Browser, profileDir, cfg.Browser.Burnin.DimOpacity, logger)
-}
-
-// LaunchWith starts a dedicated Chrome for one platform instance, with its own
-// browser config and profile directory (Twitch and Kick each get one).
-func LaunchWith(ctx context.Context, bcfg config.BrowserConfig, profileDir string, dimOpacity float64, logger zerolog.Logger) (Session, error) {
-	chromePath, err := FindChrome(bcfg.ChromePath)
-	if err != nil {
-		return nil, err
-	}
-	if err := ensureProfile(profileDir, logger); err != nil {
-		return nil, err
-	}
-
-	flags := chromeFlags(bcfg, profileDir, bcfg.Window)
-	logger.Info().Str("chrome", chromePath).Str("profile", profileDir).Msg("launching chrome")
-
-	proc, err := launchChrome(chromePath, flags)
-	if err != nil {
-		return nil, err
-	}
-
-	port, wsPath, err := waitDevToolsPort(ctx, profileDir)
-	if err != nil {
-		_ = proc.Kill()
-		return nil, err
-	}
-	// Chrome binds the debug socket to loopback only; the path carries the
-	// per-launch token, so this URL is not guessable by other local processes.
-	ws := fmt.Sprintf("ws://127.0.0.1:%s%s", port, wsPath)
-
-	// The rod context deliberately does not derive from ctx: the browser must
-	// outlive the startup call.
-	sessCtx, cancel := context.WithCancel(context.Background())
-	br := rod.New().ControlURL(ws).Context(sessCtx)
-	if err := br.Connect(); err != nil {
-		cancel()
-		_ = proc.Kill()
-		return nil, fmt.Errorf("browser: connect to cdp at %s: %w", ws, err)
-	}
-
-	page, err := adoptPage(br)
-	if err != nil {
-		cancel()
-		_ = br.Close()
-		_ = proc.Kill()
-		return nil, err
-	}
-
-	s := &session{
-		logger:   logger,
-		chrome:   proc,
-		browser:  br,
-		page:     page,
-		events:   make(chan Event, eventBuffer),
-		cancel:   cancel,
-		pumpDone: make(chan struct{}),
-	}
-	s.alive.Store(true)
-
-	if err := s.applyDarkEmulation(); err != nil {
-		logger.Warn().Err(err).Msg("could not force dark color scheme")
-	}
-	if op := dimOpacity; op > 0 {
-		script := dimOverlayScript(op)
-		if err := s.SeedOnNewDocument(ctx, script); err != nil {
-			logger.Warn().Err(err).Msg("could not install dim overlay")
-		} else if _, err := s.page.Context(ctx).Eval(script); err != nil {
-			// The seeded copy only runs on the next document; paint the current
-			// one too so about:blank is not left bright.
-			logger.Debug().Err(err).Msg("dim overlay not applied to the current document")
-		}
-	}
-
-	go s.pump()
-	return s, nil
-}
-
-// waitDevToolsPort polls the profile for the port file Chrome writes after
-// binding its debugging socket. Line 1 is the port, line 2 the websocket path.
-func waitDevToolsPort(ctx context.Context, profileDir string) (port, wsPath string, err error) {
-	path := filepath.Join(profileDir, devToolsPortFile)
-	deadline := time.Now().Add(portWaitTimeout)
-
-	for {
-		if b, rerr := os.ReadFile(path); rerr == nil {
-			lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-			if len(lines) >= 2 {
-				port, wsPath = strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1])
-				if port != "" && wsPath != "" {
-					return port, wsPath, nil
-				}
-			}
-		}
-		if time.Now().After(deadline) {
-			return "", "", fmt.Errorf("browser: chrome did not publish %s within %s (did it fail to start?)",
-				path, portWaitTimeout)
-		}
-		select {
-		case <-ctx.Done():
-			return "", "", fmt.Errorf("browser: wait for devtools port: %w", ctx.Err())
-		case <-time.After(portPollEvery):
-		}
-	}
-}
-
-// adoptPage takes over the single page Chrome opened for about:blank, creating
-// one only if the target list somehow has none. Exactly one page is adopted and
-// held for the session's lifetime; the watcher never opens tabs.
-func adoptPage(br *rod.Browser) (*rod.Page, error) {
-	pages, err := br.Pages()
-	if err != nil {
-		return nil, fmt.Errorf("browser: list pages: %w", err)
-	}
-	for _, p := range pages {
-		info, ierr := p.Info()
-		if ierr != nil {
-			continue
-		}
-		if info.Type == "page" {
-			return p, nil
-		}
-	}
-	p, err := br.Page(proto.TargetCreateTarget{URL: "about:blank"})
-	if err != nil {
-		return nil, fmt.Errorf("browser: create page: %w", err)
-	}
-	return p, nil
-}
-
-// pump translates CDP events into Session events. It subscribes at the browser
-// level (rather than the page level) because that channel closes when the CDP
-// transport dies, which is how a Chrome crash or kill is detected. It owns
-// s.events and is the only closer.
-func (s *session) pump() {
-	defer func() {
-		close(s.events)
-		close(s.pumpDone)
-	}()
-
-	// Enable the domains whose events we want. rod records these in its own
-	// domain-state map, so its internal EachEvent helpers will not disable them
-	// again when they finish.
-	if err := (proto.PageEnable{}).Call(s.page); err != nil {
-		s.logger.Warn().Err(err).Msg("could not enable Page domain")
-	}
-	if err := (proto.InspectorEnable{}).Call(s.page); err != nil {
-		s.logger.Warn().Err(err).Msg("could not enable Inspector domain")
-	}
-
-	var (
-		sid       = s.page.SessionID
-		crashed   = (proto.InspectorTargetCrashed{}).ProtoEvent()
-		navigated = (proto.PageFrameNavigated{}).ProtoEvent()
-		topFrame  = s.page.FrameID
-	)
-
-	for msg := range s.browser.Event() {
-		if msg.SessionID != sid {
-			continue
-		}
-		switch msg.Method {
-		case crashed:
-			s.logger.Error().Msg("renderer crashed")
-			s.emit(Event{Kind: EventCrash, At: time.Now()})
-		case navigated:
-			evt := &proto.PageFrameNavigated{}
-			if !msg.Load(evt) || evt.Frame == nil {
-				continue
-			}
-			// Ignore iframes: only a top-frame navigation is a raid or redirect.
-			if evt.Frame.ParentID != "" || evt.Frame.ID != topFrame {
-				continue
-			}
-			s.emit(Event{Kind: EventNavigated, URL: evt.Frame.URL, At: time.Now()})
-			// The emulation override does not always survive a cross-document
-			// navigation. Reassert off the pump goroutine so event delivery is
-			// never blocked on a CDP round trip.
-			go func() {
-				if err := s.applyDarkEmulation(); err != nil {
-					s.logger.Debug().Err(err).Msg("could not reapply dark color scheme after navigation")
-				}
-			}()
-		}
-	}
-
-	// The browser event channel only closes when the CDP transport is gone.
-	s.alive.Store(false)
-	if !s.closing.Load() {
-		s.logger.Error().Msg("cdp connection lost")
-		s.emit(Event{Kind: EventDisconnect, At: time.Now()})
-	}
+	evOnce    sync.Once
 }
 
 // emit delivers an event without ever blocking the pump. A full buffer means
 // the watcher is wedged, which is worth a loud log but must not stall event
 // processing (and with it disconnect detection).
-func (s *session) emit(e Event) {
+func (t *tab) emit(e Event) {
 	select {
-	case s.events <- e:
+	case t.events <- e:
 	default:
-		s.logger.Warn().Str("kind", string(e.Kind)).Msg("browser event dropped: consumer not keeping up")
+		t.logger.Warn().Str("kind", string(e.Kind)).Msg("browser event dropped: consumer not keeping up")
 	}
 }
 
+// closeEvents closes the tab's event channel exactly once. Only the instance
+// pump and Close call it.
+func (t *tab) closeEvents() { t.evOnce.Do(func() { close(t.events) }) }
+
 // applyDarkEmulation forces prefers-color-scheme:dark so Twitch renders its dark
 // theme regardless of the account setting, which keeps the window dim.
-func (s *session) applyDarkEmulation() error {
+func (t *tab) applyDarkEmulation() error {
 	err := proto.EmulationSetEmulatedMedia{
 		Features: []*proto.EmulationMediaFeature{
 			{Name: "prefers-color-scheme", Value: "dark"},
 		},
-	}.Call(s.page)
+	}.Call(t.page)
 	if err != nil {
 		return fmt.Errorf("browser: emulate dark color scheme: %w", err)
 	}
@@ -329,22 +110,22 @@ func asJSFunc(js string) string {
 	return "() => (" + trimmed + ")"
 }
 
-func (s *session) Navigate(ctx context.Context, url string) error {
-	p := s.page.Context(ctx)
+func (t *tab) Navigate(ctx context.Context, url string) error {
+	p := t.page.Context(ctx)
 	if err := p.Navigate(url); err != nil {
 		return fmt.Errorf("browser: navigate to %s: %w", url, err)
 	}
 	if err := p.Timeout(loadTimeout).WaitLoad(); err != nil {
 		return fmt.Errorf("browser: wait for load of %s: %w", url, err)
 	}
-	if err := s.applyDarkEmulation(); err != nil {
-		s.logger.Debug().Err(err).Msg("could not reapply dark color scheme after navigate")
+	if err := t.applyDarkEmulation(); err != nil {
+		t.logger.Debug().Err(err).Msg("could not reapply dark color scheme after navigate")
 	}
 	return nil
 }
 
-func (s *session) Reload(ctx context.Context, ignoreCache bool) error {
-	p := s.page.Context(ctx)
+func (t *tab) Reload(ctx context.Context, ignoreCache bool) error {
+	p := t.page.Context(ctx)
 
 	// rod's own Reload runs location.reload(), which cannot express a
 	// cache-busting hard refresh, so drive Page.reload directly and wait for the
@@ -352,7 +133,7 @@ func (s *session) Reload(ctx context.Context, ignoreCache bool) error {
 	// avoids missing the event.
 	waiter, cancel := p.WithCancel()
 	defer cancel()
-	topFrame := s.page.FrameID
+	topFrame := t.frame
 	wait := waiter.EachEvent(func(e *proto.PageFrameNavigated) bool {
 		return e.Frame != nil && e.Frame.ID == topFrame
 	})
@@ -365,22 +146,22 @@ func (s *session) Reload(ctx context.Context, ignoreCache bool) error {
 	if err := p.Timeout(loadTimeout).WaitLoad(); err != nil {
 		return fmt.Errorf("browser: wait for load after reload: %w", err)
 	}
-	if err := s.applyDarkEmulation(); err != nil {
-		s.logger.Debug().Err(err).Msg("could not reapply dark color scheme after reload")
+	if err := t.applyDarkEmulation(); err != nil {
+		t.logger.Debug().Err(err).Msg("could not reapply dark color scheme after reload")
 	}
 	return nil
 }
 
-func (s *session) CurrentURL(ctx context.Context) (string, error) {
-	info, err := s.page.Context(ctx).Info()
+func (t *tab) CurrentURL(ctx context.Context) (string, error) {
+	info, err := t.page.Context(ctx).Info()
 	if err != nil {
 		return "", fmt.Errorf("browser: read current url: %w", err)
 	}
 	return info.URL, nil
 }
 
-func (s *session) Eval(ctx context.Context, js string, out any) error {
-	res, err := s.page.Context(ctx).Eval(asJSFunc(js))
+func (t *tab) Eval(ctx context.Context, js string, out any) error {
+	res, err := t.page.Context(ctx).Eval(asJSFunc(js))
 	if err != nil {
 		return fmt.Errorf("browser: eval: %w", err)
 	}
@@ -393,8 +174,8 @@ func (s *session) Eval(ctx context.Context, js string, out any) error {
 	return nil
 }
 
-func (s *session) Click(ctx context.Context, selector string) (bool, error) {
-	p := s.page.Context(ctx).Timeout(queryTimeout)
+func (t *tab) Click(ctx context.Context, selector string) (bool, error) {
+	p := t.page.Context(ctx).Timeout(queryTimeout)
 
 	// Has uses rod's not-found sleeper, so a missing element returns
 	// immediately as (false, nil, nil) instead of retrying until the timeout.
@@ -427,32 +208,32 @@ func (s *session) Click(ctx context.Context, selector string) (bool, error) {
 // moment before pressing; an instantaneous hover-then-click is a bot tell.
 func dwell(ctx context.Context) error {
 	d := 200*time.Millisecond + rand.N(600*time.Millisecond)
-	t := time.NewTimer(d)
-	defer t.Stop()
+	tm := time.NewTimer(d)
+	defer tm.Stop()
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf("browser: click dwell: %w", ctx.Err())
-	case <-t.C:
+	case <-tm.C:
 		return nil
 	}
 }
 
-func (s *session) SeedOnNewDocument(ctx context.Context, js string) error {
-	_, err := proto.PageAddScriptToEvaluateOnNewDocument{Source: js}.Call(s.page.Context(ctx))
+func (t *tab) SeedOnNewDocument(ctx context.Context, js string) error {
+	_, err := proto.PageAddScriptToEvaluateOnNewDocument{Source: js}.Call(t.page.Context(ctx))
 	if err != nil {
 		return fmt.Errorf("browser: seed script on new document: %w", err)
 	}
 	return nil
 }
 
-func (s *session) Events() <-chan Event { return s.events }
+func (t *tab) Events() <-chan Event { return t.events }
 
-func (s *session) ShiftWindow(dx, dy int) error {
-	return shiftWindow(s.chrome.pid, dx, dy)
+func (t *tab) ShiftWindow(dx, dy int) error {
+	return shiftWindow(t.inst.chrome.pid, dx, dy)
 }
 
-func (s *session) SetMinimized(ctx context.Context, minimized bool) error {
-	p := s.page.Context(ctx)
+func (t *tab) SetMinimized(ctx context.Context, minimized bool) error {
+	p := t.page.Context(ctx)
 	// Called on the page session, getWindowForTarget resolves our own window.
 	win, err := proto.BrowserGetWindowForTarget{}.Call(p)
 	if err != nil {
@@ -472,30 +253,40 @@ func (s *session) SetMinimized(ctx context.Context, minimized bool) error {
 	return nil
 }
 
-func (s *session) Alive() bool { return s.alive.Load() }
+// Activate selects this tab in its window (Target.activateTarget). It is NOT
+// part of the Session interface: activation is the one focus-touching operation
+// in the codebase and WindowCoordinator is its only sanctioned caller (see
+// window.go and the Taskfile `forbidden` guard).
+func (t *tab) Activate(ctx context.Context) error {
+	err := proto.TargetActivateTarget{TargetID: t.page.TargetID}.Call(t.inst.browser.Context(ctx))
+	if err != nil {
+		return fmt.Errorf("browser: activate tab: %w", err)
+	}
+	return nil
+}
 
-func (s *session) Close() error {
+func (t *tab) Alive() bool { return t.alive.Load() }
+
+// Close releases this tab. The OWNER tab is the window, so closing it closes the
+// whole Chrome instance (and every other platform's tab with it); any other tab
+// is closed on its own, leaving the window and its siblings running.
+func (t *tab) Close() error {
 	var err error
-	s.closeOnce.Do(func() {
+	t.closeOnce.Do(func() {
 		// Set closing first so the pump reports a clean shutdown rather than a
 		// spurious disconnect event.
-		s.closing.Store(true)
-		s.alive.Store(false)
-
-		if cerr := s.browser.Close(); cerr != nil {
-			s.logger.Debug().Err(cerr).Msg("cdp browser close")
+		t.closing.Store(true)
+		t.alive.Store(false)
+		if t.owner {
+			err = t.inst.Close()
+			return
 		}
-		s.cancel()
-
-		if kerr := s.chrome.Kill(); kerr != nil {
-			err = kerr
+		t.inst.forget(t)
+		if _, cerr := (proto.TargetCloseTarget{TargetID: t.page.TargetID}).Call(t.inst.browser); cerr != nil {
+			t.logger.Debug().Err(cerr).Msg("close tab")
+			err = cerr
 		}
-
-		select {
-		case <-s.pumpDone:
-		case <-time.After(closeTimeout):
-			s.logger.Warn().Msg("browser event pump did not stop in time")
-		}
+		t.closeEvents()
 	})
 	return err
 }

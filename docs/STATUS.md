@@ -107,6 +107,201 @@ profile slot grid, explicit override wins) and watcher
 `TestRunDiscoveringZeroStaggerRunsImmediately` / `TestRunDiscoveringApplies
 StaggerOnceOnly`, plus `app.TestDiscoveryStagger`. `task check` passes clean.
 
+LIVE RUNTIME LIFECYCLE (2026-08-31, working tree, UNCOMMITTED). The owner's
+complaint - "restart the app to apply disease", and enabling Kick on the Mac
+producing nothing but a restart hint - is fixed: adding a profile, enabling or
+disabling a profile, enabling or disabling Kick (root default or per-profile),
+and REMOVING a profile all take effect immediately.
+
+- Reconciler (`internal/app/reconcile.go`). `App.Reconcile(cfg)` swaps in the
+  newly committed config and kicks a background pass; `ReconcileSync` runs one,
+  serialized, coalescing a trigger that lands mid-pass into exactly ONE trailing
+  rerun (so a burst of saves cannot double-start a runtime). A pass diffs the
+  desired set (enabled profiles x effective kick) against the running runtimes,
+  stops the deltas first, then starts them. Each `PlatformRuntime` now owns its
+  lifecycle: per-runtime context cancel, its engine's Run goroutine, and a
+  teardown that cancels, waits (10s bound) for Run to return, detaches, then
+  closes the Managed session (`browser.Managed.Close` sets its closed flag
+  before closing the underlying session, so the supervisor exits instead of
+  relaunching Chrome - verified in managed.go). A launch failure logs and leaves
+  the runtime ABSENT (enabled + not up = "starting or failed"), never fatal.
+  Profile DISABLE keeps the store open (UI still lists its queue/history);
+  profile REMOVE closes it. The per-platform start function is an injectable
+  field (`App.startPlat`), so the whole reconciler is unit-tested without Chrome.
+- Wiring: `internal/service.Backend` implements `app.Binder`
+  (AddProfile/RemoveProfile/Attach/Detach) and gained `SetReconciler`;
+  `SettingsService.commit` now does ReloadEngines (config values into running
+  engines) AND Reconcile (which runtimes exist). The GUI entry point is
+  `App.StartLive(ctx, emit, binder)` - boot goes through the same reconcile path
+  as every later change; `main_gui.go` no longer runs engines itself. The CLI is
+  untouched: `App.StartRuntime` still just builds runtimes and the CLI drives
+  `Engine.Run` itself.
+- NEEDS-LOGIN posture. A (profile, platform) whose Chrome user-data dir is
+  missing or EMPTY at launch is a first-ever session: its engine is built paused
+  (`enabled_on_start` forced off for that engine only) and `/api/state` reports
+  `needsLogin: true` for it. This is keyed on the Chrome dir, not on the profile
+  being new, so a first-time Kick enable on the existing main profile gets the
+  paused + needs-login posture too, at boot as well as live. The flag clears when
+  a login check comes back authenticated or the user presses Start; that answer
+  is PERSISTED (review fix 2026-08-31): an unanswered prompt writes
+  `<profileDataDir>/.dw-<platform>-login-pending`, which survives restarts and
+  beats every other signal, so quitting before logging in re-prompts on the next
+  boot instead of silently watching logged out. Answering it removes the pending
+  marker and writes the `-initialized` one. A used Chrome dir with no markers is
+  grandfathered as logged in (installs from before the marker scheme). Also from
+  the same review: `login-check` refuses to run against a busy engine (the probe
+  NAVIGATES the tab - it only runs when the engine is paused or idle), and the
+  shared-window coordinator serializes restore/minimize/activate ops (a release
+  racing a take could leave the window minimized while held) and re-activates
+  the remaining holder's tab when the other platform releases mid-validation.
+- NEW/CHANGED API. `POST /api/profiles/remove {name}` -> `{"ok":true,
+  "dataDir":"..."}`; refuses the last remaining profile (400) and unknown names;
+  the data directory is NEVER deleted. `POST /api/profiles/login-check
+  {profile, platform}` -> `{"loggedIn": true|false|null}`, null when unknowable
+  (no session up, or Kick, which has no probe - see docs/NOTES-kick.md); it is
+  on-demand only, never part of the state poll. `/api/state`: `pendingRestart`
+  is GONE from both the profile entries and the platform entries (the startup
+  snapshot machinery behind it is deleted, not just hidden); platform entries
+  gained `needsLogin`. Engine-action errors no longer say "restart".
+- STILL RESTART/RELAUNCH BOUND (deliberate, documented in the Settings copy):
+  the browser LAUNCH settings - chrome_path, extra_flags, profile_dir, window
+  geometry, mute_audio, start_minimized - are read when Chrome is launched, so a
+  change reaches an already-running session only on its next launch (crash
+  relaunch, runtime toggle, or app restart). Everything else hot-reloads through
+  ReloadEngines. No snapshot machinery was kept for this: the settings rows that
+  need it already say "Needs a Chrome restart".
+- CONFIG MIGRATION: pre-tiling starter configs baked `browser.window` x/y 40,40
+  and `kick.browser.window` x/y 700,40 into the file. Since tiling landed those
+  act as explicit overrides and stack every added profile's windows on slot 0.
+  `applyDefaults` now clears exactly those two pairs to unset (they are
+  byte-identical to `windowTileDefault(0,0)` / `(1,0)`, so no install's windows
+  move); a near-miss like 41,40 is left alone.
+- TESTS: `internal/app/reconcile_test.go` (start on enable, stop on disable with
+  the store kept open, re-enable, kick toggle both directions, added profile
+  starts and publishes needsLogin, removed profile closes its store and leaves
+  its data on disk, launch failure not fatal + retried, 8 concurrent commits
+  start each runtime exactly once, chromeDirFresh, pausedConfig), service tests
+  for the remove route (incl. last-profile refusal and the returned dataDir),
+  the login-check contract (null / false / true and flag clearing), and
+  `TestLiveTogglesReconcile` pinning that every desired-state commit reconciles;
+  config tests for both baked-origin migrations plus a non-matching pair.
+
+ONE CHROME WINDOW PER PROFILE (2026-08-30, working tree, UNCOMMITTED). Four
+profiles x two platforms used to cost EIGHT Chrome instances; it now costs
+FOUR. Kick runs as a TAB in the profile's Twitch Chrome window instead of a
+second instance.
+
+- `internal/browser` split: `Instance` (instance.go) is one Chrome process +
+  CDP connection hosting N tabs; `tab` (session.go) is the Session
+  implementation, one page. `LaunchWith`/`Launch` are unchanged for callers -
+  they return the instance's OWNER tab, and closing that tab closes the whole
+  browser. `Instance.NewTab` opens an extra tab in the SAME window
+  (Target.createTarget, no newWindow); closing it closes only that tab. One
+  event pump per instance routes CDP events to the right tab by session id and,
+  on transport loss, fails every tab and closes `Instance.Done()`.
+- `browser.Group` (group.go) supervises ONE shared window: `Session(ctx, key,
+  init)` hands each platform a STABLE handle (a `Managed` built with
+  `NewSwappable`, i.e. no relaunch closure of its own), the first key claiming
+  the owner tab. On CDP loss the group relaunches the browser ONCE and rebuilds
+  EVERY registered tab in order, re-running each tab's `TabInit` (that is what
+  brings the Twitch GQL capture shim back), then `Swap`s all handles at once so
+  no engine sees a half-built browser. Dynamic tab creation works on a live
+  supervised browser: enabling Kick mid-run opens a tab, it does not relaunch.
+  `WindowHost` is the interface the group needs from a window, so all of this is
+  unit-tested without Chrome.
+- `browser.WindowCoordinator` (window.go) owns SetMinimized/restore for ONE
+  window. Restore is REFCOUNTED: Opening/Validating/Claiming take a hold via
+  `WindowHandle.Restore`, `beginWatching` releases it, and the window only
+  re-minimizes when the LAST hold is gone - so Twitch validating a channel can
+  no longer bury Kick mid-validation. `watcher.Deps.Window` carries the handle;
+  `Engine.setWindowMinimized` now delegates to it (and keeps the old direct
+  path as a fallback for tests).
+- TAB ACTIVATION, PoC, owner decision 2026-08-30. Taking a hold on a window that
+  hosts MORE THAN ONE tab activates the holding tab. That is the previously
+  forbidden Activate family, accepted as the proof-of-concept mechanism. It
+  lives in EXACTLY ONE call site, `WindowCoordinator.activate` in
+  `internal/browser/window.go`, and the Taskfile `forbidden` task was split in
+  two: `bringToFront` stays banned everywhere, `\.Activate\(` stays banned
+  everywhere EXCEPT that one file. Do not widen the exemption.
+- BACKLOG, RELEASE-BLOCKING: replace tab activation with a no-activation
+  solution, or prove muted background-tab playback reliable. A muted background
+  tab is the known silent-failure family (Chrome throttles it and drop minutes
+  stop accruing); the soft/hard stall watchdogs are the only backstop today.
+- VERIFY LIVE (Mac): shared-mode Kick progress. Watch whether the Kick tab keeps
+  accruing minutes while the Twitch tab is in front, and whether activation on a
+  channel switch disturbs the other platform's playback. If it does not hold up,
+  `kick.browser.separate_window: true` restores the two-instance layout per
+  profile with no other change (it is the thin-client fallback and stays fully
+  supported).
+- CONFIG: new key `kick.browser.separate_window`, default FALSE (= shared). It
+  is a LAUNCH setting (applies on a runtime's next launch). In shared mode the
+  kick block's `profile_dir` and `window` geometry are UNUSED, and window tiling
+  gives Kick col 0 row window_slot (the same window as Twitch) instead of col 1;
+  separate mode keeps the col-per-platform grid.
+- ONE-TIME KICK RE-LOGIN: shared mode runs Kick in the TWITCH Chrome profile
+  dir, so an existing `chrome-profile-kick` login does NOT carry over. Kick
+  reports `needsLogin` on its first shared start and the user logs in once in
+  the shared window. Because that platform no longer owns a Chrome dir, first-run
+  detection for shared Kick uses a marker file `<profileDataDir>/.dw-kick-
+  initialized` written when the runtime first comes up; Twitch (and either
+  platform in separate mode) still keys on Chrome-dir freshness. `/api/state`
+  `needsLogin` semantics are unchanged.
+- LIFECYCLE: in shared mode Twitch OWNS the window. Starting Kick on a live
+  profile opens a tab; stopping Kick closes only that tab; stopping Twitch (or
+  the profile) closes the whole browser, and Kick cannot run without it -
+  reconcile-level Twitch-only-off does not exist, since every enabled profile
+  always runs Twitch by design.
+- TESTS: browser `TestWindowCoordinator*` (refcounted holds, activation only for
+  the holding tab, single-tab windows never activate, start_minimized off skips
+  window state, unregister releases the hold, activation error not fatal) and
+  `TestGroup*` (second platform gets a tab not a relaunch, close one tab without
+  closing the window, closing the owner closes the window, relaunch rebuilds
+  every tab and re-runs its init, tab on a closed window refused); app
+  `TestSharedWindowKickStartsAsATabOnTheLiveBrowser`,
+  `TestSharedWindowKickStopClosesOnlyItsTab`,
+  `TestSharedWindowStoppingTheProfileClosesTheBrowser`,
+  `TestSeparateWindowFallbackLaunchesTwoInstances`,
+  `TestSharedModeKickNeedsLoginOnItsFirstStart`, `TestPlatformFirstRunRules`;
+  config `TestWindowTileDefaultSharedWindowUsesTheProfileSlot` plus the existing
+  tiling tests pinned to separate mode. The app tests run the REAL start path
+  against fake browsers through two new injectable seams (`App.openWindow`,
+  `App.launchSession`), so the window lifecycle itself is what is under test.
+- FRONTEND: no state shape changed - no UI work is owed by this change.
+
+UI HALF BUILT (2026-08-31, working tree, UNCOMMITTED). The live-lifecycle UI
+follow-up above is done: (1) `pendingRestart` reads stay removed (unchanged
+from the prior pass). (2) The needsLogin now-card body is a real guided flow:
+mode-agnostic copy ("Log in to <Platform> in this profile's watcher window,
+then check." - never promises a separate window for Kick, since shared-window
+mode runs it as a tab in Twitch's window), a "Check login" button hitting
+`POST /api/profiles/login-check`, and the existing idle-state Start button
+right below it. Check-login result: true shows "Logged in - press Start below
+to begin."; false shows "Not logged in yet - finish logging in and check
+again."; null shows "Can't auto-detect login for <Platform> - once you're
+logged in, press Start." Both buttons stay disabled in preview mode.
+(3) The Profiles pane has a Remove control per row: inline two-step confirm
+(button flips to "Really remove <name>?" plus a Cancel button, no
+window.confirm), disabled with a title when it is the only profile, and shows
+"Profile removed. Its queue, history and logins are still on disk at
+<dataDir>." on success. (4) Each row now shows live per-platform status
+(running / starting / needs login / stopped / failed) pulled from /api/state,
+reusing the footer's enabled/up/needsLogin semantics; saveProfileEdits diffs
+against the loaded snapshot and only fires setProfileEnabled/updateProfile for
+a profile whose fields actually changed, so an unrelated profile's toggles are
+never re-sent. Add-profile copy no longer mentions restarting ("Profile added
+- its watcher window is opening. Log in to Twitch (and Kick if enabled) there,
+then press Start on the dashboard.") and polls /api/state briefly (4x, 1s
+apart) so the new row's live status appears without leaving the pane. SAMPLE
+data in api.js flips main's Kick platform to `needsLogin: true` so the flow is
+designable offline.
+
+MAC VERIFY-LIVE (added to the existing multi-profile surface test pass):
+welcome/login flow end-to-end (needs-login card copy, Check login against a
+real Twitch session, Start clearing the flag), the Profiles pane Remove flow
+(confirm/cancel, the dataDir message, the disabled-with-title single-profile
+case), and a live Kick toggle actually opening a tab in the shared window
+(not a separate window) so the mode-agnostic copy holds up.
+
 OWED: a Mac test pass of the whole multi-profile surface (two profiles on
 the Mac = the full thin-client shape minus GTK - this needs a real display
 and is not doable in this container); the Linux GUI runtime itself is still

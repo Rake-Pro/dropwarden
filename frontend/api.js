@@ -10,14 +10,17 @@
 
 const SAMPLE = {
   profiles: [{
-    name: 'main', displayName: 'main', enabled: true, pendingRestart: false,
+    name: 'main', displayName: 'main', enabled: true,
     platforms: [
       {
-        platform: 'twitch', enabled: true, up: true, pendingRestart: false,
+        platform: 'twitch', enabled: true, up: true, needsLogin: false,
         status: { profile: 'main', platform: 'twitch', state: 'watching', paused: false, channelLogin: 'shroud', dropName: 'Wooden Barricade', current: 42, required: 60, game: 'Rust' },
       },
       {
-        platform: 'kick', enabled: true, up: true, pendingRestart: false,
+        // needsLogin sample so the first-run login flow is designable offline
+        // (a paused/idle engine parked on a fresh Chrome profile, per the real
+        // backend's platformStates in internal/service/httpapi.go).
+        platform: 'kick', enabled: true, up: true, needsLogin: true,
         status: { profile: 'main', platform: 'kick', state: 'idle', paused: true, channelLogin: '', dropName: '', current: 0, required: 0, game: '' },
       },
     ],
@@ -33,13 +36,13 @@ const SAMPLE = {
     } },
     spark: [10, 30, 20, 60, 40, 80, 55, 90, 70, 100, 65, 45, 85, 60],
   }, {
-    name: 'p2', displayName: 'Profile 2', enabled: true, pendingRestart: false,
+    name: 'p2', displayName: 'Profile 2', enabled: true,
     platforms: [
       {
-        platform: 'twitch', enabled: true, up: true, pendingRestart: false,
+        platform: 'twitch', enabled: true, up: true, needsLogin: false,
         status: { profile: 'p2', platform: 'twitch', state: 'opening', paused: false, channelLogin: 'ninja', dropName: '', current: 0, required: 0, game: 'Once Human' },
       },
-      { platform: 'kick', enabled: false, up: false, pendingRestart: false, status: null },
+      { platform: 'kick', enabled: false, up: false, needsLogin: false, status: null },
     ],
     queue: [
       { dropID: 'd5', platform: 'twitch', dropName: 'Silver Backpack Skin', game: 'Once Human', status: 'pending', enabled: true, currentMinutes: 0, requiredMinutes: 90, reason: '@ninja · queued' },
@@ -127,8 +130,8 @@ export const api = {
   get profile() { return activeProfile; },
   async state() { return fetchState(); },
   async refreshState() { cache = null; return fetchState(); },
-  // Every profile's full block (name, displayName, enabled, pendingRestart,
-  // platforms, queue, claims, stats, spark), in config order.
+  // Every profile's full block (name, displayName, enabled, platforms, queue,
+  // claims, stats, spark), in config order.
   async profiles() { return (await fetchState()).profiles || []; },
   // Enabled/up/status per platform of the first profile, twitch first.
   async platforms() { return (await fetchState()).platforms || []; },
@@ -161,6 +164,12 @@ export const api = {
   setPriority(mode) { return post('/api/queue/priority', { mode }); },
   addProfile(name, displayName) { return post('/api/profiles', { name, displayName }); },
   setProfileEnabled(name, on) { return post('/api/profiles/enabled', { name, on }); },
+  // Never deletes the data directory; the response carries its path so the UI
+  // can tell the user where it still lives.
+  removeProfile(name) { return post('/api/profiles/remove', { name }); },
+  // Returns { loggedIn: true|false|null }; null means unknowable (no session
+  // up, or a platform with no probe - see docs/NOTES-kick.md). On-demand only.
+  loginCheck(profile, platform) { return post('/api/profiles/login-check', { profile, platform }); },
   // The Profiles settings pane's raw per-profile overlay (games/inherit/kick),
   // distinct from the resolved blocks profiles() returns.
   async profileConfigs() {

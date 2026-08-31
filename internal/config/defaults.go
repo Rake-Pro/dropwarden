@@ -74,6 +74,8 @@ func (c *Config) applyDefaults() {
 	setFloat(&c.Browser.Player.Volume, 0.01)
 	setDuration(&c.Browser.Player.ReassertInterval, 30*time.Second)
 
+	c.migrateBakedWindowOrigins()
+
 	setString(&c.Auth.Mode, "manual")
 
 	setString(&c.Logging.Level, "info")
@@ -84,6 +86,25 @@ func (c *Config) applyDefaults() {
 	// into the profiles block the next time the config is saved.
 	if len(c.Profiles) == 0 {
 		c.Profiles = []ProfileConfig{{Name: MainProfileName, Dir: ".", Enabled: true}}
+	}
+}
+
+// migrateBakedWindowOrigins un-pins the window positions the pre-tiling starter
+// template baked into every config it wrote: browser.window x/y 40,40 and
+// kick.browser.window x/y 700,40. Since the window-tiling default landed, an
+// explicit x/y is an OVERRIDE that wins over the computed slot, so those baked
+// values stack every added profile's windows on top of the first profile's.
+// Both pairs are byte-identical to what the tiler computes for slot 0
+// (windowTileDefault(0,0) and (1,0)), so clearing them to 0,0 (= unset) cannot
+// change where any existing install's windows land; it only lets profiles in
+// other slots tile. A deliberate override that happens to sit one pixel away
+// (41,40) is left alone.
+func (c *Config) migrateBakedWindowOrigins() {
+	if x, y := windowTileDefault(0, 0); c.Browser.Window.X == x && c.Browser.Window.Y == y {
+		c.Browser.Window.X, c.Browser.Window.Y = 0, 0
+	}
+	if x, y := windowTileDefault(1, 0); c.Kick.Browser.Window.X == x && c.Kick.Browser.Window.Y == y {
+		c.Kick.Browser.Window.X, c.Kick.Browser.Window.Y = 0, 0
 	}
 }
 

@@ -343,6 +343,9 @@ func TestWindowTileDefaultMatchesLegacySingleProfile(t *testing.T) {
 		t.Fatalf("twitch window = (%d,%d), want (40,40)", twitch.Browser.Window.X, twitch.Browser.Window.Y)
 	}
 
+	// Separate-window mode is the legacy two-instance layout: Kick keeps its
+	// own window beside the Twitch one (col 1).
+	cfg.Kick.Browser.SeparateWindow = true
 	kick, err := cfg.ProfileKickRuntimeConfig(MainProfileName)
 	if err != nil {
 		t.Fatalf("ProfileKickRuntimeConfig: %v", err)
@@ -352,8 +355,40 @@ func TestWindowTileDefaultMatchesLegacySingleProfile(t *testing.T) {
 	}
 }
 
+func TestWindowTileDefaultSharedWindowUsesTheProfileSlot(t *testing.T) {
+	// Shared window (the default): Kick is a TAB in the profile's Twitch
+	// window, so there is no second window to tile - its geometry is the
+	// profile's own slot, identical to Twitch's.
+	cfg, _ := StarterDefaults()
+	if cfg.KickSeparateWindow() {
+		t.Fatal("shared window must be the default")
+	}
+	slot1 := 1
+	cfg.Profiles = append(cfg.Profiles, ProfileConfig{
+		Name: "second", Enabled: true, AnyGame: boolPtr(true), WindowSlot: &slot1,
+		Kick: ProfileKickConfig{Enabled: boolPtr(true)},
+	})
+	for _, tc := range []struct {
+		name string
+		x, y int
+	}{
+		{MainProfileName, 40, 40},
+		{"second", 40, 460},
+	} {
+		kick, err := cfg.ProfileKickRuntimeConfig(tc.name)
+		if err != nil {
+			t.Fatalf("ProfileKickRuntimeConfig(%s): %v", tc.name, err)
+		}
+		if kick.Browser.Window.X != tc.x || kick.Browser.Window.Y != tc.y {
+			t.Fatalf("%s: shared kick window = (%d,%d), want (%d,%d)",
+				tc.name, kick.Browser.Window.X, kick.Browser.Window.Y, tc.x, tc.y)
+		}
+	}
+}
+
 func TestWindowTileDefaultMultiProfileSlots(t *testing.T) {
 	cfg, _ := StarterDefaults()
+	cfg.Kick.Browser.SeparateWindow = true
 	slot1 := 1
 	cfg.Profiles = append(cfg.Profiles, ProfileConfig{
 		Name: "second", Enabled: true, AnyGame: boolPtr(true), WindowSlot: &slot1,
@@ -405,3 +440,65 @@ func TestWindowTileDefaultExplicitOverrideWins(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// parseYAML is the load path (defaults + validation) without touching disk.
+func parseYAML(t *testing.T, body string) *Config {
+	t.Helper()
+	cfg, err := parse([]byte(body))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	return cfg
+}
+
+func TestMigrateBakedWindowOrigins(t *testing.T) {
+	// The pre-tiling starter template baked slot-0's positions into every
+	// config it wrote; they must be un-pinned on load so other slots tile.
+	cfg := parseYAML(t, `
+games: [Rust]
+browser:
+  window: {x: 40, y: 40}
+kick:
+  browser:
+    separate_window: true
+    window: {x: 700, y: 40}
+`)
+	if cfg.Browser.Window.X != 0 || cfg.Browser.Window.Y != 0 {
+		t.Fatalf("legacy twitch origin not cleared: (%d,%d)", cfg.Browser.Window.X, cfg.Browser.Window.Y)
+	}
+	if cfg.Kick.Browser.Window.X != 0 || cfg.Kick.Browser.Window.Y != 0 {
+		t.Fatalf("legacy kick origin not cleared: (%d,%d)", cfg.Kick.Browser.Window.X, cfg.Kick.Browser.Window.Y)
+	}
+	// Clearing must not move slot 0: the tiler recomputes the same values.
+	tw, err := cfg.ProfileRuntimeConfig(MainProfileName)
+	if err != nil {
+		t.Fatalf("ProfileRuntimeConfig: %v", err)
+	}
+	if tw.Browser.Window.X != 40 || tw.Browser.Window.Y != 40 {
+		t.Fatalf("slot 0 twitch moved: (%d,%d)", tw.Browser.Window.X, tw.Browser.Window.Y)
+	}
+	kc, err := cfg.ProfileKickRuntimeConfig(MainProfileName)
+	if err != nil {
+		t.Fatalf("ProfileKickRuntimeConfig: %v", err)
+	}
+	if kc.Browser.Window.X != 700 || kc.Browser.Window.Y != 40 {
+		t.Fatalf("slot 0 kick moved: (%d,%d)", kc.Browser.Window.X, kc.Browser.Window.Y)
+	}
+}
+
+func TestMigrateBakedWindowOriginsLeavesRealOverrides(t *testing.T) {
+	cfg := parseYAML(t, `
+games: [Rust]
+browser:
+  window: {x: 41, y: 40}
+kick:
+  browser:
+    window: {x: 700, y: 41}
+`)
+	if cfg.Browser.Window.X != 41 || cfg.Browser.Window.Y != 40 {
+		t.Fatalf("deliberate twitch override clobbered: (%d,%d)", cfg.Browser.Window.X, cfg.Browser.Window.Y)
+	}
+	if cfg.Kick.Browser.Window.X != 700 || cfg.Kick.Browser.Window.Y != 41 {
+		t.Fatalf("deliberate kick override clobbered: (%d,%d)", cfg.Kick.Browser.Window.X, cfg.Kick.Browser.Window.Y)
+	}
+}

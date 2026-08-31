@@ -131,10 +131,12 @@ engine/disco handles + startupKick flag per profile), plus `Order []string`.
   honest disabled-vs-not-running messages, now per profile.
 - Queue actions gain `profile` in the body (`/api/queue/order|enabled|
   priority`); priority mode stays a root (shared) setting in v1.
-- `POST /api/profiles` (add) and `POST /api/profiles/enabled` (enable/
-  disable, effective on restart like kick.enabled, same pendingRestart
-  honesty via per-profile startup snapshot). NO delete/rename in v1 -
-  documented as manual file ops with the app stopped.
+- `POST /api/profiles` (add), `POST /api/profiles/enabled` (enable/disable)
+  and `POST /api/profiles/remove` are all LIVE since 2026-08-31: the settings
+  commit reconciles the running runtimes (see the lifecycle section below), so
+  nothing reports pendingRestart any more. Remove refuses the last remaining
+  profile and NEVER deletes the profile's data directory (it returns the path).
+  No rename in v1.
 - `GET /api/debug` -> `profiles: {<name>: {twitch: {...}, kick: {...}}}` +
   shared logTail/paths (paths listed per profile).
 
@@ -171,7 +173,8 @@ current platform-only wording. Tooltip: one segment per running engine.
 
 ## Explicitly out of scope (v1)
 
-- Profile delete/rename in-app; per-profile theme/player/watchdog tuning;
+- Profile rename in-app (delete landed 2026-08-31); per-profile theme/player/
+  watchdog tuning;
   any auth between profiles (household-trusted UI); store merges between
   layouts; per-profile priority mode.
 - OPEN QUESTION (owner, undecided): optional `--listen <addr>` serve mode
@@ -198,6 +201,15 @@ current platform-only wording. Tooltip: one segment per running engine.
   window tiling and the 90s discovery stagger are wired and unit-tested (see
   STATUS.md). Mac test pass is the one item still PENDING - it needs a real
   display and is not doable in-container.
+- Phase 4 - LIVE LIFECYCLE (2026-08-31, added after phases 0-3): profile and
+  kick toggles no longer wait for a restart. `internal/app/reconcile.go` diffs
+  the desired set (enabled profiles x effective kick) against running runtimes
+  and starts/stops the deltas; each PlatformRuntime owns its ctx cancel, Run
+  goroutine, and teardown; `service.Backend` implements `app.Binder` so the API
+  view follows. A (profile, platform) launched against a fresh/empty Chrome
+  user-data dir starts PAUSED and is published with `needsLogin: true` (this is
+  what a first-time Kick enable hits). New routes: `/api/profiles/remove`,
+  `/api/profiles/login-check`. See docs/STATUS.md for the full entry.
 
 ## Risks / notes
 

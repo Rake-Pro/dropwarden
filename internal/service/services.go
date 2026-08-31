@@ -1,59 +1,70 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/rake-pro/dropwarden/internal/browser"
 	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rake-pro/dropwarden/internal/domain"
 	"github.com/rake-pro/dropwarden/internal/store"
+	"github.com/rake-pro/dropwarden/internal/twitch"
 	"github.com/rake-pro/dropwarden/internal/watcher"
 )
 
 // ProfileBackend is one profile's slot in the Backend: its own store (opened
 // eagerly at startup, so the UI can read a profile before its Chrome is up)
-// plus the engine and discoverer handles attached per platform once that
-// profile's runtime comes up. A handle stays nil while Chrome starts, or
-// forever when that profile failed to launch.
+// plus the engine, discoverer, and session handles attached per platform once
+// that profile's runtime comes up. A handle stays nil while Chrome starts, and
+// is dropped again when the reconciler stops that runtime.
 type ProfileBackend struct {
 	Name        string
 	DisplayName string
 	Store       *store.Store
 
-	// startupEnabled/startupKick are what THIS process actually launched with.
-	// The live config changes the moment the user saves a toggle, but the
-	// runtime only follows on restart; the UI needs both to tell "restart
-	// pending" apart from "failed to launch".
-	startupEnabled bool
-	startupKick    bool
-
-	mu      sync.RWMutex
-	engines map[domain.Platform]*watcher.Engine
-	discos  map[domain.Platform]watcher.Discoverer
+	mu         sync.RWMutex
+	engines    map[domain.Platform]*watcher.Engine
+	discos     map[domain.Platform]watcher.Discoverer
+	sessions   map[domain.Platform]browser.Session
+	needsLogin map[domain.Platform]bool
 }
 
-// NewProfileBackend builds one profile's slot, snapshotting its enabled/kick
-// state as this process started with it.
+// NewProfileBackend builds one profile's slot.
 func NewProfileBackend(cfg *config.Config, name string, st *store.Store) *ProfileBackend {
 	p := &ProfileBackend{
 		Name: name, DisplayName: name, Store: st,
-		engines: map[domain.Platform]*watcher.Engine{},
-		discos:  map[domain.Platform]watcher.Discoverer{},
+		engines:    map[domain.Platform]*watcher.Engine{},
+		discos:     map[domain.Platform]watcher.Discoverer{},
+		sessions:   map[domain.Platform]browser.Session{},
+		needsLogin: map[domain.Platform]bool{},
 	}
 	if eff, err := cfg.Effective(name); err == nil {
 		p.DisplayName = eff.DisplayName
-		p.startupEnabled = eff.Enabled
-		p.startupKick = eff.KickEnabled
 	}
 	return p
 }
 
-// Attach wires one platform's engine and discoverer once that runtime is up.
-func (p *ProfileBackend) Attach(plat domain.Platform, e *watcher.Engine, d watcher.Discoverer) {
+// Attach wires one platform's engine, discoverer, and session once that runtime
+// is up. needsLogin marks a runtime that came up against a fresh Chrome profile:
+// its engine is paused and the UI must walk the user through the manual login.
+func (p *ProfileBackend) Attach(plat domain.Platform, e *watcher.Engine, d watcher.Discoverer, sess browser.Session, needsLogin bool) {
 	p.mu.Lock()
 	p.engines[plat.OrTwitch()] = e
 	p.discos[plat.OrTwitch()] = d
+	p.sessions[plat.OrTwitch()] = sess
+	p.needsLogin[plat.OrTwitch()] = needsLogin
+	p.mu.Unlock()
+}
+
+// Detach drops one platform's handles when its runtime stops.
+func (p *ProfileBackend) Detach(plat domain.Platform) {
+	p.mu.Lock()
+	delete(p.engines, plat.OrTwitch())
+	delete(p.discos, plat.OrTwitch())
+	delete(p.sessions, plat.OrTwitch())
+	delete(p.needsLogin, plat.OrTwitch())
 	p.mu.Unlock()
 }
 
@@ -72,6 +83,29 @@ func (p *ProfileBackend) Discoverer(plat domain.Platform) watcher.Discoverer {
 	return p.discos[plat.OrTwitch()]
 }
 
+// Session returns the profile's browser session for a platform, or nil.
+func (p *ProfileBackend) Session(plat domain.Platform) browser.Session {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.sessions[plat.OrTwitch()]
+}
+
+// NeedsLogin reports whether that platform's session is still waiting for its
+// first manual login.
+func (p *ProfileBackend) NeedsLogin(plat domain.Platform) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.needsLogin[plat.OrTwitch()]
+}
+
+// ClearNeedsLogin drops the needs-login flag: the login probe came back
+// authenticated, or the user started the engine anyway.
+func (p *ProfileBackend) ClearNeedsLogin(plat domain.Platform) {
+	p.mu.Lock()
+	delete(p.needsLogin, plat.OrTwitch())
+	p.mu.Unlock()
+}
+
 // Engines returns the profile's running engines, twitch first.
 func (p *ProfileBackend) Engines() []*watcher.Engine {
 	var out []*watcher.Engine
@@ -87,45 +121,125 @@ func (p *ProfileBackend) Engines() []*watcher.Engine {
 // listing (state, debug, tray).
 var platformOrder = []domain.Platform{domain.PlatformTwitch, domain.PlatformKick}
 
+// Reconciler applies the desired state in a newly committed config to the
+// running runtimes (internal/app implements it). It is nil in the CLI and in
+// tests that do not exercise the lifecycle.
+type Reconciler interface {
+	Reconcile(cfg *config.Config)
+}
+
 // Backend is the shared state the bound services operate over. It is populated
-// by the app at startup: one ProfileBackend per profile whose store was
-// opened, in config order.
+// by the app at startup (one ProfileBackend per profile whose store was opened,
+// in config order) and kept in step afterwards by the reconciler, which adds
+// and removes profiles and attaches and detaches their runtimes live.
 type Backend struct {
 	ConfigPath string
 
-	Profiles map[string]*ProfileBackend
-	Order    []string
-
-	mu  sync.RWMutex
-	cfg *config.Config
+	mu       sync.RWMutex
+	cfg      *config.Config
+	rec      Reconciler
+	profiles map[string]*ProfileBackend
+	order    []string
 }
 
 // NewBackend builds a Backend over the profiles this process opened.
 func NewBackend(cfg *config.Config, cfgPath string, profiles ...*ProfileBackend) *Backend {
-	b := &Backend{ConfigPath: cfgPath, cfg: cfg, Profiles: map[string]*ProfileBackend{}}
+	b := &Backend{ConfigPath: cfgPath, cfg: cfg, profiles: map[string]*ProfileBackend{}}
 	for _, p := range profiles {
-		b.Profiles[p.Name] = p
-		b.Order = append(b.Order, p.Name)
+		b.profiles[p.Name] = p
+		b.order = append(b.order, p.Name)
 	}
 	return b
 }
 
-// Profile returns the named profile's backend, or nil when this process did
-// not open it (disabled at start, or added since).
+// SetReconciler installs the runtime reconciler every config commit triggers.
+// markSessionReady persists a needs-login answer through the reconciler when it
+// supports that (internal/app does; the recording fakes in tests do not) - the
+// in-memory flag is cleared by the caller, this only stops the prompt from
+// coming back on the next boot.
+func (b *Backend) markSessionReady(profile string, plat domain.Platform) {
+	b.mu.RLock()
+	rec := b.rec
+	b.mu.RUnlock()
+	if m, ok := rec.(interface {
+		MarkSessionReady(profile string, plat domain.Platform)
+	}); ok {
+		m.MarkSessionReady(profile, plat)
+	}
+}
+
+func (b *Backend) SetReconciler(r Reconciler) {
+	b.mu.Lock()
+	b.rec = r
+	b.mu.Unlock()
+}
+
+// AddProfile registers a profile the reconciler has just opened a store for.
+func (b *Backend) AddProfile(name string, st *store.Store) {
+	b.mu.Lock()
+	cfg := b.cfg
+	if _, ok := b.profiles[name]; !ok {
+		b.profiles[name] = NewProfileBackend(cfg, name, st)
+		b.order = append(b.order, name)
+	}
+	b.mu.Unlock()
+}
+
+// RemoveProfile forgets a profile whose store the reconciler is about to close.
+func (b *Backend) RemoveProfile(name string) {
+	b.mu.Lock()
+	delete(b.profiles, name)
+	out := b.order[:0]
+	for _, n := range b.order {
+		if n != name {
+			out = append(out, n)
+		}
+	}
+	b.order = out
+	b.mu.Unlock()
+}
+
+// Attach publishes one live (profile, platform) runtime (app.Binder).
+func (b *Backend) Attach(profile string, plat domain.Platform, e *watcher.Engine, d watcher.Discoverer, sess browser.Session, needsLogin bool) {
+	if p := b.Profile(profile); p != nil {
+		p.Attach(plat, e, d, sess, needsLogin)
+	}
+}
+
+// Detach drops one (profile, platform) runtime that has stopped (app.Binder).
+func (b *Backend) Detach(profile string, plat domain.Platform) {
+	if p := b.Profile(profile); p != nil {
+		p.Detach(plat)
+	}
+}
+
+// Profile returns the named profile's backend, or nil when this process has no
+// store open for it (disabled, or its store failed to open).
 func (b *Backend) Profile(name string) *ProfileBackend {
 	if name == "" {
 		return b.FirstProfile()
 	}
-	return b.Profiles[name]
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.profiles[name]
 }
 
 // FirstProfile returns the first opened profile: the only one in a
 // single-profile install, and the default target for calls that omit a profile.
 func (b *Backend) FirstProfile() *ProfileBackend {
-	if len(b.Order) == 0 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if len(b.order) == 0 {
 		return nil
 	}
-	return b.Profiles[b.Order[0]]
+	return b.profiles[b.order[0]]
+}
+
+// openOrder returns the names of the profiles this process has stores open for.
+func (b *Backend) openOrder() []string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return append([]string(nil), b.order...)
 }
 
 // ProfileInfo names one configured profile for label-building callers (tray).
@@ -135,8 +249,8 @@ type ProfileInfo struct {
 }
 
 // ProfileList returns every CONFIGURED profile in config order, including ones
-// this process did not open: the tray builds an item set per pair at startup
-// and shows each one only while its engine exists.
+// with no runtime up: the tray builds an item set per pair at startup and shows
+// each one only while its engine exists.
 func (b *Backend) ProfileList() []ProfileInfo {
 	cfg := b.config()
 	out := make([]ProfileInfo, 0, len(cfg.Profiles))
@@ -163,8 +277,10 @@ func (b *Backend) EngineFor(profile string, plat domain.Platform) *watcher.Engin
 // AllEngines returns every running engine across every profile.
 func (b *Backend) AllEngines() []*watcher.Engine {
 	var out []*watcher.Engine
-	for _, name := range b.Order {
-		out = append(out, b.Profiles[name].Engines()...)
+	for _, name := range b.openOrder() {
+		if p := b.Profile(name); p != nil {
+			out = append(out, p.Engines()...)
+		}
 	}
 	return out
 }
@@ -172,11 +288,16 @@ func (b *Backend) AllEngines() []*watcher.Engine {
 // ReloadEngines pushes the current config into every running engine, per
 // profile: each engine gets its own profile's derived config (games overlay,
 // and for Kick its own browser block and gentler watchdogs), so no engine ever
-// receives the root config verbatim.
+// receives the root config verbatim. Values that are only read when Chrome is
+// LAUNCHED (chrome_path, extra_flags, profile_dir, window geometry, mute_audio,
+// start_minimized) reach a running session on its next launch, not here.
 func (b *Backend) ReloadEngines() {
 	cfg := b.config()
-	for _, name := range b.Order {
-		p := b.Profiles[name]
+	for _, name := range b.openOrder() {
+		p := b.Profile(name)
+		if p == nil {
+			continue
+		}
 		if e := p.Engine(domain.PlatformTwitch); e != nil {
 			if pc, err := cfg.ProfileRuntimeConfig(name); err == nil {
 				e.ReloadConfig(pc)
@@ -196,8 +317,8 @@ func (b *Backend) config() *config.Config {
 	return b.cfg
 }
 
-// storeFor resolves a profile's store, erroring on a profile this process did
-// not open.
+// storeFor resolves a profile's store, erroring on a profile this process has
+// no store open for.
 func (b *Backend) storeFor(profile string) (*store.Store, error) {
 	p := b.Profile(profile)
 	if p == nil || p.Store == nil {
@@ -369,7 +490,48 @@ func (s *WatcherService) Status(profile string, plat domain.Platform) watcher.St
 }
 
 func (s *WatcherService) Start(profile string, plat domain.Platform) error {
+	// Starting by hand answers the needs-login prompt: either the user logged
+	// in, or they want the engine to work anyway. Either way stop nagging.
+	if p := s.b.Profile(profile); p != nil && p.NeedsLogin(plat) {
+		p.ClearNeedsLogin(plat)
+		s.b.markSessionReady(profile, plat)
+	}
 	return s.engineDo(profile, plat, func(e *watcher.Engine) { e.Start() })
+}
+
+// LoginCheck probes whether one (profile, platform) session is authenticated.
+// It returns nil when the answer is unknowable: no session is up for that pair,
+// or the platform has no login probe (Kick - see docs/NOTES-kick.md). The probe
+// drives a real navigation plus an eval in that Chrome, so it is on-demand only
+// and never part of the state poll. A positive result clears the needs-login
+// flag the UI shows.
+func (s *WatcherService) LoginCheck(ctx context.Context, profile string, plat domain.Platform) (*bool, error) {
+	p := s.b.Profile(profile)
+	if p == nil {
+		return nil, fmt.Errorf("unknown profile %q", profile)
+	}
+	sess := p.Session(plat)
+	if sess == nil || plat.OrTwitch() != domain.PlatformTwitch {
+		return nil, nil
+	}
+	// The probe NAVIGATES the watcher tab (twitch.CheckLogin loads the home
+	// page), so it must never run against an engine mid-watch - that would
+	// yank its player. Only a parked engine (paused or idle) may be probed.
+	if e := p.Engine(plat); e != nil {
+		if est := e.Status(); !est.Paused && est.State != watcher.StateIdle {
+			return nil, fmt.Errorf("cannot check login while the %s watcher is %s - pause it first (the probe navigates its window)",
+				plat.OrTwitch(), est.State)
+		}
+	}
+	st, err := twitch.CheckLogin(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+	if st.LoggedIn && p.NeedsLogin(plat) {
+		p.ClearNeedsLogin(plat)
+		s.b.markSessionReady(profile, plat)
+	}
+	return &st.LoggedIn, nil
 }
 
 func (s *WatcherService) Stop(profile string, plat domain.Platform) error {

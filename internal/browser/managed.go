@@ -44,6 +44,30 @@ func NewManaged(initial Session, relaunch func(ctx context.Context) (Session, er
 	return m
 }
 
+// NewSwappable wraps a session whose replacements are pushed in from OUTSIDE
+// (Swap) instead of pulled from a relaunch closure. The shared-window Group
+// uses it: one supervisor owns the Chrome instance and rebuilds EVERY platform's
+// tab together, so the per-platform handles must not each try to relaunch.
+func NewSwappable(initial Session, logger zerolog.Logger) *Managed {
+	m := &Managed{
+		logger: logger,
+		cur:    initial,
+		events: make(chan Event, eventBuffer),
+	}
+	go m.supervise(initial)
+	return m
+}
+
+// Swap installs an externally rebuilt session in place of the dead one. Only
+// valid on a NewSwappable handle; the stable event stream and every caller's
+// Session reference survive.
+func (m *Managed) Swap(next Session) {
+	m.mu.Lock()
+	m.cur = next
+	m.mu.Unlock()
+	go m.supervise(next)
+}
+
 // supervise forwards one underlying session's events and, when that session's
 // stream ends (its pump closes on disconnect/crash/close), starts recovery.
 func (m *Managed) supervise(s Session) {
@@ -55,6 +79,11 @@ func (m *Managed) supervise(s Session) {
 		}
 	}
 	if m.closed.Load() {
+		return
+	}
+	if m.relaunch == nil {
+		// Externally supervised (shared window): the Group rebuilds the browser
+		// and every platform tab, then Swaps the replacement in here.
 		return
 	}
 	m.logger.Warn().Msg("browser session lost; relaunching chrome")

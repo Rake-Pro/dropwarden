@@ -115,11 +115,25 @@ func (e *Engine) applyProgress(ps []domain.Progress) (minutes int, increased boo
 	return best, false
 }
 
-// setWindowMinimized applies the start_minimized policy: no-op unless the user
-// runs minimized, best-effort otherwise. The engine restores the window while a
-// channel is opened and validated (a minimized/hidden window can suppress the
-// player's autoplay) and re-minimizes once playback is confirmed.
+// setWindowMinimized asks this engine's window coordinator for a visible,
+// foregrounded tab (minimized=false) or gives that claim up (minimized=true).
+// The engine needs the window while a channel is opened and validated (a
+// minimized or backgrounded tab can suppress the player's autoplay) and gives it
+// back once playback is confirmed.
+//
+// The coordinator owns the policy: it applies start_minimized, refcounts holds
+// across the platforms sharing the window, and brings the holding tab to the
+// front. Without one (tests, and any runtime built before the coordinator was
+// wired) this falls back to driving the session's window state directly.
 func (e *Engine) setWindowMinimized(ctx context.Context, minimized bool) {
+	if w := e.deps.Window; w != nil {
+		if minimized {
+			w.Release(ctx)
+		} else {
+			w.Restore(ctx)
+		}
+		return
+	}
 	if !e.deps.Cfg.Browser.Window.StartMinimized {
 		return
 	}

@@ -60,9 +60,21 @@ tasks:
   forbidden:
     desc: Guard against focus-stealing browser calls sneaking in
     cmds:
+      # bringToFront is banned outright, everywhere.
       - |
-        if grep -rn --include=*.go -E "bringToFront|\.Activate\(" internal/browser internal/twitch internal/watcher; then
-          echo "forbidden focus-stealing call found"; exit 1
+        if grep -rn --include=*.go -E "bringToFront" internal/browser internal/twitch internal/watcher; then
+          echo "forbidden focus-stealing call found: bringToFront"; exit 1
+        fi
+      # Tab activation is allowed in EXACTLY ONE audited call site:
+      # internal/browser/window.go, the shared-window coordinator. Owner
+      # decision 2026-08-30 accepts it as the proof-of-concept mechanism for
+      # one-Chrome-window-per-profile; docs/STATUS.md carries the
+      # release-blocking backlog item to replace it. The ban stands everywhere
+      # else - do not widen this exemption.
+      - |
+        if grep -rn --include=*.go -E "\.Activate\(" internal/browser internal/twitch internal/watcher \
+             | grep -v '^internal/browser/window\.go:'; then
+          echo "forbidden focus-stealing call found outside internal/browser/window.go"; exit 1
         fi
 
   # ---- GUI (run on Windows/macOS) ----

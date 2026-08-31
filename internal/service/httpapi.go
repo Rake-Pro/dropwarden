@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,6 +15,10 @@ import (
 	"github.com/rake-pro/dropwarden/internal/watcher"
 )
 
+// loginCheckTimeout bounds one on-demand login probe: it navigates the watcher
+// Chrome to the platform home page and evaluates the logged-in selector.
+const loginCheckTimeout = 30 * time.Second
+
 // NewHTTPHandler builds an http.Handler exposing the services as a small JSON
 // API under /api/. The Wails app mounts it on the asset server, so the frontend
 // talks to it with plain fetch - no generated bindings required, and it behaves
@@ -22,6 +27,7 @@ func NewHTTPHandler(b *Backend) http.Handler {
 	queue := NewQueueService(b)
 	history := NewHistoryService(b)
 	settings := NewSettingsService(b)
+	watch := NewWatcherService(b)
 
 	mux := http.NewServeMux()
 
@@ -73,17 +79,24 @@ func NewHTTPHandler(b *Backend) http.Handler {
 			writeErr(w, engineDownError(b, eff, p))
 			return
 		}
+		// Routed through the service rather than the engine handle so "start"
+		// also answers the needs-login prompt (see WatcherService.Start).
+		var actErr error
 		switch r.PathValue("action") {
 		case "start":
-			e.Start()
+			actErr = watch.Start(eff.Name, p)
 		case "stop":
-			e.Stop()
+			actErr = watch.Stop(eff.Name, p)
 		case "skip":
-			e.SkipCurrent()
+			actErr = watch.SkipCurrent(eff.Name, p)
 		case "refresh":
-			e.RefreshNow()
+			actErr = watch.ForceRefresh(eff.Name, p)
 		default:
 			writeErr(w, fmt.Errorf("unknown action %q", r.PathValue("action")))
+			return
+		}
+		if actErr != nil {
+			writeErr(w, actErr)
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true})
@@ -135,9 +148,12 @@ func NewHTTPHandler(b *Backend) http.Handler {
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
-	// Profile management. Both take effect on the next app start (the runtime
-	// per profile is built at startup); the state route reports pendingRestart
-	// until then. No delete/rename by design.
+	// Profile management. Every one of these takes effect immediately: the
+	// settings commit reconciles the running runtimes against the new config,
+	// so an added, enabled, disabled, or removed profile starts or stops its
+	// Chrome without an app restart. Launches take seconds, so the response
+	// says only that the change was accepted; the UI polls /api/state to watch
+	// the runtime appear. No rename by design.
 	mux.HandleFunc("POST /api/profiles", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Name        string `json:"name"`
@@ -165,6 +181,51 @@ func NewHTTPHandler(b *Backend) http.Handler {
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true})
+	})
+
+	// Removing a profile stops its runtimes and closes its store but NEVER
+	// deletes its data directory; the response returns that path so the UI can
+	// tell the user where the leftovers live.
+	mux.HandleFunc("POST /api/profiles/remove", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		dir, err := settings.RemoveProfile(body.Name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "dataDir": dir})
+	})
+
+	// On-demand login probe for one (profile, platform) session: true, false,
+	// or null when the answer is unknowable (no session up, or a platform with
+	// no probe). Never called from the state poll - it drives a real navigation
+	// in that Chrome.
+	mux.HandleFunc("POST /api/profiles/login-check", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Profile  string `json:"profile"`
+			Platform string `json:"platform"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		plat := domain.Platform(body.Platform)
+		if plat != domain.PlatformTwitch && plat != domain.PlatformKick {
+			writeErr(w, fmt.Errorf("unknown platform %q", body.Platform))
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), loginCheckTimeout)
+		defer cancel()
+		in, err := watch.LoginCheck(ctx, body.Profile, plat)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"loggedIn": in})
 	})
 
 	// GET /api/profiles lists every profile's raw editable overlay for the
@@ -246,18 +307,14 @@ func profileStates(b *Backend, queue *QueueService, history *HistoryService) []m
 		if err != nil {
 			continue
 		}
-		pb := b.Profiles[eff.Name]
-		// pendingRestart: what this process launched with differs from what is
-		// saved now - the runtime follows on the next app restart.
-		pending := eff.Enabled != (pb != nil && pb.startupEnabled)
+		pb := b.Profile(eff.Name)
 		entry := map[string]any{
 			"name": eff.Name, "displayName": eff.DisplayName, "enabled": eff.Enabled,
-			"pendingRestart": pending,
-			"platforms":      platformStates(b, eff, pb, pending),
-			"queue":          []QueueItemDTO{},
-			"claims":         []ClaimDTO{},
-			"stats":          StatsDTO{OutcomeCounts: map[string]int{}, ByPlatform: map[string]PlatformTotalsDTO{}},
-			"spark":          []int{},
+			"platforms": platformStates(eff, pb),
+			"queue":     []QueueItemDTO{},
+			"claims":    []ClaimDTO{},
+			"stats":     StatsDTO{OutcomeCounts: map[string]int{}, ByPlatform: map[string]PlatformTotalsDTO{}},
+			"spark":     []int{},
 		}
 		if pb != nil {
 			q, _ := queue.Get(eff.Name)
@@ -276,25 +333,25 @@ func profileStates(b *Backend, queue *QueueService, history *HistoryService) []m
 }
 
 // platformStates builds one profile's uniform per-platform runtime array,
-// twitch first. A platform that is enabled but has no engine attached is either
-// still starting, waiting on a restart, or failed to launch; pendingRestart and
-// the rest of the runtime tell those apart.
-func platformStates(b *Backend, eff *config.ProfileEffective, pb *ProfileBackend, profilePending bool) []map[string]any {
-	entry := func(p domain.Platform, enabled, pendingRestart bool) map[string]any {
-		m := map[string]any{"platform": string(p), "enabled": enabled, "pendingRestart": pendingRestart, "up": false, "status": nil}
+// twitch first. Every enable/disable is live now, so the pair (enabled, up)
+// says everything: enabled + up = running; enabled + not up = starting or
+// failed to start; not enabled = off. needsLogin marks a runtime that came up
+// against a fresh Chrome profile and is paused until the user logs in.
+func platformStates(eff *config.ProfileEffective, pb *ProfileBackend) []map[string]any {
+	entry := func(p domain.Platform, enabled bool) map[string]any {
+		m := map[string]any{"platform": string(p), "enabled": enabled, "up": false, "needsLogin": false, "status": nil}
 		if pb != nil {
 			if e := pb.Engine(p); e != nil {
 				m["up"] = true
 				m["status"] = e.Status()
 			}
+			m["needsLogin"] = pb.NeedsLogin(p)
 		}
 		return m
 	}
-	kickEnabled := eff.Enabled && eff.KickEnabled
-	kickPending := profilePending || (pb != nil && eff.KickEnabled != pb.startupKick)
 	return []map[string]any{
-		entry(domain.PlatformTwitch, eff.Enabled, profilePending),
-		entry(domain.PlatformKick, kickEnabled, kickPending),
+		entry(domain.PlatformTwitch, eff.Enabled),
+		entry(domain.PlatformKick, eff.Enabled && eff.KickEnabled),
 	}
 }
 
@@ -302,15 +359,15 @@ func platformStates(b *Backend, eff *config.ProfileEffective, pb *ProfileBackend
 // keeping the disabled-vs-not-running distinction honest per profile.
 func engineDownError(b *Backend, eff *config.ProfileEffective, p domain.Platform) error {
 	if !eff.Enabled {
-		return fmt.Errorf("profile %q is disabled - enable it in Settings and restart", eff.Name)
+		return fmt.Errorf("profile %q is disabled - enable it in Settings", eff.Name)
 	}
 	if p == domain.PlatformKick && !eff.KickEnabled {
-		return fmt.Errorf("kick is disabled for %s - enable it in Settings > Platforms and restart", eff.DisplayName)
+		return fmt.Errorf("kick is disabled for %s - enable it in Settings > Platforms", eff.DisplayName)
 	}
 	if b.Profile(eff.Name) == nil {
-		return fmt.Errorf("profile %q was added after startup - restart the app to start its runtime", eff.Name)
+		return fmt.Errorf("profile %q has no store open yet - it is still starting, or its store failed to open (see the Debugging view)", eff.Name)
 	}
-	return fmt.Errorf("%s runtime is not running for %s", p, eff.DisplayName)
+	return fmt.Errorf("%s runtime is not running for %s (starting Chrome, or it failed to launch - see the Debugging view)", p, eff.DisplayName)
 }
 
 // buildDebug assembles the debug snapshot for the Debugging pane: one section
@@ -328,7 +385,7 @@ func buildDebug(b *Backend) map[string]any {
 		if err != nil {
 			continue
 		}
-		pb := b.Profiles[eff.Name]
+		pb := b.Profile(eff.Name)
 		profiles[eff.Name] = map[string]any{
 			"displayName": eff.DisplayName,
 			"enabled":     eff.Enabled,
