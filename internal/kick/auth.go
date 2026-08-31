@@ -67,9 +67,16 @@ const jsLoggedIn = `(async () => {
         const ct = (r.headers.get('content-type') || '').split(';')[0];
         if (r.ok && ct.includes('json')) {
           const b = await r.json().catch(() => null);
-          const authed = !!(b && (b.id || b.user_id || b.username || (b.user && (b.user.id || b.user.username)) || (b.data && (b.data.id || b.data.username))));
+          // The live shape is { data, message }: dig into data (and its
+          // nested user/session) for anything account-shaped.
+          const cands = [b, b && b.data, b && b.data && b.data.user, b && b.data && b.data.session, b && b.user];
+          const authed = cands.some(c => !!(c && typeof c === 'object' && (c.id || c.user_id || c.username || c.email || c.slug)));
           if (authed) return { state: 'in', status: r.status };
-          tried.push(label + ' 200-json keys:' + (b ? Object.keys(b).slice(0, 8).join('|') : 'null'));
+          let dataDesc = 'absent';
+          if (b && 'data' in b) {
+            dataDesc = b.data === null ? 'null' : (typeof b.data === 'object' ? 'keys:' + Object.keys(b.data).slice(0, 8).join('|') : typeof b.data);
+          }
+          tried.push(label + ' 200-json keys:' + (b ? Object.keys(b).slice(0, 8).join('|') : 'null') + ' data=' + dataDesc);
           continue;
         }
         if ((r.status === 401 || r.status === 403) && tok) sawTokenReject = true;
