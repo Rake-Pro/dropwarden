@@ -40,6 +40,17 @@ func (e *Engine) runValidating(ctx context.Context) (State, string) {
 	var prevTime float64
 	var prevSet bool
 
+	// Diagnostics: a timeout must name the failing gate(s), not just "timed
+	// out" - validation failures are otherwise undebuggable from the log.
+	type gates struct {
+		h                               platform.Health
+		pathOK, playing, volOK, advance bool
+	}
+	var last gates
+	var lastSet, firstLogged bool
+	probeErrs := 0
+	var lastErr error
+
 	for e.deps.Now().Before(deadline) {
 		if e.sleepInterruptible(ctx, 5*time.Second) {
 			e.drainCommands()
@@ -52,6 +63,8 @@ func (e *Engine) runValidating(ctx context.Context) (State, string) {
 		}
 		h, err := e.probe(ctx)
 		if err != nil {
+			probeErrs++
+			lastErr = err
 			continue // transient; keep trying until deadline
 		}
 		if h.OfflineGate {
@@ -73,11 +86,36 @@ func (e *Engine) runValidating(ctx context.Context) (State, string) {
 		}
 		advancing := prevSet && h.CurrentTime > prevTime+1.0
 		prevTime, prevSet = h.CurrentTime, true
+		last, lastSet = gates{h: h, pathOK: pathOK, playing: playing, volOK: volOK, advance: advancing}, true
+		if !firstLogged {
+			firstLogged = true
+			e.deps.Log.Info().Str("login", e.cur.login).
+				Str("pathname", h.Pathname).Str("visibility", h.Visibility).
+				Bool("path_ok", pathOK).Bool("playing", playing).Bool("vol_ok", volOK).
+				Bool("drops_indicator", h.DropsIndicator).
+				Int("ready_state", h.ReadyState).Bool("paused", h.Paused).
+				Float64("current_time", h.CurrentTime).Float64("volume", h.Volume).Bool("muted", h.Muted).
+				Msg("validating: first probe")
+		}
 
 		if pathOK && playing && volOK && advancing && h.DropsIndicator {
 			return e.beginWatching(ctx)
 		}
 	}
+	ev := e.deps.Log.Warn().Str("login", e.cur.login).Int("probe_errors", probeErrs)
+	if lastErr != nil {
+		ev = ev.AnErr("last_probe_error", lastErr)
+	}
+	if lastSet {
+		ev = ev.Str("pathname", last.h.Pathname).Str("visibility", last.h.Visibility).
+			Bool("path_ok", last.pathOK).Bool("playing", last.playing).Bool("vol_ok", last.volOK).
+			Bool("advancing", last.advance).Bool("drops_indicator", last.h.DropsIndicator).
+			Int("ready_state", last.h.ReadyState).Bool("paused", last.h.Paused).
+			Float64("current_time", last.h.CurrentTime).Float64("volume", last.h.Volume).Bool("muted", last.h.Muted)
+	} else {
+		ev = ev.Bool("any_probe_succeeded", false)
+	}
+	ev.Msg("validating: timed out - gate breakdown")
 	return e.failChannel(domain.OutcomeAbortedStall, "playback validation timed out", e.deps.Cfg.Watcher.OfflineBlacklistTTL)
 }
 

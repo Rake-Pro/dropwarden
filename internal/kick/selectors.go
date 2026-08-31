@@ -51,7 +51,8 @@ const jsHealthProbe = `(() => {
     playerError: err,
     raidBanner: false,
     raidTarget: '',
-    dropsIndicator: true
+    dropsIndicator: true,
+    visibility: document.visibilityState
   };
 })()`
 

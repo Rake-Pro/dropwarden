@@ -25,6 +25,11 @@ type Health struct {
 	RaidBanner     bool    `json:"raidBanner"`
 	RaidTarget     string  `json:"raidTarget"`
 	DropsIndicator bool    `json:"dropsIndicator"`
+
+	// Visibility is document.visibilityState: a "hidden" tab (backgrounded in
+	// its window) can suppress the player from ever starting, the same failure
+	// family as a minimized window - captured so validation failures can name it.
+	Visibility string `json:"visibility"`
 }
 
 // Playing reports whether the video is advancing per this snapshot alone
