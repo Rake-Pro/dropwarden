@@ -224,7 +224,11 @@ function nowCardEl(p, multi, profile) {
             setTimeout(() => refreshAll(), 1200);
           }
           else if (r.loggedIn === false) { out.textContent = 'Not logged in yet - finish logging in and check again.'; out.style.color = 'var(--warn)'; }
-          else { out.textContent = `Can't auto-detect login for ${platLabel(p.platform)} - once you're logged in, press Start (or Stop to close the window until later).`; out.style.color = 'var(--text-secondary)'; }
+          else {
+            const why = r.detail ? ` [probe: ${r.detail}]` : '';
+            out.textContent = `Can't auto-detect login for ${platLabel(p.platform)}${why} - once you're logged in, press Start (or Stop to close the window until later).`;
+            out.style.color = 'var(--text-secondary)';
+          }
         }
       } catch (e) {
         if (out) { out.textContent = 'Check failed: ' + (e.message || e); out.style.color = 'var(--err)'; }

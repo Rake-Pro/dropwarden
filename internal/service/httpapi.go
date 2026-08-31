@@ -242,12 +242,18 @@ func NewHTTPHandler(b *Backend) http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), loginCheckTimeout)
 		defer cancel()
-		in, err := watch.LoginCheck(ctx, body.Profile, plat)
+		in, detail, err := watch.LoginCheck(ctx, body.Profile, plat)
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		writeJSON(w, map[string]any{"loggedIn": in})
+		out := map[string]any{"loggedIn": in}
+		if detail != "" {
+			// Why the answer is null (probe status, drifted body keys) - shown
+			// by the UI so endpoint drift is fixable without log spelunking.
+			out["detail"] = detail
+		}
+		writeJSON(w, out)
 	})
 
 	// GET /api/profiles lists every profile's raw editable overlay for the

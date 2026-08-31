@@ -580,14 +580,14 @@ func (s *WatcherService) Login(profile string, plat domain.Platform) error {
 // drives a real navigation plus an eval in that Chrome, so it is on-demand only
 // and never part of the state poll. A positive result clears the needs-login
 // flag the UI shows.
-func (s *WatcherService) LoginCheck(ctx context.Context, profile string, plat domain.Platform) (*bool, error) {
+func (s *WatcherService) LoginCheck(ctx context.Context, profile string, plat domain.Platform) (*bool, string, error) {
 	p := s.b.Profile(profile)
 	if p == nil {
-		return nil, fmt.Errorf("unknown profile %q", profile)
+		return nil, "", fmt.Errorf("unknown profile %q", profile)
 	}
 	sess := p.Session(plat)
 	if sess == nil {
-		return nil, nil
+		return nil, "", nil
 	}
 	// Either probe may NAVIGATE the watcher tab (twitch.CheckLogin always
 	// loads the home page; kick.CheckLogin navigates when off-origin), so it
@@ -595,26 +595,27 @@ func (s *WatcherService) LoginCheck(ctx context.Context, profile string, plat do
 	// Only a parked engine (paused or idle) may be probed.
 	if e := p.Engine(plat); e != nil {
 		if est := e.Status(); !est.Paused && est.State != watcher.StateIdle {
-			return nil, fmt.Errorf("cannot check login while the %s watcher is %s - pause it first (the probe navigates its window)",
+			return nil, "", fmt.Errorf("cannot check login while the %s watcher is %s - pause it first (the probe navigates its window)",
 				plat.OrTwitch(), est.State)
 		}
 	}
 	var loggedIn bool
 	if plat.OrTwitch() == domain.PlatformKick {
 		// Kick: an API status check from page context (kick/auth.go), not a
-		// DOM guess. Unknown stays null - never guessed.
-		st, err := kick.CheckLogin(ctx, sess)
+		// DOM guess. Unknown stays null - never guessed - but carries a
+		// diagnostic detail so a drifted endpoint is fixable from the UI.
+		st, detail, err := kick.CheckLogin(ctx, sess)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if !st.Known {
-			return nil, nil
+			return nil, detail, nil
 		}
 		loggedIn = st.LoggedIn
 	} else {
 		st, err := twitch.CheckLogin(ctx, sess)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		loggedIn = st.LoggedIn
 	}
@@ -628,7 +629,7 @@ func (s *WatcherService) LoginCheck(ctx context.Context, profile string, plat do
 		// runtime is already up in login mode, so this unpauses in place.
 		s.b.startWatching(profile, plat)
 	}
-	return &loggedIn, nil
+	return &loggedIn, "", nil
 }
 
 func (s *WatcherService) Stop(profile string, plat domain.Platform) error {
