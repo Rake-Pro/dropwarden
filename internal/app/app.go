@@ -389,6 +389,17 @@ func writeMarker(path, dataDir string, log zerolog.Logger) {
 	}
 }
 
+// openLoginPage points a first-run session's tab at the platform's site so the
+// user can actually log in: the engine starts PAUSED on a first run and would
+// otherwise never navigate, leaving the welcome flow staring at about:blank
+// (Kick especially, which has no login probe to navigate for it). Best effort;
+// the user can always navigate the tab by hand.
+func openLoginPage(ctx context.Context, sess browser.Session, url string, log zerolog.Logger) {
+	if err := sess.Navigate(ctx, url); err != nil {
+		log.Warn().Err(err).Str("url", url).Msg("app: could not open the login page in the watcher tab")
+	}
+}
+
 // MarkSessionReady persists the answer to a needs-login prompt (the login probe
 // came back authenticated, or the user pressed Start): the pending marker goes
 // away and the session is recorded as initialized, so the prompt does not come
@@ -567,6 +578,7 @@ func (a *App) startTwitchRuntime(ctx context.Context, pr *ProfileRuntime, stagge
 	// initialized: quitting before logging in must re-prompt on the next boot.
 	if needsLogin {
 		markLoginPending(dataDir, domain.PlatformTwitch, log)
+		openLoginPage(ctx, sess, twitch.URLBase, log)
 	} else {
 		markPlatformStarted(dataDir, domain.PlatformTwitch, log)
 	}
@@ -660,6 +672,7 @@ func (a *App) startKickRuntime(ctx context.Context, pr *ProfileRuntime, stagger 
 	// Same pending/initialized split as the Twitch path above.
 	if needsLogin {
 		markLoginPending(dataDir, domain.PlatformKick, klog)
+		openLoginPage(ctx, sess, kick.URLBase, klog)
 	} else {
 		markPlatformStarted(dataDir, domain.PlatformKick, klog)
 	}

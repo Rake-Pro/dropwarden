@@ -154,6 +154,9 @@ and REMOVING a profile all take effect immediately.
   shared-window coordinator serializes restore/minimize/activate ops (a release
   racing a take could leave the window minimized while held) and re-activates
   the remaining holder's tab when the other platform releases mid-validation.
+  2026-08-31: a needs-login start also NAVIGATES its tab to the platform's site
+  (twitch.tv / kick.com) - the engine is paused on a first run and would never
+  navigate on its own, leaving the welcome flow staring at about:blank.
 - NEW/CHANGED API. `POST /api/profiles/remove {name}` -> `{"ok":true,
   "dataDir":"..."}`; refuses the last remaining profile (400) and unknown names;
   the data directory is NEVER deleted. `POST /api/profiles/login-check
