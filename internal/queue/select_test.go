@@ -415,6 +415,36 @@ func TestNextDrop_OwnedRewardSkipped(t *testing.T) {
 	}
 }
 
+func TestNextDrop_ForceWatchOverridesOwned(t *testing.T) {
+	// ForceWatch is the manual override: an owned drop the user insists on
+	// watching (to test crediting) becomes eligible again. It bypasses ONLY the
+	// owned gate - a claimed drop stays excluded even when forced.
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	future := now.Add(24 * time.Hour)
+	claimedAt := now.Add(-72 * time.Hour)
+	camp := baseCampaign("c1", future,
+		domain.Drop{ID: "d1", CampaignID: "c1", RequiredMinutes: 60},
+		domain.Drop{ID: "d2", CampaignID: "c1", RequiredMinutes: 60},
+	)
+	items := []domain.QueueItem{
+		{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending, ForceWatch: true},
+		{DropID: "d2", CampaignID: "c1", Position: 2, Enabled: true, Status: domain.ItemPending, ForceWatch: true},
+	}
+	campaigns := map[string]domain.Campaign{"c1": camp}
+	progress := map[string]domain.Progress{
+		"d1": {DropID: "d1", RequiredMinutes: 60, Source: domain.SourceInventory, Owned: true},
+		"d2": {DropID: "d2", RequiredMinutes: 60, Source: domain.SourceInventory, Owned: true, ClaimedAt: &claimedAt},
+	}
+	cands := EligibleCandidates(items, campaigns, progress, map[string]bool{}, domain.PriorityTopDown, true, now)
+	if len(cands) != 1 || cands[0].Drop.ID != "d1" {
+		t.Fatalf("forced owned drop d1 must be eligible and forced-claimed d2 must not, got %+v", cands)
+	}
+	eligible, status, _ := EligibilityReason(items[0], campaigns, progress, map[string]bool{}, true, now)
+	if !eligible || status != domain.ItemPending {
+		t.Errorf("forced owned drop should be eligible/pending, got eligible=%v status=%q", eligible, status)
+	}
+}
+
 func TestNextDrop_ClaimedZeroMinutesSkipped(t *testing.T) {
 	// Live 2026-08-31: a fully-earned campaign's claimed drop can come back from
 	// the details query with currentMinutesWatched 0 but ClaimedAt set. Complete()

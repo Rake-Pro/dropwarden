@@ -120,8 +120,9 @@ func eligibleNow(item domain.QueueItem, campaigns map[string]domain.Campaign, pr
 	// (a claimed drop from a fully-earned campaign can come back with
 	// currentMinutesWatched 0, so Complete() alone would let it back in). Owned
 	// excludes a drop whose reward the account already holds (matched at
-	// discovery) - Twitch never re-credits it, so watching would grind forever.
-	if p, ok := progress[item.DropID]; ok && (p.Complete() || p.ClaimedAt != nil || p.Owned) {
+	// discovery) - Twitch never re-credits it, so watching would grind forever -
+	// unless the user set ForceWatch to override the owned skip for this drop.
+	if p, ok := progress[item.DropID]; ok && (p.Complete() || p.ClaimedAt != nil || (p.Owned && !item.ForceWatch)) {
 		return domain.Campaign{}, domain.Drop{}, false
 	}
 	if !preconditionsMet(drop.PreconditionIDs, claimed) {
@@ -233,8 +234,9 @@ func EligibilityReason(item domain.QueueItem, campaigns map[string]domain.Campai
 	}
 	// Reward already owned (matched at discovery against the earned inventory):
 	// Twitch reports isClaimed=false but will never credit a reward the account
-	// already holds, so surface it instead of watching a channel for nothing.
-	if p, ok := progress[item.DropID]; ok && p.Owned {
+	// already holds, so surface it instead of watching a channel for nothing -
+	// unless the user forced it (Watch anyway), which falls through to eligible.
+	if p, ok := progress[item.DropID]; ok && p.Owned && !item.ForceWatch {
 		return false, domain.ItemNeedsAction, "reward already owned - Twitch will not credit it again"
 	}
 	// Complete but never confirmed claimed: the reward is sitting unclaimed on

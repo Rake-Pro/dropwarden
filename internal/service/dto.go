@@ -38,6 +38,11 @@ type QueueItemDTO struct {
 	Reason          string `json:"reason"`
 	CurrentMinutes  int    `json:"currentMinutes"`
 	RequiredMinutes int    `json:"requiredMinutes"`
+	// Owned reports that the drop's reward is already held (skipped unless forced);
+	// ForceWatch reports the user's manual override of that skip. The UI shows a
+	// "Watch anyway" toggle when Owned is set.
+	Owned      bool `json:"owned"`
+	ForceWatch bool `json:"forceWatch"`
 }
 
 type ClaimDTO struct {

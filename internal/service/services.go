@@ -490,9 +490,11 @@ func (s *QueueService) Get(profile string) ([]QueueItemDTO, error) {
 			DropName: d.Name,
 			Game:     cmap[it.CampaignID].GameName, Position: it.Position, Enabled: it.Enabled,
 			Status: string(it.Status), Reason: it.Reason, RequiredMinutes: d.RequiredMinutes,
+			ForceWatch: it.ForceWatch,
 		}
 		if p, err := st.GetProgress(it.DropID); err == nil && p != nil {
 			dto.CurrentMinutes, _ = p.Effective()
+			dto.Owned = p.Owned
 		}
 		out = append(out, dto)
 	}
@@ -513,6 +515,15 @@ func (s *QueueService) SetEnabled(profile, dropID string, on bool) error {
 		return err
 	}
 	return st.SetItemEnabled(dropID, on)
+}
+
+// SetForceWatch sets or clears the manual owned-skip override for one drop.
+func (s *QueueService) SetForceWatch(profile, dropID string, on bool) error {
+	st, err := s.b.storeFor(profile)
+	if err != nil {
+		return err
+	}
+	return st.SetForceWatch(dropID, on)
 }
 
 func (s *QueueService) ClearBlacklist(profile string) error {

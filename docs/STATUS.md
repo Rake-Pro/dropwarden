@@ -97,6 +97,19 @@ real `inventory-gql.json` dump that the prior session asked for.
   `kick-inventory.txt`. This captures a real Kick drop's progress shape the moment
   one is live so the parser can be built from real data.
 
+- MANUAL OVERRIDE "Watch anyway" (per drop): confirmed the owned-skip works live
+  (three Once Human drops flagged, engine idle with an empty queue), so added a
+  user override to force one owned drop past the skip - e.g. to finally test
+  crediting when the only queued drops are owned. `QueueItem.ForceWatch` (persisted,
+  append-only `queue.force_watch` migration, schemaVersion 3, preserved across
+  re-enqueue like position); `eligibleNow`/`EligibilityReason` bypass ONLY the
+  Owned gate when it is set (a claimed/complete drop stays excluded even when
+  forced); `POST /api/queue/force-watch {profile,dropID,on}`; QueueItemDTO gains
+  `owned`+`forceWatch`; the Queue view shows a "Watch anyway" toggle (amber while
+  forcing) on owned rows. The reactive no-credit give-up still bounds the grind
+  (a forced owned drop that earns nothing self-skips within ~5 min per session).
+  Test: `TestNextDrop_ForceWatchOverridesOwned`.
+
 - VERIFY-LIVE OWED: (1) owned-skip on the next Mac run - watch the log line
   `discovery: reward already owned - drop will be skipped before watching` and the
   amber `needs_action` pill; (2) Kick dumps only fire once a Kick campaign actually

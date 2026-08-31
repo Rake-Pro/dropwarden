@@ -28,6 +28,7 @@ const SAMPLE = {
       { dropID: 'd1', platform: 'twitch', dropName: 'Wooden Barricade', game: 'Rust', status: 'active', enabled: true, currentMinutes: 42, requiredMinutes: 60, reason: '@shroud · watching now' },
       { dropID: 'd2', platform: 'kick', dropName: 'Elite Wooden Door Skin', game: 'Rust', status: 'pending', enabled: true, currentMinutes: 0, requiredMinutes: 120, reason: '@posty +6' },
       { dropID: 'd4', platform: 'twitch', dropName: 'Master Chief Armor Coating', game: 'Halo MCC', status: 'needs_action', enabled: false, currentMinutes: 0, requiredMinutes: 90, reason: 'account link required' },
+      { dropID: 'd6', platform: 'twitch', dropName: 'VOID WINGS SKIN: UNKNOWN', game: 'Once Human', status: 'needs_action', enabled: true, owned: true, forceWatch: false, currentMinutes: 0, requiredMinutes: 60, reason: 'reward already owned - Twitch will not credit it again' },
     ],
     claims: [{ dropName: 'HCS 2026 Weapon Charm', platform: 'twitch', game: 'Halo Infinite', claimedAt: 'sample' }],
     stats: { dropsEarned: 6, dropsClaimed: 5, minutesWatched: 812, successRate: 88, sessions: 14, outcomeCounts: { completed: 12, skipped: 2 }, byPlatform: {
@@ -161,6 +162,7 @@ export const api = {
   },
 
   setEnabled(dropID, on, profile = activeProfile) { return post('/api/queue/enabled', { profile, dropID, on }); },
+  setForceWatch(dropID, on, profile = activeProfile) { return post('/api/queue/force-watch', { profile, dropID, on }); },
   setOrder(ids, profile = activeProfile) { return post('/api/queue/order', { profile, ids }); },
   // Priority mode is shared by every profile.
   setPriority(mode) { return post('/api/queue/priority', { mode }); },

@@ -11,16 +11,19 @@ import (
 // UpsertQueueItem inserts or updates a queue row, preserving the existing
 // position when the item already exists (position is managed by SetQueueOrder).
 func (s *Store) UpsertQueueItem(it domain.QueueItem) error {
+	// force_watch is deliberately absent from the ON CONFLICT SET (like position):
+	// it is a user-set override that a re-upsert (e.g. discovery re-enqueue) must
+	// preserve, not reset. It is set only via SetForceWatch.
 	_, err := s.db.Exec(`INSERT INTO queue
-		(drop_id,campaign_id,platform,position,enabled,status,reason,last_attempt_at)
-		VALUES (?,?,?,?,?,?,?,?)
+		(drop_id,campaign_id,platform,position,enabled,status,reason,last_attempt_at,force_watch)
+		VALUES (?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(drop_id) DO UPDATE SET
 			campaign_id=excluded.campaign_id, platform=excluded.platform,
 			enabled=excluded.enabled,
 			status=excluded.status, reason=excluded.reason,
 			last_attempt_at=excluded.last_attempt_at`,
 		it.DropID, it.CampaignID, string(it.Platform.OrTwitch()), it.Position, boolToInt(it.Enabled),
-		string(it.Status), it.Reason, unixPtr(it.LastAttemptAt))
+		string(it.Status), it.Reason, unixPtr(it.LastAttemptAt), boolToInt(it.ForceWatch))
 	if err != nil {
 		return fmt.Errorf("store: upsert queue item: %w", err)
 	}
@@ -29,7 +32,7 @@ func (s *Store) UpsertQueueItem(it domain.QueueItem) error {
 
 // GetQueue returns queue items in ascending position order.
 func (s *Store) GetQueue() ([]domain.QueueItem, error) {
-	rows, err := s.db.Query(`SELECT drop_id,campaign_id,platform,position,enabled,status,reason,last_attempt_at FROM queue ORDER BY position`)
+	rows, err := s.db.Query(`SELECT drop_id,campaign_id,platform,position,enabled,status,reason,last_attempt_at,COALESCE(force_watch,0) FROM queue ORDER BY position`)
 	if err != nil {
 		return nil, fmt.Errorf("store: get queue: %w", err)
 	}
@@ -37,14 +40,15 @@ func (s *Store) GetQueue() ([]domain.QueueItem, error) {
 	var out []domain.QueueItem
 	for rows.Next() {
 		var it domain.QueueItem
-		var enabled int
+		var enabled, forceWatch int
 		var pf, status, reason string
 		var last sql.NullInt64
-		if err := rows.Scan(&it.DropID, &it.CampaignID, &pf, &it.Position, &enabled, &status, &reason, &last); err != nil {
+		if err := rows.Scan(&it.DropID, &it.CampaignID, &pf, &it.Position, &enabled, &status, &reason, &last, &forceWatch); err != nil {
 			return nil, fmt.Errorf("store: scan queue: %w", err)
 		}
 		it.Platform = domain.Platform(pf).OrTwitch()
 		it.Enabled = enabled != 0
+		it.ForceWatch = forceWatch != 0
 		it.Status = domain.ItemStatus(status)
 		it.Reason = reason
 		it.LastAttemptAt = fromUnix(last)
@@ -74,6 +78,15 @@ func (s *Store) SetItemEnabled(dropID string, enabled bool) error {
 	_, err := s.db.Exec(`UPDATE queue SET enabled=? WHERE drop_id=?`, boolToInt(enabled), dropID)
 	if err != nil {
 		return fmt.Errorf("store: set enabled: %w", err)
+	}
+	return nil
+}
+
+// SetForceWatch sets or clears the manual owned-skip override for a queue item.
+func (s *Store) SetForceWatch(dropID string, on bool) error {
+	_, err := s.db.Exec(`UPDATE queue SET force_watch=? WHERE drop_id=?`, boolToInt(on), dropID)
+	if err != nil {
+		return fmt.Errorf("store: set force watch: %w", err)
 	}
 	return nil
 }

@@ -2,7 +2,7 @@ package store
 
 // schemaVersion is bumped whenever migrations change. Migrations are applied
 // in order on Open; each is idempotent via IF NOT EXISTS so re-running is safe.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // migrations are applied in slice order. Index+1 is the version each brings the
 // database to. Keep every statement idempotent.
@@ -143,4 +143,9 @@ var migrations = []string{
 	// watching. NULL/0 = not owned. Append-only: the version pointer of an
 	// existing database is already past every earlier index.
 	`ALTER TABLE progress ADD COLUMN owned INTEGER;`,
+
+	// force_watch is a per-drop manual override that makes eligibility ignore the
+	// owned-reward skip for that drop (user insists on watching an already-owned
+	// reward, e.g. to test crediting). NULL/0 = off. Append-only.
+	`ALTER TABLE queue ADD COLUMN force_watch INTEGER;`,
 }

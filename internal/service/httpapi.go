@@ -155,6 +155,21 @@ func NewHTTPHandler(b *Backend) http.Handler {
 		}
 		writeJSON(w, map[string]any{"ok": true})
 	})
+	mux.HandleFunc("POST /api/queue/force-watch", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Profile string `json:"profile"`
+			DropID  string `json:"dropID"`
+			On      bool   `json:"on"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if err := queue.SetForceWatch(body.Profile, body.DropID, body.On); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
 	// Priority mode is a root setting shared by every profile.
 	mux.HandleFunc("POST /api/queue/priority", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

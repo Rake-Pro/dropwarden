@@ -404,13 +404,37 @@ async function renderQueue() {
   const list = el(`<div class="card qlist"></div>`);
   if (!queue.length) list.append(el('<div class="empty">No drops queued yet. Run a discovery pass.</div>'));
   for (const q of queue) {
+    // "Watch anyway" overrides the already-owned skip for one drop (e.g. to test
+    // crediting). Shown only for owned drops; amber accent while forcing.
+    const fw = !!q.forceWatch;
+    const forceStyle = fw ? ' style="border-color:#e0a800;color:#e0a800"' : '';
+    const forceBtnHtml = q.owned
+      ? `<button class="btn btn-sm force" aria-pressed="${fw}" title="Override the already-owned skip and watch this drop anyway (to test crediting)"${forceStyle}>${fw ? 'Watching anyway' : 'Watch anyway'}</button>`
+      : '';
     const row = el(`<div class="qrow ${q.status === 'active' ? 'active' : ''}" data-id="${esc(q.dropID)}" draggable="true">
       <span class="grip" title="drag to reorder">⁝⁝</span>
       <div class="qname"><div class="n">${multi ? pfBadge(q.platform) + ' ' : ''}${esc(q.dropName || q.dropID)}</div><div class="meta">${esc(q.game)}${q.reason ? ' · ' + esc(q.reason) : ''}</div></div>
       <div class="qmini"><div class="bar"><i class="${q.status === 'active' ? (q.platform === 'kick' ? 'kick' : '') : 'blue'}" style="width:${pct(q.currentMinutes, q.requiredMinutes)}%"></i></div><div class="mm mono">${q.requiredMinutes ? q.currentMinutes + ' / ' + q.requiredMinutes + ' min' : '—'}</div></div>
+      ${forceBtnHtml}
       <span class="pill ${esc(q.status)}"><span class="d"></span> ${esc(cap(q.status))}</span>
       <div class="switch ${q.enabled ? 'on' : ''}" role="switch" aria-checked="${q.enabled}" tabindex="0"><i></i></div>
     </div>`);
+    const forceBtn = row.querySelector('.force');
+    if (forceBtn) {
+      forceBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const on = forceBtn.getAttribute('aria-pressed') !== 'true';
+        const paint = (v) => {
+          forceBtn.setAttribute('aria-pressed', String(v));
+          forceBtn.textContent = v ? 'Watching anyway' : 'Watch anyway';
+          forceBtn.style.borderColor = v ? '#e0a800' : '';
+          forceBtn.style.color = v ? '#e0a800' : '';
+        };
+        paint(on);
+        try { await api.setForceWatch(q.dropID, on, prof.name); }
+        catch (_) { paint(!on); }
+      });
+    }
     const sw = row.querySelector('.switch');
     const flipSwitch = async () => {
       const on = !sw.classList.contains('on');

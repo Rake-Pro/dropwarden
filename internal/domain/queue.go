@@ -49,4 +49,11 @@ type QueueItem struct {
 	Status        ItemStatus
 	Reason        string // human-readable detail for needs_action / unavailable
 	LastAttemptAt time.Time
+
+	// ForceWatch is a manual user override that makes eligibility ignore the
+	// owned-reward skip for THIS drop (only): the user insists on watching a drop
+	// whose reward the account already holds, e.g. to test crediting end to end.
+	// It bypasses ONLY the Owned gate - a genuinely claimed or complete drop is
+	// still excluded - and the reactive no-credit give-up still bounds the grind.
+	ForceWatch bool
 }
