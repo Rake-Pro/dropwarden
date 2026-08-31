@@ -9,6 +9,7 @@ import (
 	"github.com/rake-pro/dropwarden/internal/browser"
 	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rake-pro/dropwarden/internal/domain"
+	"github.com/rake-pro/dropwarden/internal/kick"
 	"github.com/rake-pro/dropwarden/internal/store"
 	"github.com/rake-pro/dropwarden/internal/twitch"
 	"github.com/rake-pro/dropwarden/internal/watcher"
@@ -585,23 +586,39 @@ func (s *WatcherService) LoginCheck(ctx context.Context, profile string, plat do
 		return nil, fmt.Errorf("unknown profile %q", profile)
 	}
 	sess := p.Session(plat)
-	if sess == nil || plat.OrTwitch() != domain.PlatformTwitch {
+	if sess == nil {
 		return nil, nil
 	}
-	// The probe NAVIGATES the watcher tab (twitch.CheckLogin loads the home
-	// page), so it must never run against an engine mid-watch - that would
-	// yank its player. Only a parked engine (paused or idle) may be probed.
+	// Either probe may NAVIGATE the watcher tab (twitch.CheckLogin always
+	// loads the home page; kick.CheckLogin navigates when off-origin), so it
+	// must never run against an engine mid-watch - that would yank its player.
+	// Only a parked engine (paused or idle) may be probed.
 	if e := p.Engine(plat); e != nil {
 		if est := e.Status(); !est.Paused && est.State != watcher.StateIdle {
 			return nil, fmt.Errorf("cannot check login while the %s watcher is %s - pause it first (the probe navigates its window)",
 				plat.OrTwitch(), est.State)
 		}
 	}
-	st, err := twitch.CheckLogin(ctx, sess)
-	if err != nil {
-		return nil, err
+	var loggedIn bool
+	if plat.OrTwitch() == domain.PlatformKick {
+		// Kick: an API status check from page context (kick/auth.go), not a
+		// DOM guess. Unknown stays null - never guessed.
+		st, err := kick.CheckLogin(ctx, sess)
+		if err != nil {
+			return nil, err
+		}
+		if !st.Known {
+			return nil, nil
+		}
+		loggedIn = st.LoggedIn
+	} else {
+		st, err := twitch.CheckLogin(ctx, sess)
+		if err != nil {
+			return nil, err
+		}
+		loggedIn = st.LoggedIn
 	}
-	if st.LoggedIn && p.NeedsLogin(plat) {
+	if loggedIn && p.NeedsLogin(plat) {
 		p.ClearNeedsLogin(plat)
 		s.b.markSessionReady(profile, plat)
 		// A CONFIRMED first login flows straight into watching: the init flow
@@ -611,7 +628,7 @@ func (s *WatcherService) LoginCheck(ctx context.Context, profile string, plat do
 		// runtime is already up in login mode, so this unpauses in place.
 		s.b.startWatching(profile, plat)
 	}
-	return &st.LoggedIn, nil
+	return &loggedIn, nil
 }
 
 func (s *WatcherService) Stop(profile string, plat domain.Platform) error {

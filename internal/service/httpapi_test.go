@@ -14,6 +14,7 @@ import (
 	"github.com/rake-pro/dropwarden/internal/browser"
 	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rake-pro/dropwarden/internal/domain"
+	"github.com/rake-pro/dropwarden/internal/kick"
 	"github.com/rake-pro/dropwarden/internal/twitch"
 )
 
@@ -431,13 +432,17 @@ func TestHTTPProfileRemove(t *testing.T) {
 // probeSession is a browser.Session that answers only the login probe.
 type probeSession struct {
 	browser.Session
-	loggedIn bool
+	loggedIn  bool
+	kickState string // kick.LoginProbe state: "in" | "out" | "unknown" | ""
 }
 
 func (p *probeSession) Navigate(context.Context, string) error { return nil }
 func (p *probeSession) Eval(_ context.Context, _ string, out any) error {
 	if st, ok := out.(*twitch.LoginState); ok {
 		st.LoggedIn = p.loggedIn
+	}
+	if lp, ok := out.(*kick.LoginProbe); ok {
+		lp.State = p.kickState
 	}
 	return nil
 }
@@ -467,14 +472,34 @@ func TestHTTPLoginCheck(t *testing.T) {
 	}
 
 	pb := b.FirstProfile()
-	// Kick has no login probe (see docs/NOTES-kick.md): null even with a
-	// session attached.
-	pb.Attach(domain.PlatformKick, nil, nil, &probeSession{loggedIn: true}, true)
+	// Kick probe: an API status check (kick/auth.go). Unknown stays null and
+	// leaves needsLogin alone - never guessed.
+	pb.Attach(domain.PlatformKick, nil, nil, &probeSession{kickState: "unknown"}, true)
 	if code, body := loginCheck(`{"profile":"main","platform":"kick"}`); code != 200 || !strings.Contains(body, `"loggedIn":null`) {
-		t.Fatalf("kick has no probe and must report null, got %d %s", code, body)
+		t.Fatalf("an unknowable kick probe must report null, got %d %s", code, body)
 	}
 	if !pb.NeedsLogin(domain.PlatformKick) {
 		t.Fatal("an unknowable kick probe must leave needsLogin alone")
+	}
+	// A definite logged-out answer reports false and keeps the prompt.
+	pb.Attach(domain.PlatformKick, nil, nil, &probeSession{kickState: "out"}, true)
+	if code, body := loginCheck(`{"profile":"main","platform":"kick"}`); code != 200 || !strings.Contains(body, `"loggedIn":false`) {
+		t.Fatalf("a logged-out kick probe must report false, got %d %s", code, body)
+	}
+	if !pb.NeedsLogin(domain.PlatformKick) {
+		t.Fatal("a logged-out kick probe must keep needsLogin set")
+	}
+	// A confirmed kick login clears the prompt and flows into watching, same
+	// as twitch.
+	pb.Attach(domain.PlatformKick, nil, nil, &probeSession{kickState: "in"}, true)
+	if code, body := loginCheck(`{"profile":"main","platform":"kick"}`); code != 200 || !strings.Contains(body, `"loggedIn":true`) {
+		t.Fatalf("a logged-in kick probe must report true, got %d %s", code, body)
+	}
+	if pb.NeedsLogin(domain.PlatformKick) {
+		t.Fatal("a confirmed kick login must clear needsLogin")
+	}
+	if got := rec.startedList(); len(got) != 1 || got[0] != "main/kick" {
+		t.Fatalf("a confirmed kick login must trigger StartWatching, got %v", got)
 	}
 
 	pb.Attach(domain.PlatformTwitch, nil, nil, &probeSession{loggedIn: false}, true)
@@ -497,7 +522,7 @@ func TestHTTPLoginCheck(t *testing.T) {
 	}
 	// A confirmed first login flows straight into watching (launch-on-demand:
 	// a logged-in window parked with no watcher must not linger open).
-	if got := rec.startedList(); len(got) != 1 || got[0] != "main/twitch" {
+	if got := rec.startedList(); len(got) != 2 || got[1] != "main/twitch" {
 		t.Fatalf("a confirmed login must trigger StartWatching, got %v", got)
 	}
 }
