@@ -52,6 +52,80 @@ follow-up UI.
   log tail (in-memory ring buffer in `logging`), Copy log / Copy JSON, and the
   `capture_gql_bodies` dump toggle (writes `~/.dropwarden/debug/*.json`, no auth).
 
+## SESSION 2026-08-31 (evening): live Mac debugging - drops crediting saga
+
+Long live-debug session on the user's Mac (build banner shows the running
+revision; latest pushed is 9902693). Everything from the multi-profile /
+lifecycle / shared-window / login-flow work was exercised live and mostly
+works; the focus became "watches a channel but earns no drop progress." What
+was found and fixed, in order:
+
+- FIRST-RUN LOGIN worked end to end (shared window, tab-per-platform, engines
+  start paused + needsLogin, login page navigation). A confirmed login now
+  auto-starts watching. KICK LOGIN PROBE built by live DevTools iteration
+  (kick/auth.go): who-am-I is GET web.kick.com/api/v1/user/session, answers
+  {data:{session_id},message} on a plain cookie fetch; verdict = session_id
+  present AND a session_token cookie/storage key found = logged in (bare
+  session_id could be anonymous). VERIFY-LIVE: on a LOGGED-OUT kick browser,
+  confirm session_token is absent (else the heuristic needs strengthening).
+- PLAYBACK VALIDATION reselect loop: every channel timed out at validate_timeout.
+  Root cause via new gate-breakdown logging: drops_indicator selector matched
+  nothing (visible/playing/vol-ok/advancing all true). Made the indicator
+  ADVISORY, added a stream-tag text fallback. Validation then reached `watching`.
+- STALE about:blank RAID: right after `watching`, the engine adopted a "raid"
+  to about:blank (the tab's own creation navigation sat buffered; the engine
+  only reads events while watching). Fixed: drain the event backlog at watching
+  entry + loginFromPath rejects non-channel URLs.
+- MINIMIZED TAB = NO CREDIT (confirmed via visibility field in the poll): after
+  validation the window re-minimized -> tab visibilityState "hidden" -> Twitch
+  pauses minute-watched heartbeats. Fix: stay VISIBLE while watching
+  (browser.window.minimize_while_watching default false; cover the window, do
+  not minimize - occlusion flags keep a covered window crediting). Answers the
+  long-open "credits after re-minimize?" verify: NO.
+- ELIGIBILITY red herring: the user's 3 Once Human "Console Launch Drops" drops
+  looked already-claimed. Added claimed-drop capture (details query now fetches
+  self{isClaimed}, discovery persists it, eligibility gates on ClaimedAt; heal
+  re-details a campaign until claim state is captured). BUT the details dump
+  proved they are self.isClaimed=FALSE, 0 min, hasPreconditionsMet=true -
+  GENUINELY UNCLAIMED. The "claimed 3 days ago" inventory was a PRIOR campaign
+  instance; same cosmetics, new drop IDs. Eligibility was right all along.
+- ANY-CHANNEL PARTICIPATION: an any-channel campaign (acl:0) credits only on a
+  PARTICIPATING (Drops-Enabled) stream. Selection was landing on ordinary Once
+  Human streamers. Fix: for any-channel campaigns the drops indicator is a GATE
+  (playback-valid + no drops indicator = not participating -> fail fast,
+  reselect). ACL keeps it advisory. It then landed on a genuine participating
+  channel (lilbit_007, indicator present) and STILL earned nothing.
+
+THE ACTUAL BLOCKER (unresolved): the user ALREADY OWNS these cosmetics in-game
+(from the prior console launch), and Twitch will not open a crediting session
+for an owned reward - session_found stays false even on a validated
+participating, playing, visible channel. So these specific drops can NEVER
+credit for this account, and NO amount of code makes them.
+
+- STANDALONE HANDLING shipped: give up on a drop that watches a participating
+  channel with zero credit and no crediting session (creditChannel empty) after
+  noFirstCreditTimeout = 5 min -> flag noCreditDrops (in-memory, session-scoped),
+  mark needs_action ("you may already own this reward"), selection skips it and
+  falls through. So an unattended box self-resolves owned/un-earnable drops in
+  ~5 min instead of grinding forever.
+- PROACTIVE owned-reward skip (NEXT WORK ITEM, needs data): when
+  capture_gql_bodies is on, discovery now dumps the drops-inventory page's raw
+  GraphQL to debug/inventory-gql.json (Pages.CaptureInventoryRaw, captured on
+  the first navigation). That file carries Twitch's real earned/claimed shape
+  (gameEventDrops, or per-campaign self.isClaimed:true). NEXT: from that file,
+  find the op listing earned/owned rewards, match a queued drop's reward
+  (benefit id, or reward name cross-campaign) against it, and at discovery mark
+  owned drops claimed (SaveProgress with ClaimedAt) so eligibility excludes them
+  BEFORE watching. The file is large - extract just the op whose response lists
+  claimed/earned drops (grep for the reward names, e.g. "DECAL: GRAFFITI", or
+  the gameEventDrops / isClaimed keys) rather than the whole buffer.
+
+THE ONE THING STILL NEVER VERIFIED: minute-watched crediting actually working
+on a drop the account does NOT own. Every live attempt has been an owned or
+non-participating drop. To close it: point the filter at any game with an
+active UNEARNED drop (or set any_game: true) and confirm minutes tick +
+active_in_rows true + a real claim. That is the remaining end-to-end proof.
+
 ## SESSION 2026-08-30: launch-on-demand + ref-counted window + orphan cleanup
 
 Debugged live on the user's Windows box (first Windows run of the multi-profile
