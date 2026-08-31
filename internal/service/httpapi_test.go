@@ -307,8 +307,22 @@ func jsonReq(method, path, body string) *http.Request {
 // recordingReconciler stands in for internal/app: it only records that a
 // commit asked for a reconcile pass.
 type recordingReconciler struct {
-	mu    sync.Mutex
-	calls []*config.Config
+	mu      sync.Mutex
+	calls   []*config.Config
+	started []string
+}
+
+// StartWatching records the run-control call a confirmed login triggers.
+func (r *recordingReconciler) StartWatching(profile string, plat domain.Platform) {
+	r.mu.Lock()
+	r.started = append(r.started, profile+"/"+string(plat.OrTwitch()))
+	r.mu.Unlock()
+}
+
+func (r *recordingReconciler) startedList() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.started...)
 }
 
 func (r *recordingReconciler) Reconcile(cfg *config.Config) {
@@ -430,6 +444,8 @@ func (p *probeSession) Eval(_ context.Context, _ string, out any) error {
 
 func TestHTTPLoginCheck(t *testing.T) {
 	b := testBackend(t)
+	rec := &recordingReconciler{}
+	b.SetReconciler(rec)
 	h := NewHTTPHandler(b)
 
 	loginCheck := func(body string) (int, string) {
@@ -478,5 +494,10 @@ func TestHTTPLoginCheck(t *testing.T) {
 	}
 	if getState(t, h).Profiles[0].Platforms[0].NeedsLogin {
 		t.Fatal("state must mirror the cleared needsLogin flag")
+	}
+	// A confirmed first login flows straight into watching (launch-on-demand:
+	// a logged-in window parked with no watcher must not linger open).
+	if got := rec.startedList(); len(got) != 1 || got[0] != "main/twitch" {
+		t.Fatalf("a confirmed login must trigger StartWatching, got %v", got)
 	}
 }

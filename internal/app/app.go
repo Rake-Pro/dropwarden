@@ -130,6 +130,17 @@ type App struct {
 	startPlat  startFunc
 	bootedOnce bool
 
+	// lastEngineStart is the wall-clock time of the most recently started
+	// engine (boot or live), guarded by mu. It feeds liveStartStagger (see
+	// reconcile.go): a live start landing soon after another gets a randomized
+	// stagger instead of firing its discovery burst instantly.
+	lastEngineStart time.Time
+
+	// nowFn and staggerRand are injectable for deterministic reconcile tests;
+	// nil uses time.Now / math/rand's default source.
+	nowFn       func() time.Time
+	staggerRand func() float64
+
 	// openWindow and launchSession are the two browser entry points, as fields
 	// so the window lifecycle (one Chrome per profile with a tab per platform,
 	// versus one Chrome per platform) is unit-testable without Chrome. Both are

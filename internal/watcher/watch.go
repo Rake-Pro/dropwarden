@@ -27,8 +27,10 @@ func (e *Engine) runWatching(ctx context.Context) (State, string) {
 	if w.ProactiveRefresh > 0 {
 		proactiveAt = now.Add(e.jittered(w.ProactiveRefresh, w.ProactiveJitter))
 	}
-	maxSessionAt := e.cur.sessionStart.Add(w.MaxSession)
-	lastReassert := now
+	// Computed once at session start (select.go), not here, so re-entering
+	// runWatching after a mid-watch refresh does not redraw a new target.
+	maxSessionAt := e.cur.maxSessionAt
+	nextReassertAt := now.Add(e.fuzzed(e.deps.Cfg.Browser.Player.ReassertInterval))
 	frozenTicks := 0
 	var lastTime float64
 	lastTimeSet := false
@@ -64,7 +66,7 @@ func (e *Engine) runWatching(ctx context.Context) (State, string) {
 			}
 
 		case <-tick.C:
-			if next, reason, done := e.watchTick(ctx, &lastTime, &lastTimeSet, &frozenTicks, &lastReassert, proactiveAt, maxSessionAt); done {
+			if next, reason, done := e.watchTick(ctx, &lastTime, &lastTimeSet, &frozenTicks, &nextReassertAt, proactiveAt, maxSessionAt); done {
 				return next, reason
 			}
 			tick.Reset(e.healthInterval())
@@ -107,7 +109,7 @@ func (e *Engine) enterBackoffDone(reason string) (State, string, bool) {
 
 // watchTick runs the per-tick watchdogs. Returns done=true with the next state
 // when a transition is required.
-func (e *Engine) watchTick(ctx context.Context, lastTime *float64, lastTimeSet *bool, frozenTicks *int, lastReassert *time.Time, proactiveAt, maxSessionAt time.Time) (State, string, bool) {
+func (e *Engine) watchTick(ctx context.Context, lastTime *float64, lastTimeSet *bool, frozenTicks *int, nextReassertAt *time.Time, proactiveAt, maxSessionAt time.Time) (State, string, bool) {
 	now := e.deps.Now()
 
 	// Session-level guards first.
@@ -168,12 +170,13 @@ func (e *Engine) watchTick(ctx context.Context, lastTime *float64, lastTimeSet *
 	}
 	*lastTime, *lastTimeSet = h.CurrentTime, true
 
-	// Volume drift.
+	// Volume drift. The out-of-band/muted case reasserts immediately (untouched);
+	// the routine periodic reassert's cadence is fuzzed one interval at a time.
 	if h.Volume <= 0 || h.Volume > 0.05 || h.Muted {
 		_ = e.deps.Ctrl.ReassertVolume(ctx, e.playerPolicy())
-	} else if now.Sub(*lastReassert) >= e.deps.Cfg.Browser.Player.ReassertInterval {
+	} else if now.After(*nextReassertAt) {
 		_ = e.deps.Ctrl.ReassertVolume(ctx, e.playerPolicy())
-		*lastReassert = now
+		*nextReassertAt = now.Add(e.fuzzed(e.deps.Cfg.Browser.Player.ReassertInterval))
 	}
 
 	// Progress + completion: passive capture first (free), then the rate-limited

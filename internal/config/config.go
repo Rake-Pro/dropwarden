@@ -133,6 +133,17 @@ type WatcherConfig struct {
 	// MaxSelectAttempts caps how many candidate drops selection will try per
 	// pass when falling through (bounds directory navigations). 0 = default.
 	MaxSelectAttempts int `yaml:"max_select_attempts"`
+
+	// TimingJitter desynchronizes periodic watcher actions for bot-detection
+	// avoidance: a covered delay D becomes D * (1 + timing_jitter * (2*r-1)),
+	// r in [0,1), i.e. +/- that fraction. 0 disables it (exact legacy
+	// intervals); valid range is [0, 0.5]. Unlike the other *Jitter fields
+	// above (each already covering one specific site), this one is a single
+	// knob applied by Engine.fuzzed at every site listed there. Not defaulted
+	// here (0 is a legitimate explicit value, unlike the zero-means-unset
+	// helpers below): the starter template writes the default 0.2 explicitly,
+	// so an existing config predating this field reads as 0 = untouched.
+	TimingJitter float64 `yaml:"timing_jitter"`
 }
 
 type ClaimConfig struct {

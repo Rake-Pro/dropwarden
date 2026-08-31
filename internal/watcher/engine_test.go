@@ -404,3 +404,146 @@ func TestCooldownPreservesEngineIdentity(t *testing.T) {
 		t.Fatalf("cooldown reset should clear the watch fields: %+v", got)
 	}
 }
+
+func TestFuzzedBounds(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	cfg, _ := config.StarterDefaults()
+	cfg.Watcher.TimingJitter = 0.2
+	const base = 100 * time.Second
+
+	e := New(Deps{
+		Store: st, Ctrl: newFakeController(), Pages: &fakePager{}, Disco: &fakeDisco{},
+		Cfg: cfg, Emit: newRecordingEmitter(), Log: zerolog.Nop(),
+		Rand: func() float64 { return 0 },
+	})
+	if got, want := e.fuzzed(base), base*8/10; got != want {
+		t.Fatalf("rand=0 should give D*(1-f): got %s want %s", got, want)
+	}
+
+	e.deps.Rand = func() float64 { return 1 }
+	if got, want := e.fuzzed(base), base*12/10; got != want {
+		t.Fatalf("rand=1 should give D*(1+f): got %s want %s", got, want)
+	}
+
+	unjittered, _ := config.StarterDefaults()
+	unjittered.Watcher.TimingJitter = 0
+	e.deps.Cfg = unjittered
+	if got := e.fuzzed(base); got != base {
+		t.Fatalf("timing_jitter=0 should return D exactly: got %s want %s", got, base)
+	}
+
+	e.deps.Cfg = cfg
+	if got := e.fuzzed(0); got != 0 {
+		t.Fatalf("d=0 should pass through unchanged: got %s", got)
+	}
+	if got := e.fuzzed(-5 * time.Second); got != -5*time.Second {
+		t.Fatalf("negative d should pass through unchanged: got %s", got)
+	}
+}
+
+func TestPollProgressIntervalVariesWithJitterOn(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	cfg, _ := config.StarterDefaults()
+	cfg.Watcher.ProgressPoll = 60 * time.Second
+	cfg.Watcher.TimingJitter = 0.2
+	pager := &fakePager{currentDrop: &domain.Progress{
+		DropID: "d1", RealMinutes: 1, RequiredMinutes: 60, Source: domain.SourceCurrentDrop,
+	}}
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	rnd := 0.0
+	e := New(Deps{
+		Store: st, Ctrl: newFakeController(), Pages: pager, Disco: &fakeDisco{},
+		Cfg: cfg, Emit: newRecordingEmitter(), Log: zerolog.Nop(),
+		Now: func() time.Time { return now }, Rand: func() float64 { return rnd },
+	})
+	e.cur = &activeWatch{drop: domain.Drop{ID: "d1", RequiredMinutes: 60}}
+
+	// First poll fires immediately (nextPollAt is the zero value); rand=0 fuzzes
+	// the next interval down to 60s*0.8=48s.
+	e.pollProgress(context.Background())
+	due1 := now.Add(48 * time.Second)
+	if !e.cur.nextPollAt.Equal(due1) {
+		t.Fatalf("nextPollAt after first poll = %s want %s", e.cur.nextPollAt, due1)
+	}
+
+	// Not yet due: must not fetch again.
+	now = due1.Add(-time.Second)
+	pager.pollCalls = 0
+	e.pollProgress(context.Background())
+	if pager.pollCalls != 0 {
+		t.Fatalf("poll fired before its fuzzed due time, calls=%d", pager.pollCalls)
+	}
+
+	// Due, with a different rand draw: the SECOND interval must differ from the
+	// first (60s*1.2=72s vs 48s), proving each poll picks its own next interval.
+	now = due1
+	rnd = 1
+	e.pollProgress(context.Background())
+	due2 := now.Add(72 * time.Second)
+	if !e.cur.nextPollAt.Equal(due2) {
+		t.Fatalf("nextPollAt after second poll = %s want %s", e.cur.nextPollAt, due2)
+	}
+}
+
+func TestPollProgressIntervalExactWhenJitterZero(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	cfg, _ := config.StarterDefaults()
+	cfg.Watcher.ProgressPoll = 60 * time.Second
+	cfg.Watcher.TimingJitter = 0
+	pager := &fakePager{currentDrop: &domain.Progress{
+		DropID: "d1", RealMinutes: 1, RequiredMinutes: 60, Source: domain.SourceCurrentDrop,
+	}}
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	e := New(Deps{
+		Store: st, Ctrl: newFakeController(), Pages: pager, Disco: &fakeDisco{},
+		Cfg: cfg, Emit: newRecordingEmitter(), Log: zerolog.Nop(),
+		Now: func() time.Time { return now }, Rand: func() float64 { return 0 },
+	})
+	e.cur = &activeWatch{drop: domain.Drop{ID: "d1", RequiredMinutes: 60}}
+
+	e.pollProgress(context.Background())
+	want := now.Add(60 * time.Second)
+	if !e.cur.nextPollAt.Equal(want) {
+		t.Fatalf("timing_jitter=0 must reproduce the exact interval: nextPollAt = %s want %s", e.cur.nextPollAt, want)
+	}
+}
+
+func TestMaxSessionTargetFuzzedOncePerSession(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	seedCampaign(t, st, false)
+	cfg, _ := config.StarterDefaults()
+	cfg.Watcher.TimingJitter = 0.2
+	cfg.Watcher.MaxSession = 4 * time.Hour
+	fixed := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	pager := &fakePager{channels: []string{"streamer_a"}}
+	// rand=1 fuzzes MaxSession up to 4h*1.2=4h48m, so the target only matches if
+	// it was actually computed through fuzzed(), not a plain sessionStart+MaxSession.
+	e := New(Deps{
+		Store: st, Ctrl: newFakeController(), Pages: pager, Disco: &fakeDisco{},
+		Cfg: cfg, Emit: newRecordingEmitter(), Log: zerolog.Nop(),
+		Now: func() time.Time { return fixed }, Rand: func() float64 { return 1 },
+	})
+
+	if _, _ = e.runSelecting(context.Background()); e.cur == nil {
+		t.Fatal("expected a channel selected")
+	}
+	want := fixed.Add(4*time.Hour + 48*time.Minute)
+	if !e.cur.maxSessionAt.Equal(want) {
+		t.Fatalf("maxSessionAt = %s want %s", e.cur.maxSessionAt, want)
+	}
+
+	// A mid-watch re-entry (beginWatching again on the SAME session, as happens
+	// after a hard-stall refresh) must not redraw the target even though Rand
+	// would now give a very different fuzz.
+	e.deps.Rand = func() float64 { return 0 }
+	if next, _ := e.beginWatching(context.Background()); next != StateWatching {
+		t.Fatalf("expected Watching, got %s", next)
+	}
+	if !e.cur.maxSessionAt.Equal(want) {
+		t.Fatalf("maxSessionAt changed on re-entry: got %s want %s", e.cur.maxSessionAt, want)
+	}
+}

@@ -55,6 +55,7 @@ watcher:
   offline_blacklist_ttl: 15m
   wait_for_top: false           # false = fall through to the next available drop
   max_select_attempts: 6        # candidates tried per pass when falling through
+  timing_jitter: 0.2            # +/- fraction on periodic watcher delays (bot-detection avoidance: desynchronizes periodic actions); 0 disables, max 0.5
 
 claim:
   strategy: in_page            # in_page | in_page_then_gql

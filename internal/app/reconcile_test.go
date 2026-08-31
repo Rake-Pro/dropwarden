@@ -397,6 +397,37 @@ func TestReconcileLaunchFailureIsNotFatal(t *testing.T) {
 	}
 }
 
+// TestLiveStartStaggerSpacesQuickSuccession pins review finding F6: a live
+// (post-boot) engine start landing soon after another gets a randomized
+// stagger instead of firing its discovery burst instantly, while a lone start
+// still gets 0 so a single user-pressed Start stays instant.
+func TestLiveStartStaggerSpacesQuickSuccession(t *testing.T) {
+	a := &App{}
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	a.nowFn = func() time.Time { return now }
+	a.staggerRand = func() float64 { return 1 } // pins the draw to the top of the range
+
+	if got := a.liveStartStagger(); got != 0 {
+		t.Fatalf("a start with no recent sibling should get 0 stagger, got %s", got)
+	}
+
+	// Second start lands 45s later, well inside the 2-minute window.
+	now = now.Add(45 * time.Second)
+	got := a.liveStartStagger()
+	if got < 30*time.Second || got > 90*time.Second {
+		t.Fatalf("a start landing soon after another should get a [30s,90s] stagger, got %s", got)
+	}
+	if got != 90*time.Second { // staggerRand=1 pins it to the max of the range
+		t.Fatalf("expected the top of the range with rand=1, got %s", got)
+	}
+
+	// Third start lands well outside the window: back to instant.
+	now = now.Add(3 * time.Minute)
+	if got := a.liveStartStagger(); got != 0 {
+		t.Fatalf("a start with no RECENT sibling should get 0 stagger, got %s", got)
+	}
+}
+
 func TestReconcileConcurrentCommitsDoNotDoubleStart(t *testing.T) {
 	cfg := testConfig(t, config.MainProfileName, "second")
 	h := newHarness(t, cfg)

@@ -99,6 +99,23 @@ func (e *Engine) jittered(base, jitter time.Duration) time.Duration {
 	return base + time.Duration(e.deps.Rand()*float64(jitter))
 }
 
+// fuzzed applies watcher.timing_jitter to a delay for bot-detection avoidance:
+// the result is d * (1 + timing_jitter * (2*rand-1)), i.e. +/- that fraction,
+// desynchronizing an otherwise exact periodic cadence. A non-positive d passes
+// through unchanged (nothing to desync), and timing_jitter <= 0 (the default
+// legacy behavior) returns d exactly.
+func (e *Engine) fuzzed(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	f := e.deps.Cfg.Watcher.TimingJitter
+	if f <= 0 {
+		return d
+	}
+	delta := f * (2*e.deps.Rand() - 1)
+	return time.Duration(float64(d) * (1 + delta))
+}
+
 func (e *Engine) runDiscovering(ctx context.Context) (State, string) {
 	e.drainCommands()
 	if e.shutdown {

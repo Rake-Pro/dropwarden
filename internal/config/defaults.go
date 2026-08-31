@@ -163,6 +163,9 @@ func (c *Config) validate() error {
 	if j := c.Watcher.HealthTickJitter; j < 0 || j > 100 {
 		return fmt.Errorf("config: watcher.health_tick_jitter %d must be a percent in [0,100]", j)
 	}
+	if j := c.Watcher.TimingJitter; j < 0 || j > 0.5 {
+		return fmt.Errorf("config: watcher.timing_jitter %v must be a fraction in [0,0.5]", j)
+	}
 	if _, err := zerologLevel(c.Logging.Level); err != nil {
 		return err
 	}

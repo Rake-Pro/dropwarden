@@ -4,6 +4,11 @@ Snapshot for resuming after a context clear. Repo: Rake-Pro/dropwarden (private)
 branch main. This file is the "where are we" note; deeper design is in README.md,
 NOTES-twitch.md, NOTES-wails.md.
 
+Everything below is COMMITTED and PUSHED to main (commits b9a9996..851ac1a,
+plus 7edcaca from the Windows session): multi-profile support, the live
+runtime lifecycle, the shared-window/one-Chrome-per-profile work, and the
+follow-up UI.
+
 ## Environment
 
 - User runs the GUI on macOS (Apple Silicon, macOS 26) via GoLand run config
@@ -141,8 +146,8 @@ implementing - config profiles block w/ legacy zero-move migration, per-
 profile DBs, N ProfileRuntimes, /api/engine/{profile}/{platform}/{action},
 unified dashboard + profile selector, tray generalization, 4 phases).
 
-MULTI-PROFILE PHASES 0-3 CODE COMPLETE (2026-08-31, in the working tree,
-UNCOMMITTED). What landed: config gained a `profiles:` block (name, dir,
+MULTI-PROFILE PHASES 0-3 CODE COMPLETE (2026-08-31, committed on main).
+What landed: config gained a `profiles:` block (name, dir,
 enabled, display_name, games/any_game inherit-or-override, per-profile kick
 enable, window_slot) with legacy synthesis - a config with no profiles block
 still gets exactly one profile ("main", rooted at the app dir itself), so
@@ -180,7 +185,7 @@ profile slot grid, explicit override wins) and watcher
 `TestRunDiscoveringZeroStaggerRunsImmediately` / `TestRunDiscoveringApplies
 StaggerOnceOnly`, plus `app.TestDiscoveryStagger`. `task check` passes clean.
 
-LIVE RUNTIME LIFECYCLE (2026-08-31, working tree, UNCOMMITTED). The owner's
+LIVE RUNTIME LIFECYCLE (2026-08-31, committed on main). The owner's
 complaint - "restart the app to apply disease", and enabling Kick on the Mac
 producing nothing but a restart hint - is fixed: adding a profile, enabling or
 disabling a profile, enabling or disabling Kick (root default or per-profile),
@@ -262,7 +267,7 @@ and REMOVING a profile all take effect immediately.
   `TestLiveTogglesReconcile` pinning that every desired-state commit reconciles;
   config tests for both baked-origin migrations plus a non-matching pair.
 
-ONE CHROME WINDOW PER PROFILE (2026-08-30, working tree, UNCOMMITTED). Four
+ONE CHROME WINDOW PER PROFILE (2026-08-30, committed on main). Four
 profiles x two platforms used to cost EIGHT Chrome instances; it now costs
 FOUR. Kick runs as a TAB in the profile's Twitch Chrome window instead of a
 second instance.
@@ -303,6 +308,13 @@ second instance.
   solution, or prove muted background-tab playback reliable. A muted background
   tab is the known silent-failure family (Chrome throttles it and drop minutes
   stop accruing); the soft/hard stall watchdogs are the only backstop today.
+- BACKLOG (found in the 2026-08-31 goals review): the burn-in PIXEL SHIFT is
+  dead code - `ShiftWindow`/`browser.burnin.shift_interval`/`shift_pixels`
+  exist with per-OS implementations, but nothing calls `ShiftWindow` on a
+  timer, so the README's promised periodic shift never happens (README wording
+  corrected). Wiring it now belongs to the window coordinator (a shared window
+  must shift once, not once per tab, and never while minimized); do it there
+  or delete the plumbing.
 - VERIFY LIVE (Mac): shared-mode Kick progress. Watch whether the Kick tab keeps
   accruing minutes while the Twitch tab is in front, and whether activation on a
   channel switch disturbs the other platform's playback. If it does not hold up,
@@ -344,7 +356,7 @@ second instance.
   `App.launchSession`), so the window lifecycle itself is what is under test.
 - FRONTEND: no state shape changed - no UI work is owed by this change.
 
-UI HALF BUILT (2026-08-31, working tree, UNCOMMITTED). The live-lifecycle UI
+UI HALF BUILT (2026-08-31, committed on main). The live-lifecycle UI
 follow-up above is done: (1) `pendingRestart` reads stay removed (unchanged
 from the prior pass). (2) The needsLogin now-card body is a real guided flow:
 mode-agnostic copy ("Log in to <Platform> in this profile's watcher window,
@@ -383,8 +395,9 @@ the Mac = the full thin-client shape minus GTK - this needs a real display
 and is not doable in this container); the Linux GUI runtime itself is still
 verify-live (it builds, per the Environment section above, but has not run
 on real hardware); the optional `--listen` remote-management question from
-the design doc remains open/undecided. NEXT WORK ITEM: the Mac test pass,
-then commit.
+the design doc remains open/undecided. All of the above is committed on main
+(see the commit-range note at the top of this file). NEXT WORK ITEM: the Mac
+test pass.
 
 ## NEXT live milestone (where to resume)
 

@@ -40,8 +40,12 @@ v3. Development happens directly from GoLand.
   rapid-fire anything.
 - Claims use in-page clicks. The `ClaimDropRewards` GraphQL replay is
   implemented as a config flag but ships OFF (it has triggered bot blocks).
-- The window is launched unfocused, dimmed, and shifts a few pixels on a timer
-  to avoid monitor burn-in.
+- The window is launched unfocused and dimmed. (A periodic few-pixel burn-in
+  shift is configured and plumbed but not yet wired to a timer - see the
+  STATUS.md backlog.)
+- `watcher.timing_jitter` (default 0.2) desyncs periodic watcher actions
+  (progress poll, player reassert, session rotation) by +/- that fraction so
+  they do not land on an exact fixed interval every time; 0 disables it.
 
 ## Layout
 
@@ -87,7 +91,7 @@ Config, database, log, and the dedicated Chrome profile live under
 `~/.dropwarden` (macOS) or `%USERPROFILE%\dropwarden` (Windows). The starter
 config is written on first run.
 
-### The GUI (Windows / macOS)
+### The GUI (Windows / macOS / Linux)
 
 ```
 go run ./cmd/dropwarden          # builds + runs the tray app (embedded assets)
@@ -98,9 +102,14 @@ wails3 dev
 The dashboard, queue, history, and settings screens follow the same visual
 language as the sibling GoShareIt app.
 
-> The GUI does not build on Linux: Wails v3 there needs GTK4 + WebKitGTK, which
-> is out of scope. The Linux build is a stub that points you at the CLI. This
-> keeps `go build ./...` green everywhere.
+> Linux builds the GUI via Wails' GTK3 backend (`go build -tags gtk3
+> ./cmd/dropwarden`, GTK3 + webkit2gtk-4.1) since 2026-08-30 - Wails v3's
+> default backend there needs GTK4 + WebKitGTK, which most distros (and this
+> container) do not have, so the gtk3 tag is the portable path. It cross-
+> compiles and passes `task check`; running it on real Linux hardware is still
+> verify-live until the thin-client machine exists. Plain `go build ./...`
+> (no tag) still needs the GTK4 stack on Linux; use the gtk3 tag or `task
+> build-linux`.
 
 ### How the UI talks to Go
 

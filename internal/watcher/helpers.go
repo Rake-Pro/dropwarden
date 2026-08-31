@@ -43,8 +43,8 @@ func (e *Engine) updateProgressFromCapture(ctx context.Context) (minutes int, in
 }
 
 // pollProgress actively fetches server-side progress at most once per
-// watcher.progress_poll: the viewer's current drop session plus the full
-// inventory. It exists because the channel page does not fire progress GQL over
+// (fuzzed) watcher.progress_poll: the viewer's current drop session plus the
+// full inventory. It exists because the channel page does not fire progress GQL over
 // fetch/XHR on its own (live updates ride a WebSocket the capture shim cannot
 // see), so passive capture alone leaves the UI frozen at 0. The inventory read
 // matters for simultaneous multi-tier campaigns: dropCurrentSession names only
@@ -59,10 +59,13 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 		interval = time.Minute
 	}
 	now := e.deps.Now()
-	if now.Sub(e.cur.lastPoll) < interval {
+	if now.Before(e.cur.nextPollAt) {
 		return e.cur.lastMinutes, false
 	}
-	e.cur.lastPoll = now
+	// Pick the NEXT poll's due time now, fuzzed: this is a page-context GQL
+	// fetch, the most network-visible fixed cadence in the app, so it should
+	// not land on the exact interval every time.
+	e.cur.nextPollAt = now.Add(e.fuzzed(interval))
 	var ps []domain.Progress
 	if p, err := e.deps.Pages.FetchCurrentDrop(ctx); err != nil {
 		e.deps.Log.Warn().Err(err).Msg("current-drop poll failed")

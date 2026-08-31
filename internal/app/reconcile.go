@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"math/rand/v2"
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/browser"
@@ -24,6 +25,57 @@ var platformStopOrder = []domain.Platform{domain.PlatformKick, domain.PlatformTw
 // return before closing its browser anyway. A wedged engine must not hold up a
 // profile toggle forever.
 const engineStopTimeout = 10 * time.Second
+
+// liveStaggerWindow, liveStaggerMin, liveStaggerMax govern the stagger a LIVE
+// (post-boot) engine start gets when it lands soon after another one (review
+// finding F6): today's boot pass staggers each profile's first discovery
+// (discoveryStagger below), but every later start got 0, so a user starting N
+// profiles in quick succession fired N discovery bursts at once. A start
+// within liveStaggerWindow of the previous one now gets a randomized delay in
+// [liveStaggerMin, liveStaggerMax] instead; a lone start (no recent sibling)
+// still gets 0 so a single user-pressed Start stays instant. The engine shows
+// "discovering" through the sleep, so the UI stays honest while the burst is
+// spread out.
+const (
+	liveStaggerWindow = 2 * time.Minute
+	liveStaggerMin    = 30 * time.Second
+	liveStaggerMax    = 90 * time.Second
+)
+
+// now returns the App's time source: nowFn if injected (tests), else wall clock.
+func (a *App) now() time.Time {
+	if a.nowFn != nil {
+		return a.nowFn()
+	}
+	return time.Now()
+}
+
+// staggerRandFloat returns the App's random source in [0,1): staggerRand if
+// injected (tests), else math/rand/v2's default.
+func (a *App) staggerRandFloat() float64 {
+	if a.staggerRand != nil {
+		return a.staggerRand()
+	}
+	return rand.Float64()
+}
+
+// liveStartStagger records this engine start's time and returns the stagger a
+// LIVE start should use if one lands within liveStaggerWindow of the last
+// recorded start (boot or live). Called for every startLive, boot included, so
+// a boot-time start still counts as a recent sibling for a live start that
+// follows soon after; reconcileOnce uses the return value only for live starts
+// (boot keeps using discoveryStagger, unchanged).
+func (a *App) liveStartStagger() time.Duration {
+	now := a.now()
+	a.mu.Lock()
+	last := a.lastEngineStart
+	a.lastEngineStart = now
+	a.mu.Unlock()
+	if last.IsZero() || now.Sub(last) > liveStaggerWindow {
+		return 0
+	}
+	return liveStaggerMin + time.Duration(a.staggerRandFloat()*float64(liveStaggerMax-liveStaggerMin))
+}
 
 // runIntent is the desired lifecycle of one (profile, platform). Chrome exists
 // only for a runtime whose intent is not off: launching a browser nobody is
@@ -345,7 +397,17 @@ func (a *App) reconcileOnce() {
 			if up {
 				continue
 			}
-			a.startLive(ctx, binder, pr, plat, stagger)
+			// liveStartStagger both records this start's time and computes the
+			// stagger a live (post-boot) start should use; during boot its return
+			// value is discarded in favor of discoveryStagger, but it must still
+			// run so the boot start counts as a recent sibling for later live
+			// starts.
+			live := a.liveStartStagger()
+			s := stagger
+			if a.bootedOnce {
+				s = live
+			}
+			a.startLive(ctx, binder, pr, plat, s)
 		}
 	}
 	a.bootedOnce = true

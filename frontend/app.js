@@ -218,9 +218,13 @@ function nowCardEl(p, multi, profile) {
       try {
         const r = await api.loginCheck(profile, p.platform);
         if (out) {
-          if (r.loggedIn === true) { out.textContent = 'Logged in - press Start below to begin.'; out.style.color = 'var(--ok)'; }
+          if (r.loggedIn === true) {
+            // A confirmed login auto-starts the watcher backend-side; reflect it.
+            out.textContent = 'Logged in - starting the watcher.'; out.style.color = 'var(--ok)';
+            setTimeout(() => refreshAll(), 1200);
+          }
           else if (r.loggedIn === false) { out.textContent = 'Not logged in yet - finish logging in and check again.'; out.style.color = 'var(--warn)'; }
-          else { out.textContent = `Can't auto-detect login for ${platLabel(p.platform)} - once you're logged in, press Start.`; out.style.color = 'var(--text-secondary)'; }
+          else { out.textContent = `Can't auto-detect login for ${platLabel(p.platform)} - once you're logged in, press Start (or Stop to close the window until later).`; out.style.color = 'var(--text-secondary)'; }
         }
       } catch (e) {
         if (out) { out.textContent = 'Check failed: ' + (e.message || e); out.style.color = 'var(--err)'; }

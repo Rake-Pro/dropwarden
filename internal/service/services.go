@@ -604,6 +604,12 @@ func (s *WatcherService) LoginCheck(ctx context.Context, profile string, plat do
 	if st.LoggedIn && p.NeedsLogin(plat) {
 		p.ClearNeedsLogin(plat)
 		s.b.markSessionReady(profile, plat)
+		// A CONFIRMED first login flows straight into watching: the init flow
+		// is "log in, then it sets everything up", and the launch-on-demand
+		// rule says Chrome exists only while a watcher runs - a logged-in
+		// window parked with no watcher would linger open for nothing. The
+		// runtime is already up in login mode, so this unpauses in place.
+		s.b.startWatching(profile, plat)
 	}
 	return &st.LoggedIn, nil
 }

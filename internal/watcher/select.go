@@ -148,6 +148,8 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 		login:        login,
 		sessionStart: now,
 		lastProgress: now,
+		// Computed once here, not per watchTick: see the maxSessionAt doc comment.
+		maxSessionAt: now.Add(e.fuzzed(e.deps.Cfg.Watcher.MaxSession)),
 	}
 	_ = e.deps.Store.SetItemStatus(drop.ID, domain.ItemActive, "watching "+login)
 	e.deps.Emit.Emit(EvChannel, ChannelPayload{Login: login, Game: cand.Campaign.GameName})

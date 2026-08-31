@@ -135,12 +135,22 @@ type activeWatch struct {
 	startMinutes  int
 	lastMinutes   int
 	lastProgress  time.Time
-	lastPoll      time.Time
 	creditChannel string // channel Twitch last reported as crediting (from the poll)
 	hardRefreshes int
 	stallEvents   int
 	raids         int
 	sessionStart  time.Time
+
+	// nextPollAt is when pollProgress may next fire; set to now + fuzzed(interval)
+	// each time a poll actually runs, so the cadence of this network-visible GQL
+	// fetch is not an exact fixed interval.
+	nextPollAt time.Time
+
+	// maxSessionAt is this session's rotation target, computed ONCE at session
+	// start (sessionStart + fuzzed(MaxSession)) rather than recomputed on every
+	// re-entry into runWatching, so a channel rotation does not land at exactly
+	// the same offset every session.
+	maxSessionAt time.Time
 }
 
 // Engine is the watcher state machine.
