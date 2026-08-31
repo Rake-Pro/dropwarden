@@ -102,6 +102,46 @@ const jsFetchCampaigns = `(async () => {
   } catch (e) { return JSON.stringify({ status: 0, body: String(e) }); }
 })()`
 
+// jsSeedNetCapture installs a passive fetch/XHR shim that buffers response
+// bodies for drops-related URLs into window.__dw_kick_net. It is DEBUG-ONLY
+// (seeded only when capture_gql_bodies is on) and is the Kick analog of the
+// Twitch GQL capture shim: Kick's drop-progress endpoint/DOM is unknown, so
+// when a real Kick drop is finally live this records whatever the page fetches
+// (path matches drop|inventor|campaign|quest|reward) verbatim, to build the
+// progress parser from real data instead of a guess. Idempotent via a window
+// flag so re-seeding each pass does not double-wrap. verify live.
+const jsSeedNetCapture = `(() => {
+  if (window.__dw_kick_net_seeded) return;
+  window.__dw_kick_net_seeded = true;
+  window.__dw_kick_net = [];
+  const want = (u) => /drop|inventor|campaign|quest|reward/i.test(u || '');
+  const push = (rec) => { try { if (window.__dw_kick_net.length < 100) window.__dw_kick_net.push(rec); } catch (e) {} };
+  const of = window.fetch;
+  if (of) {
+    window.fetch = function(...a) {
+      const url = (a[0] && a[0].url) || a[0] || '';
+      return of.apply(this, a).then((res) => {
+        if (want(url)) { try { res.clone().text().then((t) => push({ src: 'fetch', url: String(url), status: res.status, body: (t || '').slice(0, 20000), at: Date.now() })); } catch (e) {} }
+        return res;
+      });
+    };
+  }
+  const oo = XMLHttpRequest.prototype.open, osend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(m, u, ...r) { this.__dw_url = u; return oo.call(this, m, u, ...r); };
+  XMLHttpRequest.prototype.send = function(...a) {
+    this.addEventListener('load', () => { try { if (want(this.__dw_url)) push({ src: 'xhr', url: String(this.__dw_url), status: this.status, body: (this.responseText || '').slice(0, 20000), at: Date.now() }); } catch (e) {} });
+    return osend.apply(this, a);
+  };
+})()`
+
+// jsDrainNetCapture returns the buffered drops-related network records as JSON
+// and clears the buffer.
+const jsDrainNetCapture = `(() => { const b = window.__dw_kick_net || []; window.__dw_kick_net = []; return JSON.stringify(b); })()`
+
+// jsInventoryRawHTML returns the inventory page's full rendered HTML (Kick is a
+// Vue SPA that renders drop progress into the DOM), capped for a debug dump.
+const jsInventoryRawHTML = `(() => (document.documentElement && document.documentElement.outerHTML || '').slice(0, 400000))()`
+
 // jsNum renders a float for embedding in JS.
 func jsNum(f float64) string {
 	// Small fixed precision keeps the literal stable and locale-free.

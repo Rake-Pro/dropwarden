@@ -144,18 +144,41 @@ type inventoryCampaign struct {
 	TimeBasedDrops []inventoryTimeBasedDrop `json:"timeBasedDrops"`
 }
 
-// inventoryResponse is the shape of the "Inventory" operation.
-//
-// verify live: confirm "gameEventDrops" shape; this package does not parse
-// it (only time-based drops are in scope for dropwarden).
+// ownedRewardNode is one node in the earned/owned reward connections. It covers
+// both shapes: gameEventDropsConnection nodes carry the reward name directly
+// (game-integration items), while earnedDropRewards nodes nest it under "item"
+// (badges, emotes, codes, direct entitlements). A missing branch decodes to the
+// zero value, so reading both is safe.
+type ownedRewardNode struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Item *struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"item"`
+}
+
+// ownedRewardEdges is the common {edges:[{node}]} connection wrapper used by
+// both gameEventDropsConnection and earnedDropRewards.
+type ownedRewardEdges struct {
+	Edges []struct {
+		Node ownedRewardNode `json:"node"`
+	} `json:"edges"`
+}
+
+// inventoryResponse is the shape of the "Inventory" operation. Besides the
+// in-progress drops, the inventory carries the rewards the account already
+// holds: gameEventDropsConnection (game-integration items) and earnedDropRewards
+// (claimed badges/emotes/entitlements). Both are read to build the owned-reward
+// set so a drop whose reward is already held can be skipped before watching
+// (Twitch reports such a drop isClaimed=false yet never credits it).
 type inventoryResponse struct {
 	Data struct {
 		CurrentUser *struct {
 			Inventory *struct {
-				DropCampaignsInProgress []inventoryCampaign `json:"dropCampaignsInProgress"`
-				GameEventDrops          []struct {
-					ID string `json:"id"`
-				} `json:"gameEventDrops"`
+				DropCampaignsInProgress  []inventoryCampaign `json:"dropCampaignsInProgress"`
+				GameEventDropsConnection ownedRewardEdges    `json:"gameEventDropsConnection"`
+				EarnedDropRewards        ownedRewardEdges    `json:"earnedDropRewards"`
 			} `json:"inventory"`
 		} `json:"currentUser"`
 	} `json:"data"`

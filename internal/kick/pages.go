@@ -56,6 +56,32 @@ func (p *Pages) InventoryText(ctx context.Context) string {
 	return txt
 }
 
+// InventoryRawHTML returns the inventory page's full rendered HTML (Kick renders
+// drop progress into the DOM), for a debug dump while the shape is discovered.
+func (p *Pages) InventoryRawHTML(ctx context.Context) string {
+	var html string
+	_ = p.ctrl.Session().Eval(ctx, jsInventoryRawHTML, &html)
+	return html
+}
+
+// SeedDropsCapture installs the passive fetch/XHR capture shim (debug-only) so
+// the drops/inventory/channel pages loaded afterward record their drops-related
+// network traffic. Seed BEFORE navigating; idempotent per session.
+func (p *Pages) SeedDropsCapture(ctx context.Context) error {
+	return p.ctrl.Session().SeedOnNewDocument(ctx, jsSeedNetCapture)
+}
+
+// DrainDropsCapture returns the buffered drops-related network records (JSON)
+// captured since the shim was seeded, and clears the buffer. Empty when the
+// shim was never seeded or nothing matched.
+func (p *Pages) DrainDropsCapture(ctx context.Context) (string, error) {
+	var raw string
+	if err := p.ctrl.Session().Eval(ctx, jsDrainNetCapture, &raw); err != nil {
+		return "", fmt.Errorf("kick: drain drops capture: %w", err)
+	}
+	return raw, nil
+}
+
 // DirectoryChannels returns live channel logins for a category slug.
 func (p *Pages) DirectoryChannels(ctx context.Context, gameSlug string) ([]string, error) {
 	if gameSlug == "" {

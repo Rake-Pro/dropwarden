@@ -17,6 +17,7 @@ import (
 	"github.com/rake-pro/dropwarden/internal/domain"
 	"github.com/rake-pro/dropwarden/internal/store"
 	"github.com/rake-pro/dropwarden/internal/twitch"
+	"github.com/rake-pro/dropwarden/internal/twitch/gql"
 )
 
 // Diagnostic is a snapshot of the last discovery pass, for the debug UI.
@@ -135,7 +136,7 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 		}
 	}
 
-	prog, err := d.pages.ReadInventory(ctx)
+	prog, owned, err := d.pages.ReadInventoryFull(ctx)
 	if err != nil {
 		d.logger.Warn().Err(err).Msg("discovery: inventory read failed; continuing with campaign data")
 	} else {
@@ -145,6 +146,10 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 			}
 			res.Progress++
 		}
+		// Flag drops whose reward the account already owns AFTER saving inventory
+		// progress, so an owned drop that also has in-progress minutes keeps its
+		// minutes and just gains the owned flag.
+		d.markOwnedDrops(owned)
 	}
 
 	enq, err := d.reconcileQueue(ctx)
@@ -164,6 +169,72 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 	d.logger.Info().Int("campaigns", res.Campaigns).Int("details", res.Details).
 		Int("progress", res.Progress).Int("enqueued", res.Enqueued).Msg("discovery pass complete")
 	return res, nil
+}
+
+// markOwnedDrops flags every known Twitch drop whose reward the account already
+// holds (its benefit name matches the earned/owned inventory) so eligibility
+// excludes it before watching. Twitch reports such a drop isClaimed=false yet
+// never credits it (the reward is already held, typically from a prior campaign
+// instance offering the same cosmetic with fresh drop IDs), so without this the
+// watcher grinds a participating channel to exhaustion earning nothing; the
+// engine's reactive give-up is only the last-resort backstop. The drop's
+// progress row is updated in place, preserving any real minutes. Returns the
+// number of drops newly flagged.
+func (d *Discoverer) markOwnedDrops(owned map[string]bool) int {
+	if len(owned) == 0 {
+		return 0
+	}
+	campaigns, err := d.store.ListCampaigns()
+	if err != nil {
+		d.logger.Warn().Err(err).Msg("discovery: mark owned: list campaigns failed")
+		return 0
+	}
+	n := 0
+	for _, c := range campaigns {
+		if c.Platform.OrTwitch() != domain.PlatformTwitch {
+			continue
+		}
+		for _, drop := range c.Drops {
+			if !rewardOwned(drop, owned) {
+				continue
+			}
+			p, err := d.store.GetProgress(drop.ID)
+			if err != nil {
+				continue
+			}
+			if p == nil {
+				p = &domain.Progress{DropID: drop.ID, RequiredMinutes: drop.RequiredMinutes, Source: domain.SourceInventory}
+			} else if p.Owned {
+				continue // already flagged
+			}
+			p.Owned = true
+			p.ObservedAt = time.Now()
+			if err := d.store.SaveProgress(*p); err != nil {
+				d.logger.Warn().Err(err).Str("drop", drop.ID).Msg("discovery: mark owned: save failed")
+				continue
+			}
+			n++
+			d.logger.Info().Str("drop", drop.Name).Str("campaign", c.Name).
+				Msg("discovery: reward already owned - drop will be skipped before watching")
+		}
+	}
+	if n > 0 {
+		d.logger.Info().Int("owned_skipped", n).Msg("discovery: flagged already-owned rewards")
+	}
+	return n
+}
+
+// rewardOwned reports whether a drop's reward is already held: any of its
+// benefit names matches the owned set by normalized name. Reward IDs are
+// campaign-instance-scoped, so the name is the only stable cross-instance key
+// (a new campaign offering the same cosmetic mints fresh IDs).
+func rewardOwned(drop domain.Drop, owned map[string]bool) bool {
+	for _, b := range drop.Benefits {
+		if owned[gql.NormalizeRewardName(b.Name)] {
+			return true
+		}
+	}
+	return false
 }
 
 // fetchDetails fetches full campaign details (drops + ACL) for filter-matching

@@ -281,6 +281,52 @@ func TestParseInventory(t *testing.T) {
 	}
 }
 
+func TestParseEarnedRewards(t *testing.T) {
+	// Real inventory shape (trimmed): gameEventDropsConnection nodes carry the
+	// reward name directly; earnedDropRewards nodes nest it under item.name. Names
+	// are normalized (trimmed + lowercased); the trailing space on the skin name
+	// must not defeat a later drop-benefit match.
+	body := []byte(`{"data":{"currentUser":{"id":"1","inventory":{
+		"dropCampaignsInProgress":[],
+		"gameEventDropsConnection":{"edges":[
+			{"node":{"id":"camp_CUSTOM_ID_1","name":"VOID WINGS SKIN: UNKNOWN ","__typename":"UserDropReward"}},
+			{"node":{"id":"camp_CUSTOM_ID_2","name":"DECAL: GRAFFITI","__typename":"UserDropReward"}}
+		],"pageInfo":{"hasNextPage":false}},
+		"earnedDropRewards":{"edges":[
+			{"node":{"id":"e1","item":{"id":"i1","name":"Pichu","distributionType":"BADGE"},"status":"CLAIMED"}},
+			{"node":{"id":"e2","item":{"id":"i2","name":"CREP Emote","distributionType":"EMOTE"}}}
+		]}
+	}}}}`)
+
+	owned, err := ParseEarnedRewards(body)
+	if err != nil {
+		t.Fatalf("ParseEarnedRewards: %v", err)
+	}
+	want := []string{"void wings skin: unknown", "decal: graffiti", "pichu", "crep emote"}
+	for _, w := range want {
+		if !owned[w] {
+			t.Errorf("owned set missing %q; got %v", w, owned)
+		}
+	}
+	if len(owned) != len(want) {
+		t.Errorf("owned set size = %d, want %d (%v)", len(owned), len(want), owned)
+	}
+	// A drop benefit named with different casing/whitespace must match.
+	if !owned[NormalizeRewardName("  Void Wings Skin: Unknown  ")] {
+		t.Errorf("normalized benefit name should match an owned reward")
+	}
+}
+
+func TestParseEarnedRewards_NoInventory(t *testing.T) {
+	owned, err := ParseEarnedRewards([]byte(`{"data":{"currentUser":null}}`))
+	if err != nil {
+		t.Fatalf("ParseEarnedRewards: %v", err)
+	}
+	if owned != nil {
+		t.Errorf("expected nil owned set for absent inventory, got %v", owned)
+	}
+}
+
 func TestParseCurrentDrop(t *testing.T) {
 	body := readFixture(t, "current_drop.json")
 	p, err := ParseCurrentDrop(body)

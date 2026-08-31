@@ -379,6 +379,42 @@ func TestNextDrop_SkipLinkOffDisablesGate(t *testing.T) {
 	}
 }
 
+func TestNextDrop_OwnedRewardSkipped(t *testing.T) {
+	// A drop whose reward the account already owns is flagged Owned at discovery.
+	// Twitch reports it isClaimed=false with 0 minutes, so Complete()/ClaimedAt do
+	// not exclude it - eligibility must gate on Owned or the watcher grinds a
+	// participating channel forever earning nothing (live 2026-08-31 Once Human).
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	future := now.Add(24 * time.Hour)
+	camp := baseCampaign("c1", future,
+		domain.Drop{ID: "d1", CampaignID: "c1", RequiredMinutes: 60},
+	)
+	items := []domain.QueueItem{
+		{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending},
+	}
+	campaigns := map[string]domain.Campaign{"c1": camp}
+	progress := map[string]domain.Progress{
+		"d1": {DropID: "d1", RealMinutes: 0, RequiredMinutes: 60, Source: domain.SourceInventory, Owned: true},
+	}
+	got, err := NextDrop(items, campaigns, progress, map[string]bool{}, domain.PriorityTopDown, true, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("owned-reward drop must be skipped, got %+v", got)
+	}
+	eligible, status, reason := EligibilityReason(items[0], campaigns, progress, map[string]bool{}, true, now)
+	if eligible {
+		t.Errorf("owned-reward drop should not be eligible")
+	}
+	if status != domain.ItemNeedsAction {
+		t.Errorf("owned-reward status = %q, want needs_action", status)
+	}
+	if reason == "" {
+		t.Errorf("owned-reward should carry a reason")
+	}
+}
+
 func TestNextDrop_ClaimedZeroMinutesSkipped(t *testing.T) {
 	// Live 2026-08-31: a fully-earned campaign's claimed drop can come back from
 	// the details query with currentMinutesWatched 0 but ClaimedAt set. Complete()

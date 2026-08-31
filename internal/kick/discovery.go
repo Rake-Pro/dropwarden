@@ -76,6 +76,17 @@ func (d *Discoverer) RunOnce(ctx context.Context) (discovery.Result, error) {
 func (d *Discoverer) runOnce(ctx context.Context, diag *Diagnostic) (discovery.Result, error) {
 	var res discovery.Result
 
+	// Debug: seed the passive network-capture shim BEFORE any navigation so the
+	// drops/inventory pages loaded below record their drops-related fetch/XHR
+	// bodies. This is how a real Kick drop's progress endpoint gets captured
+	// (dumped to kick-drops-network.json after the inventory read) so the parser
+	// can be built from real data. Only when the capture toggle is on.
+	if d.cfg.Logging.CaptureGQLBodies {
+		if err := d.pages.SeedDropsCapture(ctx); err != nil {
+			d.logger.Warn().Err(err).Msg("kick discovery: seed drops capture failed")
+		}
+	}
+
 	// Warm the drops page first: it establishes the authenticated, Cloudflare-
 	// cleared context the API fetch inherits.
 	if err := d.pages.ctrl.Session().Navigate(ctx, URLDrops); err != nil {
@@ -117,11 +128,23 @@ func (d *Discoverer) runOnce(ctx context.Context, diag *Diagnostic) (discovery.R
 		d.logger.Info().Int("campaigns_parsed", len(campaigns)).Msg("kick discovery: campaigns")
 	}
 
-	// Inventory: progress parsing awaits live DOM shapes; dump text for that.
+	// Inventory: progress parsing awaits live DOM shapes; dump it for that. The
+	// rendered text (kick-inventory.txt) and full HTML (kick-inventory-raw.html)
+	// carry any DOM-rendered drop progress; kick-drops-network.json carries the
+	// raw API traffic the shim captured across the drops+inventory navigations -
+	// together these are the Kick equivalent of Twitch's inventory-gql.json, kept
+	// in their own files so the two platforms' dumps never collide.
 	if _, err := d.pages.ReadInventory(ctx); err != nil {
 		d.logger.Warn().Err(err).Msg("kick discovery: inventory read failed")
 	} else if d.cfg.Logging.CaptureGQLBodies {
 		d.dumpDebug("kick-inventory.txt", []byte(d.pages.InventoryText(ctx)))
+		d.dumpDebug("kick-inventory-raw.html", []byte(d.pages.InventoryRawHTML(ctx)))
+		if raw, err := d.pages.DrainDropsCapture(ctx); err != nil {
+			d.logger.Warn().Err(err).Msg("kick discovery: drain drops capture failed")
+		} else if raw != "" && raw != "[]" {
+			d.dumpDebug("kick-drops-network.json", []byte(raw))
+			d.logger.Info().Int("bytes", len(raw)).Msg("kick discovery: captured drops-related network traffic")
+		}
 	}
 
 	enq, err := discovery.ReconcileQueue(d.store, d.cfg, domain.PlatformKick, d.logger)

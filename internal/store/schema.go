@@ -2,7 +2,7 @@ package store
 
 // schemaVersion is bumped whenever migrations change. Migrations are applied
 // in order on Open; each is idempotent via IF NOT EXISTS so re-running is safe.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // migrations are applied in slice order. Index+1 is the version each brings the
 // database to. Keep every statement idempotent.
@@ -136,4 +136,11 @@ var migrations = []string{
 	`INSERT INTO blacklist (platform, login, reason, until)
 		SELECT 'twitch', login, reason, until FROM blacklist_old;`,
 	`DROP TABLE blacklist_old;`,
+
+	// owned marks a drop whose reward the account already holds (matched at
+	// discovery against the earned/owned inventory). Twitch reports such a drop
+	// isClaimed=false yet never credits it, so eligibility excludes it before
+	// watching. NULL/0 = not owned. Append-only: the version pointer of an
+	// existing database is already past every earlier index.
+	`ALTER TABLE progress ADD COLUMN owned INTEGER;`,
 }

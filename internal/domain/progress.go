@@ -36,6 +36,14 @@ type Progress struct {
 	Claimable       bool
 	ClaimedAt       *time.Time
 
+	// Owned marks a drop whose reward this account already holds, detected at
+	// discovery by matching the drop's reward name against the earned/owned
+	// inventory. Twitch reports such a drop isClaimed=false yet never credits it,
+	// so eligibility excludes it before watching. Distinct from ClaimedAt (earned
+	// on this campaign instance) and from the engine's session-scoped
+	// noCreditDrops (learned reactively only after watching a channel for nothing).
+	Owned bool
+
 	Source     ProgressSource
 	ObservedAt time.Time
 

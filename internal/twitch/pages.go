@@ -60,6 +60,24 @@ func (p *Pages) ReadInventory(ctx context.Context) ([]domain.Progress, error) {
 	return res.Progress, nil
 }
 
+// ReadInventoryFull loads the inventory page and returns both server-confirmed
+// progress and the set of rewards the account already owns (normalized names),
+// drained from the SAME capture (the drain clears the buffer, so the two cannot
+// be read by separate calls). Discovery uses the owned set to skip drops whose
+// reward the account already holds - which Twitch never re-credits.
+func (p *Pages) ReadInventoryFull(ctx context.Context) ([]domain.Progress, map[string]bool, error) {
+	sess := p.ctrl.Session()
+	if err := sess.Navigate(ctx, URLInventory); err != nil {
+		return nil, nil, fmt.Errorf("twitch: open inventory: %w", err)
+	}
+	p.settle(ctx)
+	res, err := Drain(ctx, sess)
+	if err != nil {
+		return nil, nil, err
+	}
+	return res.Progress, res.OwnedRewards, nil
+}
+
 // OpenChannel navigates to a channel page after seeding player policy so volume
 // and quality are correct on load.
 func (p *Pages) OpenChannel(ctx context.Context, login string, policy PlayerPolicy) error {

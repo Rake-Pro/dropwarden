@@ -24,6 +24,12 @@ type CaptureResult struct {
 	Details   []domain.Campaign // from CampaignDetails op (full drops + ACL)
 	Progress  []domain.Progress // from Inventory / CurrentDrop ops
 
+	// OwnedRewards is the set of normalized names of rewards the account already
+	// holds (from the Inventory op's gameEventDropsConnection + earnedDropRewards).
+	// Discovery skips a drop whose reward is in this set: Twitch reports it
+	// isClaimed=false but never re-credits an already-owned reward.
+	OwnedRewards map[string]bool
+
 	// Diagnostics: how many GQL responses the shim buffered, and the distinct
 	// operation names seen (recognized or not). Discovery logs these so a
 	// live capture reveals the real Twitch operation names without guessing.
@@ -85,6 +91,14 @@ func Drain(ctx context.Context, sess interface {
 			case gql.IsInventoryOp(op):
 				if ps, err := gql.ParseInventory(sub); err == nil {
 					res.Progress = append(res.Progress, ps...)
+				}
+				if owned, err := gql.ParseEarnedRewards(sub); err == nil {
+					for n := range owned {
+						if res.OwnedRewards == nil {
+							res.OwnedRewards = map[string]bool{}
+						}
+						res.OwnedRewards[n] = true
+					}
 				}
 			case gql.IsCurrentDropOp(op):
 				if p, err := gql.ParseCurrentDrop(sub); err == nil && p != nil {

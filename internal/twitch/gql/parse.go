@@ -198,6 +198,48 @@ func ParseInventory(body []byte) ([]domain.Progress, error) {
 	return out, nil
 }
 
+// NormalizeRewardName canonicalizes a reward or benefit name for cross-campaign
+// matching: trimmed and lowercased. Empty input yields "". Reward IDs are
+// campaign-instance-scoped (of the form <campaignID>_CUSTOM_ID_<n>), so a new
+// campaign offering the same cosmetic mints a fresh ID; the human name is the
+// only stable join key across instances.
+func NormalizeRewardName(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// ParseEarnedRewards parses the earned/owned rewards from an "Inventory"
+// response into a set of normalized reward names. These are rewards the account
+// already holds - game-integration items (gameEventDropsConnection) plus claimed
+// badges/emotes/entitlements (earnedDropRewards). A drop whose reward matches
+// one of these will never credit for this account even though Twitch reports it
+// isClaimed=false, so discovery can skip it before watching.
+func ParseEarnedRewards(body []byte) (map[string]bool, error) {
+	var resp inventoryResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("gql: parse earned rewards response: %w", err)
+	}
+	if resp.Data.CurrentUser == nil || resp.Data.CurrentUser.Inventory == nil {
+		return nil, nil
+	}
+	inv := resp.Data.CurrentUser.Inventory
+	owned := map[string]bool{}
+	add := func(name string) {
+		if n := NormalizeRewardName(name); n != "" {
+			owned[n] = true
+		}
+	}
+	for _, e := range inv.GameEventDropsConnection.Edges {
+		add(e.Node.Name)
+	}
+	for _, e := range inv.EarnedDropRewards.Edges {
+		add(e.Node.Name)
+		if e.Node.Item != nil {
+			add(e.Node.Item.Name)
+		}
+	}
+	return owned, nil
+}
+
 // ParseCurrentDrop parses a "CurrentDrop" operation response. It returns nil
 // (not an error) when the viewer has no active drop-watching session.
 func ParseCurrentDrop(body []byte) (*domain.Progress, error) {
