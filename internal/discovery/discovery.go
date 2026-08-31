@@ -119,6 +119,22 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 	res.Details += dn
 	res.Progress += pn
 
+	// Debug diagnostic FIRST (before ReadInventory drains/caches the page): dump
+	// the inventory page's RAW GraphQL so the earned/claimed-drops shape (which
+	// the app does not yet parse) can be seen and owned-reward detection built
+	// from real data. This does the fresh first navigation to the inventory
+	// page, so its GraphQL actually fires and is captured; ReadInventory below
+	// then reuses the (now cached) page for the progress parse. Only when the
+	// GQL-body capture toggle is on; the file lands with the other debug dumps.
+	if d.cfg.Logging.CaptureGQLBodies {
+		if raw, ierr := d.pages.CaptureInventoryRaw(ctx); ierr != nil {
+			d.logger.Warn().Err(ierr).Msg("discovery: inventory GQL capture failed")
+		} else {
+			d.dumpDebug("inventory-gql.json", []byte(raw))
+			d.logger.Info().Int("bytes", len(raw)).Msg("discovery: dumped raw inventory GQL (debug)")
+		}
+	}
+
 	prog, err := d.pages.ReadInventory(ctx)
 	if err != nil {
 		d.logger.Warn().Err(err).Msg("discovery: inventory read failed; continuing with campaign data")
@@ -128,19 +144,6 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 				return res, err
 			}
 			res.Progress++
-		}
-	}
-
-	// Debug diagnostic: dump the inventory page's RAW GraphQL so the
-	// earned/claimed-drops shape (which the app does not yet parse) can be seen
-	// and owned-reward detection built from real data. Only when the GQL-body
-	// capture toggle is on; the file lands next to the other debug dumps.
-	if d.cfg.Logging.CaptureGQLBodies {
-		if raw, ierr := d.pages.CaptureInventoryRaw(ctx); ierr != nil {
-			d.logger.Warn().Err(ierr).Msg("discovery: inventory GQL capture failed")
-		} else if raw != "" {
-			d.dumpDebug("inventory-gql.json", []byte(raw))
-			d.logger.Info().Int("bytes", len(raw)).Msg("discovery: dumped raw inventory GQL (debug)")
 		}
 	}
 
