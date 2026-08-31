@@ -52,6 +52,59 @@ follow-up UI.
   log tail (in-memory ring buffer in `logging`), Copy log / Copy JSON, and the
   `capture_gql_bodies` dump toggle (writes `~/.dropwarden/debug/*.json`, no auth).
 
+## SESSION 2026-08-31 (later): proactive owned-reward skip + Kick drop debug
+
+Commit `a1f7151` (pushed to main; `task check` green). The user supplied the
+real `inventory-gql.json` dump that the prior session asked for.
+
+- SCHEMA CORRECTION: the earned/owned rewards live under
+  `data.currentUser.inventory` as `gameEventDropsConnection.edges[].node.name`
+  (game-integration items, e.g. the Once Human skins) plus
+  `earnedDropRewards.edges[].node.item.name` (badges/emotes/entitlements). The
+  old `gql/types.go` guess (`gameEventDrops []{id}`) matched NOTHING and is
+  replaced. Owned-reward IDs are campaign-instance-scoped
+  (`<campaignUUID>_CUSTOM_ID_<n>`), so a new campaign offering the same cosmetic
+  mints fresh IDs - the only stable cross-instance join key is the normalized
+  reward NAME. This is exactly why the Once Human drops ground forever.
+
+- PROACTIVE OWNED-REWARD SKIP (Twitch): a drop whose reward the account already
+  holds is now skipped BEFORE watching, not after. Flow: `gql.ParseEarnedRewards`
+  + `NormalizeRewardName` build the owned-name set from the Inventory op;
+  `CaptureResult.OwnedRewards` carries it out of `Drain`; `Pages.ReadInventoryFull`
+  returns `(progress, owned)` (the old `ReadInventory` is unchanged - it is on the
+  watcher `Pager` interface and used by the CLI + Kick); `discovery.markOwnedDrops`
+  flags matching drops via a persisted `domain.Progress.Owned` bool (append-only
+  migration, `schemaVersion` 2, `ALTER TABLE progress ADD COLUMN owned`), running
+  AFTER the inventory progress save so real minutes are preserved and matching only
+  on `Benefit.Name` (never the drop's tier name, to avoid generic false-positives);
+  `queue.eligibleNow` and `queue.EligibilityReason` both exclude owned drops, the
+  latter with `needs_action` "reward already owned - Twitch will not credit it
+  again". DESIGN NOTE: this uses an honest `Owned` flag, NOT a faked `ClaimedAt`
+  (a fake claim would make `eligibleNow` and `EligibilityReason` disagree - the
+  latter never reads `ClaimedAt` - and would mislabel the drop "Claimed" in the
+  UI). No config toggle: kept always-on, consistent with the reactive no-credit
+  give-up, which stays as the backstop for drops with no parseable benefit name.
+  Tests: `TestParseEarnedRewards` (+ NoInventory), `TestNextDrop_OwnedRewardSkipped`.
+
+- KICK DROP-PROGRESS DEBUG (own files, separate from the Twitch dump): Kick had
+  no passive capture. Added a debug-gated fetch/XHR shim (`jsSeedNetCapture` /
+  `jsDrainNetCapture` in `kick/selectors.go`, buffering
+  `drop|inventor|campaign|quest|reward` URLs into `window.__dw_kick_net`) plus
+  `Pages.SeedDropsCapture` / `DrainDropsCapture` / `InventoryRawHTML`. Kick
+  discovery seeds the shim BEFORE navigating and, when `capture_gql_bodies` is on,
+  dumps `kick-drops-network.json` (raw API traffic) and `kick-inventory-raw.html`
+  (DOM-rendered progress) alongside the existing `kick-campaigns.json` /
+  `kick-inventory.txt`. This captures a real Kick drop's progress shape the moment
+  one is live so the parser can be built from real data.
+
+- VERIFY-LIVE OWED: (1) owned-skip on the next Mac run - watch the log line
+  `discovery: reward already owned - drop will be skipped before watching` and the
+  amber `needs_action` pill; (2) Kick dumps only fire once a Kick campaign actually
+  exists (none has yet). STILL-OPEN #1 UNCHANGED: minute crediting has NEVER been
+  confirmed on a genuinely UNOWNED/earnable Twitch drop - every live test so far hit
+  owned or non-participating drops. Needs a game with an active unearned drop (or
+  `any_game`) to prove minutes tick + a real claim end to end.
+
 ## SESSION 2026-08-31 (evening): live Mac debugging - drops crediting saga
 
 Long live-debug session on the user's Mac (build banner shows the running
@@ -714,6 +767,7 @@ Still to confirm on the user's Mac:
 
 ## Recent commits (newest first)
 
+- a1f7151 feat: proactive owned-reward skip + Kick drop-progress debug capture
 - 4606ad9 fix: queue prune to filter + apply UI review findings
 - 1163e19 docs: STATUS handoff
 - 34ca57d ui+watcher: settings restructure, Debugging view, queue drag, fall-through
