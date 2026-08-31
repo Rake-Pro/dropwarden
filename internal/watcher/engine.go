@@ -169,6 +169,15 @@ type Engine struct {
 	status      Status
 	eligibility map[string]int
 
+	// noCreditDrops are drops that watched a participating channel with healthy
+	// playback but earned ZERO server-side progress across the full stall
+	// window - un-earnable for this account (a reward already owned, a region
+	// block, etc.). Selection skips them so the watcher does not grind one
+	// forever. In-memory and session-scoped: a fresh run retries, in case the
+	// cause was transient. A drop that DID credit before stalling is never
+	// added (that is a channel problem, handled by channel blacklisting).
+	noCreditDrops map[string]bool
+
 	staggered bool // true once the first-discovery stagger delay has run (or been skipped)
 }
 
@@ -203,7 +212,7 @@ func New(d Deps) *Engine {
 			return float64(s>>11) / float64(1<<53)
 		}
 	}
-	e := &Engine{deps: d, cmds: make(chan command, 16), state: StateIdle}
+	e := &Engine{deps: d, cmds: make(chan command, 16), state: StateIdle, noCreditDrops: map[string]bool{}}
 	e.paused = !d.Cfg.Watcher.EnabledOnStart
 	e.status = Status{Profile: d.Profile, Platform: string(d.Platform.OrTwitch()), State: StateIdle, Paused: e.paused}
 	return e

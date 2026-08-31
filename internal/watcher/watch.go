@@ -234,6 +234,26 @@ func (e *Engine) stallCheck(ctx context.Context, now, proactiveAt time.Time) (St
 				s, r := e.abandon(domain.OutcomeAbortedStall, "another session is being credited ("+other+")")
 				return s, r, true
 			}
+			// Twitch never opened a crediting session for us (no creditChannel)
+			// AND we gained zero minutes across the whole watch: the drop is
+			// un-earnable for this account - a reward already owned, a region
+			// block, etc. - not a channel problem. (A channel where Twitch DID
+			// credit us but stalled has creditChannel set and falls through to
+			// the channel blacklist below.) Give up on the drop this session and
+			// surface it, instead of blacklisting channels forever chasing credit
+			// that will never come.
+			if e.cur.creditChannel == "" && e.cur.lastMinutes <= e.cur.startMinutes {
+				e.noCreditDrops[e.cur.drop.ID] = true
+				_ = e.deps.Store.SetItemStatus(e.cur.drop.ID, domain.ItemNeedsAction,
+					"watched a participating channel but earned no credit - you may already own this reward")
+				e.deps.Emit.Emit(EvNeedsAction, NeedsActionPayload{DropID: e.cur.drop.ID,
+					Reason: "watched but not crediting - you may already own this reward"})
+				e.deps.Log.Warn().Str("drop", e.cur.drop.Name).Str("login", e.cur.login).
+					Msg("drop earned no credit on a participating channel; skipping it this session (likely already owned)")
+				e.endSession(domain.OutcomeAbortedStall, "no credit - likely already owned")
+				s, r := e.abandon(domain.OutcomeAbortedStall, "watched but not crediting")
+				return s, r, true
+			}
 			e.endSession(domain.OutcomeAbortedStall, "repeated hard stall")
 			s, r := e.failChannel(domain.OutcomeAbortedStall, "progress would not advance", w.ChannelBlacklistTTL)
 			return s, r, true

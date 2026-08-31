@@ -606,3 +606,39 @@ func TestDrainEventsEmptiesBacklog(t *testing.T) {
 		t.Fatalf("a drained channel should yield 0, got %d", n)
 	}
 }
+
+func TestHardStallNoCreditGivesUpOnDrop(t *testing.T) {
+	// Live 2026-08-31: watching a participating channel that Twitch never opens
+	// a crediting session for (creditChannel empty) with zero minutes gained
+	// means the drop is un-earnable (reward already owned, etc.). The engine
+	// must give up on the DROP (needs_action + skip it this session), not
+	// blacklist channels forever.
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	emit := newRecordingEmitter()
+	e := testEngine(t, st, newFakeController(), &fakePager{}, &fakeDisco{}, emit)
+	now := e.deps.Now()
+	e.cur = &activeWatch{
+		drop:          domain.Drop{ID: "d1", Name: "DECAL", RequiredMinutes: 60},
+		login:         "lilbit_007",
+		creditChannel: "", // Twitch never opened a session for us
+		startMinutes:  0,
+		lastMinutes:   0, // zero credit for the whole watch
+		lastProgress:  now.Add(-time.Hour),
+		hardRefreshes: 99,
+		session:       domain.WatchSession{ID: "s1", DropID: "d1"},
+	}
+	next, _, done := e.stallCheck(context.Background(), now, now.Add(time.Hour))
+	if !done || next != StateCooldown {
+		t.Fatalf("expected give-up to cooldown, got %s done=%v", next, done)
+	}
+	if !e.noCreditDrops["d1"] {
+		t.Fatal("the un-earnable drop must be flagged no-credit so selection skips it")
+	}
+	if emit.count(EvNeedsAction) == 0 {
+		t.Fatal("a non-crediting drop must surface as needs_action")
+	}
+	if bl, _ := st.IsBlacklisted(domain.PlatformTwitch, "lilbit_007", now); bl {
+		t.Fatal("give-up is a DROP problem, not a channel one; the channel must not be blacklisted")
+	}
+}

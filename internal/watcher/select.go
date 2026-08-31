@@ -111,6 +111,18 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 	}
 
 	cands := queue.EligibleCandidates(items, campaigns, progress, claimed, domain.PriorityMode(e.deps.Cfg.Queue.PriorityMode), e.deps.Cfg.Claim.SkipAccountLink, now)
+	// Drop the drops this session already proved un-earnable (watched a
+	// participating channel to the full stall window with zero credit), so we
+	// fall through to the next eligible drop instead of grinding this one.
+	if len(e.noCreditDrops) > 0 {
+		kept := cands[:0]
+		for _, c := range cands {
+			if !e.noCreditDrops[c.Drop.ID] {
+				kept = append(kept, c)
+			}
+		}
+		cands = kept
+	}
 	if len(cands) == 0 {
 		return StateCooldown, "nothing eligible to watch"
 	}
