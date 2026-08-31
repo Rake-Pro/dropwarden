@@ -98,3 +98,21 @@ func (p *Pages) settle(ctx context.Context) {
 	case <-time.After(settleDelay):
 	}
 }
+
+// CaptureInventoryRaw navigates to the drops inventory page and returns the RAW
+// captured GQL buffer (every operation the page fired, verbatim) without
+// parsing. It is a debug-only diagnostic: the inventory page carries the
+// earned/claimed-drops shape the app does not yet parse, so dumping it lets
+// owned-reward detection be built from real data instead of a guessed schema.
+func (p *Pages) CaptureInventoryRaw(ctx context.Context) (string, error) {
+	sess := p.ctrl.Session()
+	if err := sess.Navigate(ctx, URLInventory); err != nil {
+		return "", fmt.Errorf("twitch: open inventory: %w", err)
+	}
+	p.settle(ctx)
+	var raw string
+	if err := sess.Eval(ctx, jsDrainCapture, &raw); err != nil {
+		return "", fmt.Errorf("twitch: drain inventory capture: %w", err)
+	}
+	return raw, nil
+}

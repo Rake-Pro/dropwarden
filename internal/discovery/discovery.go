@@ -131,6 +131,19 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 		}
 	}
 
+	// Debug diagnostic: dump the inventory page's RAW GraphQL so the
+	// earned/claimed-drops shape (which the app does not yet parse) can be seen
+	// and owned-reward detection built from real data. Only when the GQL-body
+	// capture toggle is on; the file lands next to the other debug dumps.
+	if d.cfg.Logging.CaptureGQLBodies {
+		if raw, ierr := d.pages.CaptureInventoryRaw(ctx); ierr != nil {
+			d.logger.Warn().Err(ierr).Msg("discovery: inventory GQL capture failed")
+		} else if raw != "" {
+			d.dumpDebug("inventory-gql.json", []byte(raw))
+			d.logger.Info().Int("bytes", len(raw)).Msg("discovery: dumped raw inventory GQL (debug)")
+		}
+	}
+
 	enq, err := d.reconcileQueue(ctx)
 	if err != nil {
 		return res, err
