@@ -207,10 +207,43 @@ func (e *Engine) watchTick(ctx context.Context, lastTime *float64, lastTimeSet *
 	return "", "", false
 }
 
+// noFirstCreditTimeout is how long a fully-validated watch may run with ZERO
+// server-side credit and no crediting session before the drop is judged
+// un-earnable. A genuinely earnable drop credits its first minute within a
+// poll or two, so 5 minutes with nothing is a confident "this will never
+// credit" - fast enough to keep an unattended box from wasting a full stall
+// window on a reward the account already owns.
+const noFirstCreditTimeout = 5 * time.Minute
+
+// giveUpNoCredit abandons a drop that watched a participating channel but
+// earned no credit: flag it (session-scoped) so selection skips it and falls
+// through to the next eligible drop, mark it needs_action, and surface it.
+func (e *Engine) giveUpNoCredit() (State, string, bool) {
+	e.noCreditDrops[e.cur.drop.ID] = true
+	_ = e.deps.Store.SetItemStatus(e.cur.drop.ID, domain.ItemNeedsAction,
+		"watched a participating channel but earned no credit - you may already own this reward")
+	e.deps.Emit.Emit(EvNeedsAction, NeedsActionPayload{DropID: e.cur.drop.ID,
+		Reason: "watched but not crediting - you may already own this reward"})
+	e.deps.Log.Warn().Str("drop", e.cur.drop.Name).Str("login", e.cur.login).
+		Msg("drop earned no credit on a participating channel; skipping it this session (likely already owned)")
+	e.endSession(domain.OutcomeAbortedStall, "no credit - likely already owned")
+	s, r := e.abandon(domain.OutcomeAbortedStall, "watched but not crediting")
+	return s, r, true
+}
+
 // stallCheck applies the soft/hard stall thresholds and the proactive refresh.
 func (e *Engine) stallCheck(ctx context.Context, now, proactiveAt time.Time) (State, string, bool) {
 	w := e.deps.Cfg.Watcher
 	sinceProgress := now.Sub(e.cur.lastProgress)
+
+	// Fast give-up: Twitch opened no crediting session (creditChannel empty)
+	// and not a minute has landed after a few polls on a validated
+	// participating channel -> the drop is un-earnable for this account (a
+	// reward already owned, a region block). Skip it now instead of grinding
+	// out the full stall window and then every other channel.
+	if e.cur.creditChannel == "" && e.cur.lastMinutes <= e.cur.startMinutes && sinceProgress >= noFirstCreditTimeout {
+		return e.giveUpNoCredit()
+	}
 
 	// Proactive refresh even when healthy, to beat the +15m client estimate cap.
 	if now.After(proactiveAt) {
@@ -234,25 +267,11 @@ func (e *Engine) stallCheck(ctx context.Context, now, proactiveAt time.Time) (St
 				s, r := e.abandon(domain.OutcomeAbortedStall, "another session is being credited ("+other+")")
 				return s, r, true
 			}
-			// Twitch never opened a crediting session for us (no creditChannel)
-			// AND we gained zero minutes across the whole watch: the drop is
-			// un-earnable for this account - a reward already owned, a region
-			// block, etc. - not a channel problem. (A channel where Twitch DID
-			// credit us but stalled has creditChannel set and falls through to
-			// the channel blacklist below.) Give up on the drop this session and
-			// surface it, instead of blacklisting channels forever chasing credit
-			// that will never come.
+			// Zero credit and no crediting session: the drop is un-earnable
+			// (the fast path above usually catches this first; this is the
+			// backstop when progress moved once then stopped without a session).
 			if e.cur.creditChannel == "" && e.cur.lastMinutes <= e.cur.startMinutes {
-				e.noCreditDrops[e.cur.drop.ID] = true
-				_ = e.deps.Store.SetItemStatus(e.cur.drop.ID, domain.ItemNeedsAction,
-					"watched a participating channel but earned no credit - you may already own this reward")
-				e.deps.Emit.Emit(EvNeedsAction, NeedsActionPayload{DropID: e.cur.drop.ID,
-					Reason: "watched but not crediting - you may already own this reward"})
-				e.deps.Log.Warn().Str("drop", e.cur.drop.Name).Str("login", e.cur.login).
-					Msg("drop earned no credit on a participating channel; skipping it this session (likely already owned)")
-				e.endSession(domain.OutcomeAbortedStall, "no credit - likely already owned")
-				s, r := e.abandon(domain.OutcomeAbortedStall, "watched but not crediting")
-				return s, r, true
+				return e.giveUpNoCredit()
 			}
 			e.endSession(domain.OutcomeAbortedStall, "repeated hard stall")
 			s, r := e.failChannel(domain.OutcomeAbortedStall, "progress would not advance", w.ChannelBlacklistTTL)
