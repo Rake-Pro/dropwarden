@@ -5,7 +5,7 @@ go 1.27rc2
 require (
 	github.com/go-rod/rod v0.116.2
 	github.com/rs/zerolog v1.35.1
-	github.com/wailsapp/wails/v3 v3.0.0-beta.14
+	github.com/wailsapp/wails/v3 v3.0.0-beta.16
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.56.0
