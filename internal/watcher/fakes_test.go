@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/rake-pro/dropwarden/internal/browser"
@@ -59,6 +60,9 @@ func (f *fakeController) ClaimInInventory(context.Context, string) (bool, error)
 // fakePager implements Pager.
 type fakePager struct {
 	channels    []string
+	live        []domain.Channel // LiveChannels result; liveErr wins when set
+	liveErr     error
+	liveCalls   int
 	progress    []domain.Progress
 	currentDrop *domain.Progress
 	inventory   []domain.Progress
@@ -71,6 +75,21 @@ func (f *fakePager) ReadInventory(context.Context) ([]domain.Progress, error) {
 }
 func (f *fakePager) DirectoryChannels(context.Context, string) ([]string, error) {
 	return f.channels, nil
+}
+func (f *fakePager) LiveChannels(_ context.Context, logins []string) ([]domain.Channel, error) {
+	f.liveCalls++
+	if f.liveErr != nil {
+		return nil, f.liveErr
+	}
+	var out []domain.Channel
+	for _, ch := range f.live {
+		for _, l := range logins {
+			if strings.EqualFold(l, ch.Login) {
+				out = append(out, ch)
+			}
+		}
+	}
+	return out, nil
 }
 func (f *fakePager) FetchCurrentDrop(context.Context) (*domain.Progress, error) {
 	f.pollCalls++

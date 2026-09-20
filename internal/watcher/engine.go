@@ -27,6 +27,11 @@ type Pager interface {
 	OpenChannel(ctx context.Context, login string, policy platform.PlayerPolicy) error
 	ReadInventory(ctx context.Context) ([]domain.Progress, error)
 	DirectoryChannels(ctx context.Context, gameSlug string) ([]string, error)
+	// LiveChannels returns the subset of logins currently live (with viewer
+	// counts). Used for ACL campaigns, whose allowlist says nothing about who
+	// is streaming right now. Platforms without a cheap status query return
+	// errors.ErrUnsupported and the caller assumes every login is live.
+	LiveChannels(ctx context.Context, logins []string) ([]domain.Channel, error)
 	FetchCurrentDrop(ctx context.Context) (*domain.Progress, error)
 	FetchInventoryProgress(ctx context.Context) ([]domain.Progress, error)
 	// DrainProgress returns progress entries observed passively since the last

@@ -2,6 +2,7 @@ package kick
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -80,6 +81,12 @@ func (p *Pages) DrainDropsCapture(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("kick: drain drops capture: %w", err)
 	}
 	return raw, nil
+}
+
+// LiveChannels is unsupported on Kick: the engine falls back to treating every
+// allowlisted channel as live and lets playback validation sort it out.
+func (p *Pages) LiveChannels(context.Context, []string) ([]domain.Channel, error) {
+	return nil, errors.ErrUnsupported
 }
 
 // DirectoryChannels returns live channel logins for a category slug.

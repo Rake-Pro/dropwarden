@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/domain"
@@ -193,13 +194,42 @@ func (e *Engine) pickChannel(ctx context.Context, c domain.Campaign, cands []que
 			live = append(live, domain.Channel{Login: l, Live: true, DropsEnabled: true, GameName: c.GameName, FirstSeenLiveAt: now.Add(-time.Hour)})
 		}
 	} else {
-		// ACL campaign: candidates are the allowlisted channels. Liveness is
-		// confirmed during ValidatingPlayback, which reselects on failure.
+		// ACL campaign: candidates are the allowlisted channels that are live
+		// NOW. The allowlist alone ranks an offline channel above a live one
+		// (live 2026-09-20: europeanhalo picked over LVTHalo, its offline page
+		// autoplayed a VOD that passed validation, and the drop was then
+		// misfiled as "already owned"). Without a status query (Kick, or a
+		// failed call) fall back to assuming every allowlisted channel is live
+		// and let validation sort it out.
+		logins := make([]string, 0, len(c.AllowedChannels))
 		for _, ch := range c.AllowedChannels {
-			ch.Live = true
-			ch.DropsEnabled = true
-			ch.FirstSeenLiveAt = now.Add(-time.Hour)
-			live = append(live, ch)
+			logins = append(logins, ch.Login)
+		}
+		liveNow, err := e.deps.Pages.LiveChannels(ctx, logins)
+		switch {
+		case errors.Is(err, errors.ErrUnsupported):
+			for _, ch := range c.AllowedChannels {
+				ch.Live = true
+				ch.DropsEnabled = true
+				ch.FirstSeenLiveAt = now.Add(-time.Hour)
+				live = append(live, ch)
+			}
+		case err != nil:
+			e.deps.Log.Warn().Err(err).Str("game", c.GameName).Msg("select: live status read failed; assuming allowlist live")
+			for _, ch := range c.AllowedChannels {
+				ch.Live = true
+				ch.DropsEnabled = true
+				ch.FirstSeenLiveAt = now.Add(-time.Hour)
+				live = append(live, ch)
+			}
+		default:
+			for _, ch := range liveNow {
+				ch.DropsEnabled = true
+				ch.FirstSeenLiveAt = now.Add(-time.Hour)
+				live = append(live, ch)
+			}
+			e.deps.Log.Info().Str("campaign", c.Name).Int("allowed", len(logins)).Int("live", len(live)).
+				Strs("live_logins", channelLogins(live)).Msg("select: ACL live status")
 		}
 	}
 
@@ -225,4 +255,12 @@ func (e *Engine) pickChannel(ctx context.Context, c domain.Campaign, cands []que
 			Msg("selecting: channel covers multiple eligible drops")
 	}
 	return ranked[0].Login, true
+}
+
+func channelLogins(chs []domain.Channel) []string {
+	out := make([]string, len(chs))
+	for i, ch := range chs {
+		out[i] = ch.Login
+	}
+	return out
 }

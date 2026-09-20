@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -52,6 +53,15 @@ func (e *Engine) runValidating(ctx context.Context) (State, string) {
 	// allowlisted channels are known participating, so the indicator stays
 	// advisory there (its selector can false-negative).
 	requireDrops := e.cur.campaign.AnyChannel()
+	// Server-side liveness first: an offline channel with "autoplay recent
+	// broadcast" plays a VOD that passes every playback gate below and never
+	// credits, which the stall ladder then misreads as an un-earnable drop.
+	// Skipped when the platform has no status query or the call fails.
+	if liveNow, err := e.deps.Pages.LiveChannels(ctx, []string{e.cur.login}); err == nil && len(liveNow) == 0 {
+		return e.failChannel(domain.OutcomeAbortedOffline, "channel offline (no live stream)", e.deps.Cfg.Watcher.OfflineBlacklistTTL)
+	} else if err != nil && !errors.Is(err, errors.ErrUnsupported) {
+		e.deps.Log.Warn().Err(err).Str("login", e.cur.login).Msg("validating: live status read failed; relying on playback gates")
+	}
 	deadline := e.deps.Now().Add(e.deps.Cfg.Watcher.ValidateTimeout)
 	var prevTime float64
 	var prevSet bool

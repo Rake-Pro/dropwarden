@@ -296,3 +296,48 @@ func DetectOperation(postData []byte) []string {
 	}
 	return []string{req.OperationName}
 }
+
+// ParseLiveChannels parses a users(logins:) response and returns only the users
+// whose stream is non-null, i.e. the ones live right now.
+func ParseLiveChannels(body []byte) ([]domain.Channel, error) {
+	var resp struct {
+		Data struct {
+			Users []*struct {
+				ID          string `json:"id"`
+				Login       string `json:"login"`
+				DisplayName string `json:"displayName"`
+				Stream      *struct {
+					ID           string `json:"id"`
+					ViewersCount int    `json:"viewersCount"`
+					Game         *struct {
+						DisplayName string `json:"displayName"`
+					} `json:"game"`
+				} `json:"stream"`
+			} `json:"users"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("gql: parse live channels (%.160s): %w", body, err)
+	}
+	if resp.Data.Users == nil {
+		if len(resp.Errors) > 0 {
+			return nil, fmt.Errorf("gql: live channels: %s", resp.Errors[0].Message)
+		}
+		return nil, fmt.Errorf("gql: live channels: no users in response (%.160s)", body)
+	}
+	var out []domain.Channel
+	for _, u := range resp.Data.Users {
+		if u == nil || u.Stream == nil {
+			continue // unknown login or offline
+		}
+		ch := domain.Channel{ID: u.ID, Login: strings.ToLower(u.Login), DisplayName: u.DisplayName, Live: true, ViewerCount: u.Stream.ViewersCount}
+		if u.Stream.Game != nil {
+			ch.GameName = u.Stream.Game.DisplayName
+		}
+		out = append(out, ch)
+	}
+	return out, nil
+}

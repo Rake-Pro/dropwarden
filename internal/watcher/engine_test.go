@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -640,5 +641,63 @@ func TestHardStallNoCreditGivesUpOnDrop(t *testing.T) {
 	}
 	if bl, _ := st.IsBlacklisted(domain.PlatformTwitch, "lilbit_007", now); bl {
 		t.Fatal("give-up is a DROP problem, not a channel one; the channel must not be blacklisted")
+	}
+}
+
+// An ACL campaign must pick the allowlisted channel that is live NOW, not the
+// first name in the allowlist (live 2026-09-20: an offline channel's VOD
+// autoplay passed validation and the drop was misfiled as already owned).
+func TestSelectingACLPrefersLiveChannel(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	c := seedCampaign(t, st, false)
+	c.AllowedChannels = []domain.Channel{{Login: "europeanhalo"}, {Login: "lvthalo"}}
+	if err := st.UpsertCampaign(c); err != nil {
+		t.Fatal(err)
+	}
+	pager := &fakePager{live: []domain.Channel{{Login: "lvthalo", Live: true, ViewerCount: 900}}}
+	e := testEngine(t, st, newFakeController(), pager, &fakeDisco{}, newRecordingEmitter())
+
+	next, _ := e.runSelecting(context.Background())
+	if next != StateOpening {
+		t.Fatalf("expected Opening, got %s", next)
+	}
+	if e.cur == nil || e.cur.login != "lvthalo" {
+		t.Fatalf("expected live lvthalo selected, got %+v", e.cur)
+	}
+	if pager.liveCalls == 0 {
+		t.Fatal("expected LiveChannels to be consulted for an ACL campaign")
+	}
+}
+
+// With no allowlisted channel live, selection cools down instead of opening an
+// offline page.
+func TestSelectingACLNoneLiveGoesCooldown(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	c := seedCampaign(t, st, false)
+	c.AllowedChannels = []domain.Channel{{Login: "europeanhalo"}, {Login: "lvthalo"}}
+	if err := st.UpsertCampaign(c); err != nil {
+		t.Fatal(err)
+	}
+	e := testEngine(t, st, newFakeController(), &fakePager{}, &fakeDisco{}, newRecordingEmitter())
+	if next, _ := e.runSelecting(context.Background()); next != StateCooldown {
+		t.Fatalf("no live ACL channel should cooldown, got %s", next)
+	}
+}
+
+// Platforms without a status query (Kick) keep the old assume-live behavior.
+func TestSelectingACLUnsupportedLiveFallsBack(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	c := seedCampaign(t, st, false)
+	c.AllowedChannels = []domain.Channel{{Login: "europeanhalo"}}
+	if err := st.UpsertCampaign(c); err != nil {
+		t.Fatal(err)
+	}
+	e := testEngine(t, st, newFakeController(), &fakePager{liveErr: errors.ErrUnsupported}, &fakeDisco{}, newRecordingEmitter())
+	next, _ := e.runSelecting(context.Background())
+	if next != StateOpening || e.cur == nil || e.cur.login != "europeanhalo" {
+		t.Fatalf("expected assume-live fallback to open europeanhalo, got %s %+v", next, e.cur)
 	}
 }

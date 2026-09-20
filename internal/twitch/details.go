@@ -149,3 +149,28 @@ func (p *Pages) CapturedHeaderKeys(ctx context.Context) []string {
 	_ = p.ctrl.Session().Eval(ctx, `(() => Object.keys(window.__dw_headers || {}))()`, &keys)
 	return keys
 }
+
+// liveChannelsQuery resolves a batch of logins to their current stream, if any.
+// Not a persisted hash, so it is immune to hash rotation. A user with no
+// stream field is offline; Twitch accepts up to 100 logins per call.
+const liveChannelsQuery = `query($logins:[String!]!){users(logins:$logins){id login displayName stream{id viewersCount game{displayName}}}}`
+
+// LiveChannels returns the subset of logins that are live right now, with
+// viewer counts, via a page-context GraphQL call. Used by selection for ACL
+// campaigns (the allowlist says nothing about who is streaming) and by
+// validation, because an offline channel with "autoplay recent broadcast"
+// plays a VOD that passes every playback gate without ever crediting a drop.
+func (p *Pages) LiveChannels(ctx context.Context, logins []string) ([]domain.Channel, error) {
+	if len(logins) == 0 {
+		return nil, nil
+	}
+	body, _ := json.Marshal(map[string]any{
+		"query":     liveChannelsQuery,
+		"variables": map[string]any{"logins": logins},
+	})
+	var raw string
+	if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
+		return nil, fmt.Errorf("twitch: fetch live channels: %w", err)
+	}
+	return gql.ParseLiveChannels([]byte(raw))
+}

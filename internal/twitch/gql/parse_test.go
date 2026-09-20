@@ -445,3 +445,20 @@ func TestParsers_MissingOptionalFields(t *testing.T) {
 		t.Errorf("degraded inventory progress = %+v", progs)
 	}
 }
+
+func TestParseLiveChannels(t *testing.T) {
+	body := []byte(`{"data":{"users":[
+		{"id":"1","login":"LVTHalo","displayName":"LVTHalo","stream":{"id":"s1","viewersCount":812,"game":{"displayName":"Halo Infinite"}}},
+		{"id":"2","login":"europeanhalo","displayName":"EuropeanHalo","stream":null},
+		null]}}`)
+	got, err := ParseLiveChannels(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Login != "lvthalo" || !got[0].Live || got[0].ViewerCount != 812 || got[0].GameName != "Halo Infinite" {
+		t.Fatalf("unexpected live set: %+v", got)
+	}
+	if _, err := ParseLiveChannels([]byte(`{"errors":[{"message":"nope"}]}`)); err == nil {
+		t.Fatal("expected error on errors-only response")
+	}
+}
