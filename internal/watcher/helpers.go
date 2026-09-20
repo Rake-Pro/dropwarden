@@ -3,8 +3,11 @@ package watcher
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rake-pro/dropwarden/internal/domain"
 	"github.com/rake-pro/dropwarden/internal/platform"
 )
@@ -102,6 +105,25 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 			break
 		}
 	}
+	// The player's own heartbeat since the last poll: minute-watched beacons
+	// prove the client is reporting the watch; a drop-progress push proves the
+	// server is crediting it. Zero beacons with healthy playback is a CLIENT
+	// problem; beacons with no credit is Twitch's verdict on the drop/channel.
+	hb, err := e.deps.Pages.DrainHeartbeat(ctx)
+	if err != nil {
+		e.deps.Log.Warn().Err(err).Msg("heartbeat drain failed")
+	} else {
+		e.cur.heartbeats += hb.MinuteWatched
+		if len(hb.Progress) > 0 {
+			ps = append(ps, hb.Progress...)
+			if e.cur.creditChannel == "" {
+				e.cur.creditChannel = e.cur.login // a push while we watch here means we are the credited session
+			}
+		}
+		if e.deps.Cfg.Logging.CaptureGQLBodies && (hb.MinuteWatched > 0 || hb.DropMessages > 0) {
+			e.dumpDebug("heartbeat-"+e.cur.login+".json", hb.Raw)
+		}
+	}
 	// Tab visibility at poll time: Twitch stops minute-watched heartbeats for a
 	// hidden tab, so a "hidden" here while progress stays 0 points straight at
 	// the re-minimize after validation. One extra probe/min is cheap.
@@ -121,6 +143,9 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 		Int("session_minutes", sessionMinutes).Int("inventory_rows", invRows).
 		Str("active_drop", e.cur.drop.ID).Bool("active_in_rows", activeInRows).
 		Int("active_row_minutes", activeRowMinutes).Str("visibility", visibility).
+		Int("mw_beacons", hb.MinuteWatched).Int("mw_total", e.cur.heartbeats).Str("mw_channel", hb.LastChannel).
+		Bool("mw_hidden", hb.LastHidden).Bool("mw_muted", hb.LastMuted).Interface("beacon_events", hb.Events).
+		Int("ws_drop_msgs", hb.DropMessages).Int("ws_progress", len(hb.Progress)).
 		Int("minutes", minutes).Bool("increased", increased).
 		Msg("progress poll")
 	return minutes, increased
@@ -208,4 +233,23 @@ func (e *Engine) endSession(outcome domain.SessionOutcome, note string) {
 	_ = e.deps.Store.RecordChannelResult(e.deps.Platform, e.cur.login, success)
 	// The session is in the store now; stop overlaying it live.
 	e.setStatus(func(s *Status) { s.SessionStartedAt = time.Time{} })
+}
+
+// dumpDebug writes a raw capture to <approot>/debug/<name> (debug only; the
+// heartbeat buffer carries player state and drop ids, never auth material).
+func (e *Engine) dumpDebug(name string, body []byte) {
+	dir, err := config.Dir()
+	if err != nil {
+		return
+	}
+	ddir := filepath.Join(dir, "debug")
+	if err := os.MkdirAll(ddir, 0o700); err != nil {
+		return
+	}
+	path := filepath.Join(ddir, name)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		e.deps.Log.Warn().Err(err).Msg("watcher: write debug dump failed")
+		return
+	}
+	e.deps.Log.Info().Str("file", path).Int("bytes", len(body)).Msg("watcher: wrote debug dump")
 }

@@ -38,6 +38,10 @@ type Pager interface {
 	// call (Twitch: the GQL capture shim). Platforms without passive capture
 	// return nil.
 	DrainProgress(ctx context.Context) ([]domain.Progress, error)
+	// DrainHeartbeat returns what the page observed of its own watch-time
+	// reporting since the last call (Twitch: spade minute-watched beacons and
+	// WebSocket drop-progress pushes). Platforms without capture return zero.
+	DrainHeartbeat(ctx context.Context) (domain.Heartbeat, error)
 }
 
 // Discoverer is the engine's view of the discovery pass (discovery.Discoverer).
@@ -141,6 +145,7 @@ type activeWatch struct {
 	lastMinutes   int
 	lastProgress  time.Time
 	creditChannel string // channel Twitch last reported as crediting (from the poll)
+	heartbeats    int    // minute-watched beacons the player sent this session
 	hardRefreshes int
 	stallEvents   int
 	raids         int

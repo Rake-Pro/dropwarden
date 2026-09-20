@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/domain"
+	"github.com/rake-pro/dropwarden/internal/twitch/gql"
 )
 
 // settleDelay is a dwell after load to let the client fire its GQL calls before
@@ -44,6 +45,16 @@ func (p *Pages) DrainProgress(ctx context.Context) ([]domain.Progress, error) {
 		return nil, err
 	}
 	return res.Progress, nil
+}
+
+// DrainHeartbeat drains the player's spade heartbeat and WebSocket drop-event
+// capture (installed by the capture shim) and parses it.
+func (p *Pages) DrainHeartbeat(ctx context.Context) (domain.Heartbeat, error) {
+	var raw string
+	if err := p.ctrl.Session().Eval(ctx, jsDrainHeartbeat, &raw); err != nil {
+		return domain.Heartbeat{}, fmt.Errorf("twitch: drain heartbeat: %w", err)
+	}
+	return gql.ParseHeartbeat([]byte(raw))
 }
 
 // ReadInventory loads the inventory page and returns server-confirmed progress.

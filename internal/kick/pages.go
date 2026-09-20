@@ -83,6 +83,11 @@ func (p *Pages) DrainDropsCapture(ctx context.Context) (string, error) {
 	return raw, nil
 }
 
+// DrainHeartbeat has no Kick capture behind it yet; nothing is reported.
+func (p *Pages) DrainHeartbeat(context.Context) (domain.Heartbeat, error) {
+	return domain.Heartbeat{}, nil
+}
+
 // LiveChannels is unsupported on Kick: the engine falls back to treating every
 // allowlisted channel as live and lets playback validation sort it out.
 func (p *Pages) LiveChannels(context.Context, []string) ([]domain.Channel, error) {

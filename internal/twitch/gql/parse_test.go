@@ -462,3 +462,30 @@ func TestParseLiveChannels(t *testing.T) {
 		t.Fatal("expected error on errors-only response")
 	}
 }
+
+func TestParseHeartbeat(t *testing.T) {
+	// Hermes framing: the PubSub message is a JSON string inside JSON, so the
+	// drop-progress fields arrive with escaped quotes.
+	body := []byte(`{"spade":[{"event":"minute-watched","channel":"LVTHalo","hidden":false,"muted":false},{"event":"video-play","channel":"LVTHalo"}],
+	"ws":[{"url":"wss://hermes.twitch.tv/v1","body":"{\"type\":\"notification\",\"notification\":{\"type\":\"pubsub\",\"pubsub\":\"{\\\"type\\\":\\\"drop-progress\\\",\\\"data\\\":{\\\"drop_id\\\":\\\"5625b3f0-a6ea-11f1-956d-0a58a9feac02\\\",\\\"channel_id\\\":\\\"12345\\\",\\\"current_progress_min\\\":12,\\\"required_progress_min\\\":60}}\"}}"}]}`)
+	hb, err := ParseHeartbeat(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hb.MinuteWatched != 1 || hb.LastChannel != "lvthalo" || hb.Events["video-play"] != 1 {
+		t.Fatalf("spade parse wrong: %+v", hb)
+	}
+	if hb.DropMessages != 1 || len(hb.Progress) != 1 {
+		t.Fatalf("ws parse wrong: %+v", hb)
+	}
+	p := hb.Progress[0]
+	if p.DropID != "5625b3f0-a6ea-11f1-956d-0a58a9feac02" || p.RealMinutes != 12 || p.RequiredMinutes != 60 || p.Source != domain.SourceWebSocket {
+		t.Fatalf("progress wrong: %+v", p)
+	}
+	// Plain PubSub framing (single escaping level).
+	plain := []byte(`{"spade":[],"ws":[{"body":"{\"type\":\"MESSAGE\",\"data\":{\"topic\":\"user-drop-events.1\",\"message\":\"{\\\"type\\\":\\\"drop-progress\\\",\\\"data\\\":{\\\"drop_id\\\":\\\"abcdef12-0000\\\",\\\"current_progress_min\\\":3,\\\"required_progress_min\\\":15}}\"}}"}]}`)
+	hb, err = ParseHeartbeat(plain)
+	if err != nil || len(hb.Progress) != 1 || hb.Progress[0].RealMinutes != 3 {
+		t.Fatalf("pubsub framing: err=%v hb=%+v", err, hb)
+	}
+}

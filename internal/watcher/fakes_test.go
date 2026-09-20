@@ -63,6 +63,7 @@ type fakePager struct {
 	live        []domain.Channel // LiveChannels result; liveErr wins when set
 	liveErr     error
 	liveCalls   int
+	heartbeat   domain.Heartbeat
 	progress    []domain.Progress
 	currentDrop *domain.Progress
 	inventory   []domain.Progress
@@ -75,6 +76,9 @@ func (f *fakePager) ReadInventory(context.Context) ([]domain.Progress, error) {
 }
 func (f *fakePager) DirectoryChannels(context.Context, string) ([]string, error) {
 	return f.channels, nil
+}
+func (f *fakePager) DrainHeartbeat(context.Context) (domain.Heartbeat, error) {
+	return f.heartbeat, nil
 }
 func (f *fakePager) LiveChannels(_ context.Context, logins []string) ([]domain.Channel, error) {
 	f.liveCalls++

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -295,6 +297,70 @@ func DetectOperation(postData []byte) []string {
 		return nil
 	}
 	return []string{req.OperationName}
+}
+
+// ParseHeartbeat parses the drained heartbeat buffer ({spade:[...], ws:[...]}).
+// WebSocket bodies are matched loosely (the drop-progress payload is a JSON
+// string nested inside PubSub or Hermes framing, so quotes arrive escaped)
+// and every parsed push becomes a SourceWebSocket progress reading.
+func ParseHeartbeat(body []byte) (domain.Heartbeat, error) {
+	var raw struct {
+		Spade []struct {
+			Event   string `json:"event"`
+			Channel string `json:"channel"`
+			Hidden  bool   `json:"hidden"`
+			Muted   bool   `json:"muted"`
+		} `json:"spade"`
+		WS []struct {
+			Body string `json:"body"`
+		} `json:"ws"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return domain.Heartbeat{}, fmt.Errorf("gql: parse heartbeat (%.120s): %w", body, err)
+	}
+	hb := domain.Heartbeat{Events: map[string]int{}, Raw: body}
+	for _, ev := range raw.Spade {
+		hb.Events[ev.Event]++
+		if ev.Event == "minute-watched" {
+			hb.MinuteWatched++
+			hb.LastChannel = strings.ToLower(ev.Channel)
+			hb.LastHidden = ev.Hidden
+			hb.LastMuted = ev.Muted
+		}
+	}
+	for _, m := range raw.WS {
+		if !strings.Contains(m.Body, "drop-progress") {
+			continue
+		}
+		hb.DropMessages++
+		if p, ok := parseDropProgressPush(m.Body); ok {
+			hb.Progress = append(hb.Progress, p)
+		}
+	}
+	return hb, nil
+}
+
+var (
+	reDropID = regexp.MustCompile(`\\*"drop_id\\*"\s*:\s*\\*"([0-9a-fA-F-]{8,})\\*"`)
+	reCurMin = regexp.MustCompile(`\\*"current_progress_min\\*"\s*:\s*(\d+)`)
+	reReqMin = regexp.MustCompile(`\\*"required_progress_min\\*"\s*:\s*(\d+)`)
+)
+
+// parseDropProgressPush pulls the drop-progress fields out of a WebSocket
+// frame without depending on the exact framing.
+func parseDropProgressPush(body string) (domain.Progress, bool) {
+	id := reDropID.FindStringSubmatch(body)
+	cur := reCurMin.FindStringSubmatch(body)
+	if id == nil || cur == nil {
+		return domain.Progress{}, false
+	}
+	p := domain.Progress{DropID: id[1], Source: domain.SourceWebSocket, ObservedAt: time.Now()}
+	p.RealMinutes, _ = strconv.Atoi(cur[1])
+	if req := reReqMin.FindStringSubmatch(body); req != nil {
+		p.RequiredMinutes, _ = strconv.Atoi(req[1])
+	}
+	p.Claimable = p.RequiredMinutes > 0 && p.RealMinutes >= p.RequiredMinutes
+	return p, true
 }
 
 // ParseLiveChannels parses a users(logins:) response and returns only the users

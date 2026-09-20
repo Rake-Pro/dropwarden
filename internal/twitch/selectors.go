@@ -138,6 +138,94 @@ const jsCaptureShim = `(() => {
     }
     return oSend.apply(this, arguments);
   };
+
+  // Heartbeat capture: the player reports watch time to spade.twitch.tv as
+  // base64 JSON event batches (sendBeacon or fetch). Record each event's name
+  // and the crediting-relevant properties so a "no credit" verdict can say
+  // whether the player was heartbeating at all. Values only, no auth.
+  window.__dw_spade = [];
+  const SPADE_CAP = 120;
+  const isSpade = (u) => typeof u === 'string' && u.indexOf('spade.twitch.tv') !== -1;
+  const pushSpade = (text) => {
+    try {
+      let raw = String(text || '');
+      const m = raw.match(/(?:^|&)data=([^&]+)/);
+      if (m) raw = decodeURIComponent(m[1]);
+      let arr = JSON.parse(atob(raw));
+      if (!Array.isArray(arr)) arr = [arr];
+      arr.forEach(ev => {
+        if (!ev || !ev.event) return;
+        const p = ev.properties || {};
+        window.__dw_spade.push({ event: ev.event, at: Date.now(),
+          channel: p.channel || p.login || '', channel_id: String(p.channel_id || ''),
+          hidden: !!p.hidden, muted: !!p.muted, volume: (typeof p.volume === 'number') ? p.volume : -1,
+          player: p.player || '', live: (p.live === undefined) ? null : !!p.live,
+          logged_in: (p.logged_in === undefined) ? null : !!p.logged_in });
+      });
+      while (window.__dw_spade.length > SPADE_CAP) window.__dw_spade.shift();
+    } catch (e) {}
+  };
+  const bodyText = (b, cb) => {
+    try {
+      if (!b) return;
+      if (typeof b === 'string') return cb(b);
+      if (b instanceof URLSearchParams) return cb(b.toString());
+      if (typeof FormData !== 'undefined' && b instanceof FormData) return cb('data=' + encodeURIComponent(b.get('data') || ''));
+      if (typeof Blob !== 'undefined' && b instanceof Blob) { b.text().then(cb).catch(()=>{}); return; }
+    } catch (e) {}
+  };
+  const oBeacon = navigator.sendBeacon ? navigator.sendBeacon.bind(navigator) : null;
+  if (oBeacon) {
+    navigator.sendBeacon = function(url, data) {
+      if (isSpade(url)) bodyText(data, pushSpade);
+      return oBeacon(url, data);
+    };
+  }
+  const of2 = window.fetch;
+  window.fetch = function(input, init) {
+    const url = (typeof input === 'string') ? input : (input && input.url) || '';
+    if (isSpade(url) && init && init.body) bodyText(init.body, pushSpade);
+    return of2.apply(this, arguments);
+  };
+  const oSend2 = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function(body) {
+    if (isSpade(this.__dw_url)) bodyText(body, pushSpade);
+    return oSend2.apply(this, arguments);
+  };
+
+  // Drop-progress pushes ride the site's WebSocket (PubSub or Hermes framing).
+  // Keep any message that mentions drop events, raw, for the Go side to parse.
+  window.__dw_ws = [];
+  const WS_CAP = 60;
+  const OW = window.WebSocket;
+  if (OW) {
+    const DW = function(url, protocols) {
+      const ws = (protocols === undefined) ? new OW(url) : new OW(url, protocols);
+      try {
+        ws.addEventListener('message', (ev) => {
+          try {
+            const d = (typeof ev.data === 'string') ? ev.data : '';
+            if (d && /drop-progress|drop-claim|user-drop-events|drop_id/.test(d)) {
+              window.__dw_ws.push({ url: String(url), at: Date.now(), body: d.slice(0, 4000) });
+              while (window.__dw_ws.length > WS_CAP) window.__dw_ws.shift();
+            }
+          } catch (e) {}
+        });
+      } catch (e) {}
+      return ws;
+    };
+    DW.prototype = OW.prototype;
+    ['CONNECTING','OPEN','CLOSING','CLOSED'].forEach(k => { DW[k] = OW[k]; });
+    window.WebSocket = DW;
+  }
+})()`
+
+// jsDrainHeartbeat returns and clears the spade heartbeat and WebSocket drop
+// event buffers as one JSON string.
+const jsDrainHeartbeat = `(() => {
+  const s = window.__dw_spade || []; window.__dw_spade = [];
+  const w = window.__dw_ws || []; window.__dw_ws = [];
+  return JSON.stringify({ spade: s, ws: w });
 })()`
 
 // jsDrainCapture returns and clears the captured GQL buffer as a JSON string.
