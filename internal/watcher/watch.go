@@ -215,6 +215,23 @@ func (e *Engine) watchTick(ctx context.Context, lastTime *float64, lastTimeSet *
 // window on a reward the account already owns.
 const noFirstCreditTimeout = 5 * time.Minute
 
+// noCredit routes a zero-credit watch to the right culprit. A drop that has
+// ALREADY credited minutes (on some other channel, in an earlier session or by
+// hand) is plainly earnable, so the channel is at fault - blacklist it briefly
+// and reselect (live 2026-09-20: 6 minutes banked on LVTHalo, eli_x credited
+// nothing, and the drop was misfiled as owned). Only a drop with no progress
+// at all is judged un-earnable.
+func (e *Engine) noCredit() (State, string, bool) {
+	if e.cur.lastMinutes > 0 {
+		e.deps.Log.Warn().Str("drop", e.cur.drop.Name).Str("login", e.cur.login).Int("minutes", e.cur.lastMinutes).
+			Msg("channel earned no credit for a drop that has progress elsewhere; trying another channel")
+		e.endSession(domain.OutcomeAbortedStall, "no credit on this channel")
+		s, r := e.failChannel(domain.OutcomeAbortedStall, "no credit on this channel", e.deps.Cfg.Watcher.OfflineBlacklistTTL)
+		return s, r, true
+	}
+	return e.giveUpNoCredit()
+}
+
 // giveUpNoCredit abandons a drop that watched a participating channel but
 // earned no credit: flag it (session-scoped) so selection skips it and falls
 // through to the next eligible drop, mark it needs_action, and surface it.
@@ -242,7 +259,7 @@ func (e *Engine) stallCheck(ctx context.Context, now, proactiveAt time.Time) (St
 	// reward already owned, a region block). Skip it now instead of grinding
 	// out the full stall window and then every other channel.
 	if e.cur.creditChannel == "" && e.cur.lastMinutes <= e.cur.startMinutes && sinceProgress >= noFirstCreditTimeout {
-		return e.giveUpNoCredit()
+		return e.noCredit()
 	}
 
 	// Proactive refresh even when healthy, to beat the +15m client estimate cap.
@@ -271,7 +288,7 @@ func (e *Engine) stallCheck(ctx context.Context, now, proactiveAt time.Time) (St
 			// (the fast path above usually catches this first; this is the
 			// backstop when progress moved once then stopped without a session).
 			if e.cur.creditChannel == "" && e.cur.lastMinutes <= e.cur.startMinutes {
-				return e.giveUpNoCredit()
+				return e.noCredit()
 			}
 			e.endSession(domain.OutcomeAbortedStall, "repeated hard stall")
 			s, r := e.failChannel(domain.OutcomeAbortedStall, "progress would not advance", w.ChannelBlacklistTTL)

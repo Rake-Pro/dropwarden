@@ -3,6 +3,7 @@ package watcher
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/domain"
@@ -223,13 +224,23 @@ func (e *Engine) pickChannel(ctx context.Context, c domain.Campaign, cands []que
 				live = append(live, ch)
 			}
 		default:
+			// Twitch only credits an allowlisted channel while it streams the
+			// campaign's game (live 2026-09-20: eli_x was live and allowlisted
+			// but earned nothing). Off-game streams are dropped here so the
+			// no-credit ladder never has to discover it the slow way.
+			var offGame []domain.Channel
 			for _, ch := range liveNow {
+				if !sameGame(c, ch) {
+					offGame = append(offGame, ch)
+					continue
+				}
 				ch.DropsEnabled = true
 				ch.FirstSeenLiveAt = now.Add(-time.Hour)
 				live = append(live, ch)
 			}
 			e.deps.Log.Info().Str("campaign", c.Name).Int("allowed", len(logins)).Int("live", len(live)).
-				Strs("live_logins", channelLogins(live)).Msg("select: ACL live status")
+				Strs("live_logins", channelLogins(live)).Strs("off_game", channelLogins(offGame)).
+				Msg("select: ACL live status")
 		}
 	}
 
@@ -255,6 +266,19 @@ func (e *Engine) pickChannel(ctx context.Context, c domain.Campaign, cands []que
 			Msg("selecting: channel covers multiple eligible drops")
 	}
 	return ranked[0].Login, true
+}
+
+// sameGame reports whether a live channel streams the campaign's game. IDs
+// win when both sides have one; otherwise the display names are compared. A
+// campaign or stream with no game information is not filtered.
+func sameGame(c domain.Campaign, ch domain.Channel) bool {
+	if c.GameID != "" && ch.GameID != "" {
+		return c.GameID == ch.GameID
+	}
+	if c.GameName == "" || ch.GameName == "" {
+		return true
+	}
+	return strings.EqualFold(c.GameName, ch.GameName)
 }
 
 func channelLogins(chs []domain.Channel) []string {

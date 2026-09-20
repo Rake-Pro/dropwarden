@@ -310,6 +310,7 @@ func ParseLiveChannels(body []byte) ([]domain.Channel, error) {
 					ID           string `json:"id"`
 					ViewersCount int    `json:"viewersCount"`
 					Game         *struct {
+						ID          string `json:"id"`
 						DisplayName string `json:"displayName"`
 					} `json:"game"`
 				} `json:"stream"`
@@ -335,6 +336,7 @@ func ParseLiveChannels(body []byte) ([]domain.Channel, error) {
 		}
 		ch := domain.Channel{ID: u.ID, Login: strings.ToLower(u.Login), DisplayName: u.DisplayName, Live: true, ViewerCount: u.Stream.ViewersCount}
 		if u.Stream.Game != nil {
+			ch.GameID = u.Stream.Game.ID
 			ch.GameName = u.Stream.Game.DisplayName
 		}
 		out = append(out, ch)

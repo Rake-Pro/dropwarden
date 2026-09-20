@@ -8,6 +8,7 @@ type Channel struct {
 	ID           string
 	Login        string // lowercase URL segment, e.g. "shroud"
 	DisplayName  string
+	GameID       string
 	GameName     string
 	Live         bool
 	DropsEnabled bool

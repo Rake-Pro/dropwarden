@@ -448,14 +448,14 @@ func TestParsers_MissingOptionalFields(t *testing.T) {
 
 func TestParseLiveChannels(t *testing.T) {
 	body := []byte(`{"data":{"users":[
-		{"id":"1","login":"LVTHalo","displayName":"LVTHalo","stream":{"id":"s1","viewersCount":812,"game":{"displayName":"Halo Infinite"}}},
+		{"id":"1","login":"LVTHalo","displayName":"LVTHalo","stream":{"id":"s1","viewersCount":812,"game":{"id":"506416","displayName":"Halo Infinite"}}},
 		{"id":"2","login":"europeanhalo","displayName":"EuropeanHalo","stream":null},
 		null]}}`)
 	got, err := ParseLiveChannels(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Login != "lvthalo" || !got[0].Live || got[0].ViewerCount != 812 || got[0].GameName != "Halo Infinite" {
+	if len(got) != 1 || got[0].Login != "lvthalo" || !got[0].Live || got[0].ViewerCount != 812 || got[0].GameName != "Halo Infinite" || got[0].GameID != "506416" {
 		t.Fatalf("unexpected live set: %+v", got)
 	}
 	if _, err := ParseLiveChannels([]byte(`{"errors":[{"message":"nope"}]}`)); err == nil {

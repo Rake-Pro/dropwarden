@@ -701,3 +701,57 @@ func TestSelectingACLUnsupportedLiveFallsBack(t *testing.T) {
 		t.Fatalf("expected assume-live fallback to open europeanhalo, got %s %+v", next, e.cur)
 	}
 }
+
+// A live allowlisted channel streaming a different game cannot credit the
+// campaign, so it is filtered out of the ACL pool.
+func TestSelectingACLSkipsOffGameChannel(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	c := seedCampaign(t, st, false)
+	c.GameID = "g-rust"
+	c.AllowedChannels = []domain.Channel{{Login: "eli_x"}, {Login: "lvthalo"}}
+	if err := st.UpsertCampaign(c); err != nil {
+		t.Fatal(err)
+	}
+	pager := &fakePager{live: []domain.Channel{
+		{Login: "eli_x", Live: true, ViewerCount: 5000, GameID: "g-other", GameName: "Other Game"},
+		{Login: "lvthalo", Live: true, ViewerCount: 900, GameID: "g-rust", GameName: "Rust"},
+	}}
+	e := testEngine(t, st, newFakeController(), pager, &fakeDisco{}, newRecordingEmitter())
+	next, _ := e.runSelecting(context.Background())
+	if next != StateOpening || e.cur == nil || e.cur.login != "lvthalo" {
+		t.Fatalf("expected on-game lvthalo, got %s %+v", next, e.cur)
+	}
+}
+
+// Zero credit on a drop that already has minutes banked is the CHANNEL's
+// fault: blacklist it briefly and reselect; the drop stays in play.
+func TestNoCreditWithPriorProgressBlamesChannel(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	emit := newRecordingEmitter()
+	e := testEngine(t, st, newFakeController(), &fakePager{}, &fakeDisco{}, emit)
+	now := e.deps.Now()
+	e.cur = &activeWatch{
+		drop:          domain.Drop{ID: "d1", Name: "Desert Tea", RequiredMinutes: 60},
+		login:         "eli_x",
+		creditChannel: "",
+		startMinutes:  6,
+		lastMinutes:   6, // banked elsewhere, nothing gained here
+		lastProgress:  now.Add(-noFirstCreditTimeout),
+		session:       domain.WatchSession{ID: "s1", DropID: "d1"},
+	}
+	next, _, done := e.stallCheck(context.Background(), now, now.Add(time.Hour))
+	if !done || next != StateSelectingChannel {
+		t.Fatalf("expected reselect, got %s done=%v", next, done)
+	}
+	if e.noCreditDrops["d1"] {
+		t.Fatal("a drop with prior progress must not be flagged un-earnable")
+	}
+	if bl, _ := st.IsBlacklisted(domain.PlatformTwitch, "eli_x", now); !bl {
+		t.Fatal("the non-crediting channel must be blacklisted")
+	}
+	if emit.count(EvNeedsAction) != 0 {
+		t.Fatal("no needs_action for a channel problem")
+	}
+}

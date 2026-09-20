@@ -153,7 +153,7 @@ func (p *Pages) CapturedHeaderKeys(ctx context.Context) []string {
 // liveChannelsQuery resolves a batch of logins to their current stream, if any.
 // Not a persisted hash, so it is immune to hash rotation. A user with no
 // stream field is offline; Twitch accepts up to 100 logins per call.
-const liveChannelsQuery = `query($logins:[String!]!){users(logins:$logins){id login displayName stream{id viewersCount game{displayName}}}}`
+const liveChannelsQuery = `query($logins:[String!]!){users(logins:$logins){id login displayName stream{id viewersCount game{id displayName}}}}`
 
 // LiveChannels returns the subset of logins that are live right now, with
 // viewer counts, via a page-context GraphQL call. Used by selection for ACL
