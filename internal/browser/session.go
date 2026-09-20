@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"regexp"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/cdp"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/rs/zerolog"
 )
@@ -115,13 +117,52 @@ func (t *tab) Navigate(ctx context.Context, url string) error {
 	if err := p.Navigate(url); err != nil {
 		return fmt.Errorf("browser: navigate to %s: %w", url, err)
 	}
-	if err := p.Timeout(loadTimeout).WaitLoad(); err != nil {
+	if err := waitLoad(p); err != nil {
 		return fmt.Errorf("browser: wait for load of %s: %w", url, err)
 	}
 	if err := t.applyDarkEmulation(); err != nil {
 		t.logger.Debug().Err(err).Msg("could not reapply dark color scheme after navigate")
 	}
 	return nil
+}
+
+// waitLoad waits for window.onload, riding out a page that renavigates while
+// the wait is in flight. rod's WaitLoad is a JS promise in the page's
+// execution context; a client-side redirect (kick.com/drops bouncing through
+// its Cloudflare check, an SPA re-route) destroys that context and CDP answers
+// -32000 "Inspected target navigated or closed" (live 2026-09-20, every few
+// Kick discovery passes). The document that replaced it is the one to wait
+// on, so re-arm the wait; a target that really closed fails again with a
+// different error and is returned. Bounded by loadTimeout overall.
+func waitLoad(p *rod.Page) error {
+	deadline := time.Now().Add(loadTimeout)
+	for attempt := 0; ; attempt++ {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("load did not settle within %s", loadTimeout)
+		}
+		err := p.Timeout(remaining).WaitLoad()
+		if err == nil {
+			return nil
+		}
+		if !isNavigatedAway(err) || attempt >= maxRenavigations {
+			return err
+		}
+	}
+}
+
+// maxRenavigations caps how many mid-wait renavigations waitLoad tolerates
+// before giving up on a page that never settles (a redirect loop).
+const maxRenavigations = 5
+
+// isNavigatedAway reports the CDP error a JS-promise wait gets when the frame it
+// was evaluating in navigated away underneath it.
+func isNavigatedAway(err error) bool {
+	var cerr *cdp.Error
+	if !errors.As(err, &cerr) {
+		return false
+	}
+	return cerr.Code == -32000 && strings.Contains(cerr.Message, "navigated")
 }
 
 func (t *tab) Reload(ctx context.Context, ignoreCache bool) error {
@@ -143,7 +184,7 @@ func (t *tab) Reload(ctx context.Context, ignoreCache bool) error {
 	}
 	wait()
 
-	if err := p.Timeout(loadTimeout).WaitLoad(); err != nil {
+	if err := waitLoad(p); err != nil {
 		return fmt.Errorf("browser: wait for load after reload: %w", err)
 	}
 	if err := t.applyDarkEmulation(); err != nil {
