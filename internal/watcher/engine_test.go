@@ -3,6 +3,7 @@ package watcher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -753,5 +754,47 @@ func TestNoCreditWithPriorProgressBlamesChannel(t *testing.T) {
 	}
 	if emit.count(EvNeedsAction) != 0 {
 		t.Fatal("no needs_action for a channel problem")
+	}
+}
+
+// Offline single-streamer allowlist campaigns must not eat the fall-through
+// budget (live 2026-09-25: 19 eligible Rust drops, the top 6 were allowlists
+// with the streamer offline, and the any-channel campaign below them was
+// never tried, so the watcher sat in cooldown all morning).
+func TestSelectingOfflineACLsDoNotConsumeFallThroughBudget(t *testing.T) {
+	st, _ := store.OpenMemory()
+	defer st.Close()
+	e := testEngine(t, st, newFakeController(), &fakePager{channels: []string{"rust_any"}}, &fakeDisco{}, newRecordingEmitter())
+	n := e.deps.Cfg.Watcher.MaxSelectAttempts + 1
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("acl%d", i)
+		c := domain.Campaign{
+			ID: id, Name: id, GameName: "Rust", GameSlug: "rust", Status: domain.StatusActive,
+			EndAt:           time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC),
+			AllowedChannels: []domain.Channel{{Login: "offline_" + id}},
+			Drops:           []domain.Drop{{ID: id + "-d", CampaignID: id, Name: "Tier 1", RequiredMinutes: 60}},
+		}
+		if err := st.UpsertCampaign(c); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.UpsertQueueItem(domain.QueueItem{DropID: id + "-d", CampaignID: id, Position: i, Enabled: true, Status: domain.ItemPending}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	any := domain.Campaign{
+		ID: "general", Name: "Rust Isles General Drops", GameName: "Rust", GameSlug: "rust", Status: domain.StatusActive,
+		EndAt: time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC),
+		Drops: []domain.Drop{{ID: "gen-d", CampaignID: "general", Name: "Tier 1", RequiredMinutes: 60}},
+	}
+	if err := st.UpsertCampaign(any); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertQueueItem(domain.QueueItem{DropID: "gen-d", CampaignID: "general", Position: n, Enabled: true, Status: domain.ItemPending}); err != nil {
+		t.Fatal(err)
+	}
+
+	next, _ := e.runSelecting(context.Background())
+	if next != StateOpening || e.cur == nil || e.cur.login != "rust_any" || e.cur.campaign.ID != "general" {
+		t.Fatalf("expected the any-channel campaign below %d offline allowlists to be selected, got %s %+v", n, next, e.cur)
 	}
 }

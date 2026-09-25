@@ -54,7 +54,7 @@ watcher:
   channel_blacklist_ttl: 45m
   offline_blacklist_ttl: 15m
   wait_for_top: false           # false = fall through to the next available drop
-  max_select_attempts: 6        # candidates tried per pass when falling through
+  max_select_attempts: 6        # any-channel directory scrapes per pass; allowlists always checked
   timing_jitter: 0.2            # +/- fraction on periodic watcher delays (bot-detection avoidance: desynchronizes periodic actions); 0 disables, max 0.5
 
 claim:

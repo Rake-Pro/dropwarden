@@ -130,8 +130,10 @@ type WatcherConfig struct {
 	// top one as soon as a channel for it is available again.
 	WaitForTop bool `yaml:"wait_for_top"`
 
-	// MaxSelectAttempts caps how many candidate drops selection will try per
-	// pass when falling through (bounds directory navigations). 0 = default.
+	// MaxSelectAttempts caps how many any-channel candidate drops selection
+	// will try per pass when falling through (bounds directory navigations).
+	// Allowlist campaigns cost one status query each and are always checked.
+	// 0 = default.
 	MaxSelectAttempts int `yaml:"max_select_attempts"`
 
 	// TimingJitter desynchronizes periodic watcher actions for bot-detection

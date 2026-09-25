@@ -131,16 +131,28 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 
 	// Try candidates in priority order and take the first with an available
 	// channel. When wait_for_top is set, only the single top drop is tried, so
-	// the watcher waits for its channel instead of falling through.
-	attempts := len(cands)
+	// the watcher waits for its channel instead of falling through. Otherwise
+	// every candidate is considered: an allowlist campaign costs one status
+	// query, so it is always checked, while directory scrapes for any-channel
+	// campaigns are bounded by max_select_attempts. Counting allowlist checks
+	// against that cap stranded selection (live 2026-09-25: 19 eligible Rust
+	// drops, the top 6 were single-streamer allowlists with the streamer
+	// offline, and the any-channel campaign further down was never reached).
+	n := len(cands)
 	if e.deps.Cfg.Watcher.WaitForTop {
-		attempts = 1
-	} else if max := e.deps.Cfg.Watcher.MaxSelectAttempts; max > 0 && attempts > max {
-		attempts = max
+		n = 1
 	}
+	maxDir := e.deps.Cfg.Watcher.MaxSelectAttempts
+	dirReads := 0
 	var cand *queue.Candidate
 	var login string
-	for i := 0; i < attempts; i++ {
+	for i := 0; i < n; i++ {
+		if cands[i].Campaign.AnyChannel() {
+			if maxDir > 0 && dirReads >= maxDir {
+				continue
+			}
+			dirReads++
+		}
 		if l, ok := e.pickChannel(ctx, cands[i].Campaign, cands); ok {
 			cand = &cands[i]
 			login = l
@@ -152,7 +164,7 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 		}
 	}
 	if cand == nil {
-		return StateCooldown, "no live channel for the top eligible drops"
+		return StateCooldown, "no live channel for any eligible drop"
 	}
 
 	drop, _ := dropByID(cand.Campaign, cand.Drop.ID)
