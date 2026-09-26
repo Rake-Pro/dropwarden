@@ -200,3 +200,79 @@ func TestClaimsAndSessions(t *testing.T) {
 		t.Fatalf("bad sessions: %+v", sessions)
 	}
 }
+
+func TestPinPersistedAndPreservedAcrossUpsert(t *testing.T) {
+	s := newTestStore(t)
+	for i, id := range []string{"d1", "d2", "d3"} {
+		if err := s.UpsertQueueItem(domain.QueueItem{DropID: id, CampaignID: "c1", Position: i, Enabled: true, Status: domain.ItemPending}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SetPin("d3", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPin("d2", 2); err != nil {
+		t.Fatal(err)
+	}
+	// A discovery re-upsert carries Pin 0 and must not reset the user's pin.
+	if err := s.UpsertQueueItem(domain.QueueItem{DropID: "d3", CampaignID: "c1", Position: 9, Enabled: true, Status: domain.ItemPending}); err != nil {
+		t.Fatal(err)
+	}
+	pins := map[string]int{}
+	q, _ := s.GetQueue()
+	for _, it := range q {
+		pins[it.DropID] = it.Pin
+	}
+	if pins["d3"] != 1 || pins["d2"] != 2 || pins["d1"] != 0 {
+		t.Fatalf("pins after re-upsert = %v", pins)
+	}
+	if m, _ := s.MaxPin(); m != 2 {
+		t.Fatalf("MaxPin = %d, want 2", m)
+	}
+	// Unpin rank 1 and compact: d2 moves up to rank 1.
+	if err := s.SetPin("d3", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompactPins(); err != nil {
+		t.Fatal(err)
+	}
+	q, _ = s.GetQueue()
+	for _, it := range q {
+		pins[it.DropID] = it.Pin
+	}
+	if pins["d2"] != 1 || pins["d3"] != 0 {
+		t.Fatalf("pins after compact = %v", pins)
+	}
+}
+
+func TestPinRulesCRUD(t *testing.T) {
+	s := newTestStore(t)
+	r := PinRule{Platform: domain.PlatformTwitch, GameName: "rust", RewardKey: "hazmat skin", Rank: 1}
+	if err := s.UpsertPinRule(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertPinRule(PinRule{Platform: domain.PlatformKick, GameName: "rust", RewardKey: "other", Rank: 1}); err != nil {
+		t.Fatal(err)
+	}
+	r.Rank = 3
+	if err := s.UpsertPinRule(r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ListPinRules(domain.PlatformTwitch)
+	if err != nil || len(got) != 1 || got[0].Rank != 3 || got[0].RewardKey != "hazmat skin" {
+		t.Fatalf("twitch rules = %+v err=%v", got, err)
+	}
+	if err := s.DeletePinRule(domain.PlatformTwitch, "rust", "hazmat skin"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ListPinRules(domain.PlatformTwitch); len(got) != 0 {
+		t.Fatalf("rule not deleted: %+v", got)
+	}
+	if got, _ := s.ListPinRules(domain.PlatformKick); len(got) != 1 {
+		t.Fatalf("kick rule should be untouched: %+v", got)
+	}
+	// Deleting a missing rule is a no-op.
+	if err := s.DeletePinRule(domain.PlatformTwitch, "rust", "nope"); err != nil {
+		t.Fatal(err)
+	}
+}

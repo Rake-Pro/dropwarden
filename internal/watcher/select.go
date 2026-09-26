@@ -100,19 +100,13 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 		}
 	}
 	e.setEligibility(tally)
-	if len(items) > 0 {
-		ev := e.deps.Log.Info().Int("queued", len(items)).Interface("eligibility", tally)
-		// Include one queued campaign's raw window fields to diagnose filtering.
-		if c, ok := campaigns[items[0].CampaignID]; ok {
-			ev = ev.Str("sample_campaign", c.Name).Str("sample_status", string(c.Status)).
-				Time("sample_start", c.StartAt).Time("sample_end", c.EndAt).
-				Bool("sample_account_link", c.RequiresAccountLink()).
-				Interface("sample_account_connected", c.AccountConnected)
-		}
-		ev.Msg("selecting: eligibility tally")
-	}
 
-	cands := queue.EligibleCandidates(items, campaigns, progress, claimed, domain.PriorityMode(e.deps.Cfg.Queue.PriorityMode), e.deps.Cfg.Claim.SkipAccountLink, now)
+	ord := queue.Ordering{
+		Mode:                  domain.PriorityMode(e.deps.Cfg.Queue.PriorityMode),
+		Games:                 e.deps.Cfg.Games,
+		PreferChannelSpecific: e.deps.Cfg.PreferChannelSpecific(),
+	}
+	cands := queue.EligibleCandidates(items, campaigns, progress, claimed, ord, e.deps.Cfg.Claim.SkipAccountLink, now)
 	// Drop the drops this session already proved un-earnable (watched a
 	// participating channel to the full stall window with zero credit), so we
 	// fall through to the next eligible drop instead of grinding this one.
@@ -125,6 +119,25 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 		}
 		cands = kept
 	}
+
+	if len(items) > 0 {
+		ev := e.deps.Log.Info().Int("queued", len(items)).Interface("eligibility", tally)
+		// Include one queued campaign's raw window fields to diagnose filtering.
+		if c, ok := campaigns[items[0].CampaignID]; ok {
+			ev = ev.Str("sample_campaign", c.Name).Str("sample_status", string(c.Status)).
+				Time("sample_start", c.StartAt).Time("sample_end", c.EndAt).
+				Bool("sample_account_link", c.RequiresAccountLink()).
+				Interface("sample_account_connected", c.AccountConnected)
+		}
+		// The top candidate's ranking inputs, to debug why it leads.
+		if len(cands) > 0 {
+			top := cands[0]
+			ev = ev.Str("top_drop", top.Drop.Name).Str("top_game", top.Campaign.GameName).
+				Int("top_pin", top.Pin).Int("top_game_rank", top.GameRank).Bool("top_alongside", top.Alongside)
+		}
+		ev.Msg("selecting: eligibility tally")
+	}
+
 	if len(cands) == 0 {
 		return StateCooldown, "nothing eligible to watch"
 	}
@@ -158,6 +171,8 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 			login = l
 			if i > 0 {
 				e.deps.Log.Info().Int("skipped", i).Str("game", cands[i].Campaign.GameName).
+					Str("drop", cands[i].Drop.Name).Int("pin", cands[i].Pin).Int("game_rank", cands[i].GameRank).
+					Bool("alongside", cands[i].Alongside).
 					Msg("selecting: fell through to next available drop")
 			}
 			break

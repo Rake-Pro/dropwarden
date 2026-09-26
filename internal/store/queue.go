@@ -11,19 +11,20 @@ import (
 // UpsertQueueItem inserts or updates a queue row, preserving the existing
 // position when the item already exists (position is managed by SetQueueOrder).
 func (s *Store) UpsertQueueItem(it domain.QueueItem) error {
-	// force_watch is deliberately absent from the ON CONFLICT SET (like position):
-	// it is a user-set override that a re-upsert (e.g. discovery re-enqueue) must
-	// preserve, not reset. It is set only via SetForceWatch.
+	// force_watch and pin are deliberately absent from the ON CONFLICT SET (like
+	// position): they are user-set overrides that a re-upsert (e.g. discovery
+	// re-enqueue) must preserve, not reset. They are set only via SetForceWatch
+	// and SetPin.
 	_, err := s.db.Exec(`INSERT INTO queue
-		(drop_id,campaign_id,platform,position,enabled,status,reason,last_attempt_at,force_watch)
-		VALUES (?,?,?,?,?,?,?,?,?)
+		(drop_id,campaign_id,platform,position,enabled,status,reason,last_attempt_at,force_watch,pin)
+		VALUES (?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(drop_id) DO UPDATE SET
 			campaign_id=excluded.campaign_id, platform=excluded.platform,
 			enabled=excluded.enabled,
 			status=excluded.status, reason=excluded.reason,
 			last_attempt_at=excluded.last_attempt_at`,
 		it.DropID, it.CampaignID, string(it.Platform.OrTwitch()), it.Position, boolToInt(it.Enabled),
-		string(it.Status), it.Reason, unixPtr(it.LastAttemptAt), boolToInt(it.ForceWatch))
+		string(it.Status), it.Reason, unixPtr(it.LastAttemptAt), boolToInt(it.ForceWatch), it.Pin)
 	if err != nil {
 		return fmt.Errorf("store: upsert queue item: %w", err)
 	}
@@ -32,7 +33,7 @@ func (s *Store) UpsertQueueItem(it domain.QueueItem) error {
 
 // GetQueue returns queue items in ascending position order.
 func (s *Store) GetQueue() ([]domain.QueueItem, error) {
-	rows, err := s.db.Query(`SELECT drop_id,campaign_id,platform,position,enabled,status,reason,last_attempt_at,COALESCE(force_watch,0) FROM queue ORDER BY position`)
+	rows, err := s.db.Query(`SELECT drop_id,campaign_id,platform,position,enabled,status,reason,last_attempt_at,COALESCE(force_watch,0),COALESCE(pin,0) FROM queue ORDER BY position`)
 	if err != nil {
 		return nil, fmt.Errorf("store: get queue: %w", err)
 	}
@@ -43,7 +44,7 @@ func (s *Store) GetQueue() ([]domain.QueueItem, error) {
 		var enabled, forceWatch int
 		var pf, status, reason string
 		var last sql.NullInt64
-		if err := rows.Scan(&it.DropID, &it.CampaignID, &pf, &it.Position, &enabled, &status, &reason, &last, &forceWatch); err != nil {
+		if err := rows.Scan(&it.DropID, &it.CampaignID, &pf, &it.Position, &enabled, &status, &reason, &last, &forceWatch, &it.Pin); err != nil {
 			return nil, fmt.Errorf("store: scan queue: %w", err)
 		}
 		it.Platform = domain.Platform(pf).OrTwitch()
@@ -89,6 +90,59 @@ func (s *Store) SetForceWatch(dropID string, on bool) error {
 		return fmt.Errorf("store: set force watch: %w", err)
 	}
 	return nil
+}
+
+// SetPin sets a queue item's pin rank (0 clears it). Callers keep ranks dense
+// with CompactPins.
+func (s *Store) SetPin(dropID string, rank int) error {
+	_, err := s.db.Exec(`UPDATE queue SET pin=? WHERE drop_id=?`, rank, dropID)
+	if err != nil {
+		return fmt.Errorf("store: set pin: %w", err)
+	}
+	return nil
+}
+
+// MaxPin returns the highest pin rank in the queue (0 when nothing is pinned).
+func (s *Store) MaxPin() (int, error) {
+	var max sql.NullInt64
+	if err := s.db.QueryRow(`SELECT MAX(pin) FROM queue WHERE pin > 0`).Scan(&max); err != nil {
+		return 0, fmt.Errorf("store: max pin: %w", err)
+	}
+	return int(max.Int64), nil
+}
+
+// CompactPins renumbers the pinned items 1..n in their current rank order
+// (ties broken by position, then drop id), closing gaps left by an unpin or a
+// pruned item. Pins form one queue-wide ranked set across platforms.
+func (s *Store) CompactPins() error {
+	rows, err := s.db.Query(`SELECT drop_id FROM queue WHERE pin > 0 ORDER BY pin, position, drop_id`)
+	if err != nil {
+		return fmt.Errorf("store: compact pins: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("store: compact pins: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("store: compact pins: %w", err)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: begin: %w", err)
+	}
+	defer tx.Rollback()
+	for i, id := range ids {
+		if _, err := tx.Exec(`UPDATE queue SET pin=? WHERE drop_id=?`, i+1, id); err != nil {
+			return fmt.Errorf("store: compact pins: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // SetItemStatus updates a queue item's status and reason, stamping the attempt time.

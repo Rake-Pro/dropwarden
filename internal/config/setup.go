@@ -16,7 +16,8 @@ const StarterConfig = `# dropwarden configuration.
 
 theme: dark            # dark | light | system  (dashboard UI)
 
-# Campaigns for games outside this list are cached but never queued.
+# Campaigns for games outside this list are cached but never queued. The list
+# order is the game priority: earlier games are watched first.
 games:
   - Rust
   - Halo Infinite
@@ -28,6 +29,12 @@ any_game: false        # future: queue every drops-enabled campaign
 queue:
   priority_mode: top_down   # top_down | ending_soonest | closest_to_complete | shortest_first
   auto_enqueue_new: true    # new campaigns for listed games join the bottom of the queue
+  # Within a game, watch channel-allowlisted campaigns before any-channel ones:
+  # an allowlisted streamer also credits the game's any-channel drops, so those
+  # only get their own watch when no allowlisted streamer of the game is live.
+  # Games are prioritized in the order of the games list above; pinned drops
+  # (Queue view star) outrank everything.
+  prefer_channel_specific: true
 
 discovery:
   interval: 45m

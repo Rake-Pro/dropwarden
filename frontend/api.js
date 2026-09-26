@@ -26,7 +26,8 @@ const SAMPLE = {
     ],
     queue: [
       { dropID: 'd1', platform: 'twitch', dropName: 'Wooden Barricade', game: 'Rust', status: 'active', enabled: true, currentMinutes: 42, requiredMinutes: 60, reason: '@shroud · watching now' },
-      { dropID: 'd2', platform: 'kick', dropName: 'Elite Wooden Door Skin', game: 'Rust', status: 'pending', enabled: true, currentMinutes: 0, requiredMinutes: 120, reason: '@posty +6' },
+      { dropID: 'd2', platform: 'kick', dropName: 'Elite Wooden Door Skin', game: 'Rust', status: 'pending', enabled: true, pin: 1, currentMinutes: 0, requiredMinutes: 120, reason: '@posty +6' },
+      { dropID: 'd3', platform: 'twitch', dropName: 'Rust General Crate', game: 'Rust', status: 'blocked_precondition', enabled: true, alongside: true, currentMinutes: 10, requiredMinutes: 60, reason: 'waiting on prerequisite drop' },
       { dropID: 'd4', platform: 'twitch', dropName: 'Master Chief Armor Coating', game: 'Halo MCC', status: 'needs_action', enabled: false, currentMinutes: 0, requiredMinutes: 90, reason: 'account link required' },
       { dropID: 'd6', platform: 'twitch', dropName: 'VOID WINGS SKIN: UNKNOWN', game: 'Once Human', status: 'needs_action', enabled: true, owned: true, forceWatch: false, currentMinutes: 0, requiredMinutes: 60, reason: 'reward already owned - Twitch will not credit it again' },
     ],
@@ -56,7 +57,7 @@ const SAMPLE = {
   }],
   config: {
     theme: 'dark', games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'], anyGame: false,
-    priorityMode: 'top_down', autoEnqueueNew: true, volume: 0.01, forceLowestQuality: true,
+    priorityMode: 'top_down', preferChannelSpecific: true, autoEnqueueNew: true, volume: 0.01, forceLowestQuality: true,
     neverFocus: true, alwaysOnBottom: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, kickEnabled: true, claimStrategy: 'in_page',
     allowGqlFallback: false, skipAccountLink: true, authMode: 'manual', storedEnabled: false, logLevel: 'info',
     updateEnabled: true, updateAutoInstall: true, updateShowChangelog: true,
@@ -179,6 +180,10 @@ export const api = {
 
   setEnabled(dropID, on, profile = activeProfile) { return post('/api/queue/enabled', { profile, dropID, on }); },
   setForceWatch(dropID, on, profile = activeProfile) { return post('/api/queue/force-watch', { profile, dropID, on }); },
+  // Star (pinned=true) or unstar a drop; starred drops are watched first.
+  setPin(dropID, pinned, profile = activeProfile) { return post('/api/queue/pin', { profile, dropID, pinned }); },
+  // Move a pinned drop one rank: direction 'up' (toward rank 1) or 'down'.
+  setPinRank(dropID, direction, profile = activeProfile) { return post('/api/queue/pin-rank', { profile, dropID, direction }); },
   setOrder(ids, profile = activeProfile) { return post('/api/queue/order', { profile, ids }); },
   // Priority mode is shared by every profile.
   setPriority(mode) { return post('/api/queue/priority', { mode }); },

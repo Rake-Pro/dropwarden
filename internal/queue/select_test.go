@@ -29,7 +29,7 @@ func TestNextDrop_TopDown(t *testing.T) {
 		{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending},
 	}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, true, now)
+	got, err := NextDrop(items, campaigns, nil, nil, Ordering{Mode: domain.PriorityTopDown}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestNextDrop_EndingSoonest(t *testing.T) {
 		{DropID: "d1", CampaignID: "c1", Position: 3, Enabled: true, Status: domain.ItemPending},
 	}
 	campaigns := map[string]domain.Campaign{"c1": campSoon, "c2": campLater, "c3": campNoEnd}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityEndingSoonest, true, now)
+	got, err := NextDrop(items, campaigns, nil, nil, Ordering{Mode: domain.PriorityEndingSoonest}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestNextDrop_ClosestToComplete(t *testing.T) {
 		// d1 has 90/100 done (10 remaining), d2 has no progress (100 remaining)
 		"d1": {DropID: "d1", RealMinutes: 90, RequiredMinutes: 100, Source: domain.SourceInventory},
 	}
-	got, err := NextDrop(items, campaigns, progress, nil, domain.PriorityClosestToComplete, true, now)
+	got, err := NextDrop(items, campaigns, progress, nil, Ordering{Mode: domain.PriorityClosestToComplete}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestNextDrop_ShortestFirst(t *testing.T) {
 		{DropID: "d2", CampaignID: "c1", Position: 2, Enabled: true, Status: domain.ItemPending},
 	}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityShortestFirst, true, now)
+	got, err := NextDrop(items, campaigns, nil, nil, Ordering{Mode: domain.PriorityShortestFirst}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestNextDrop_AccountLinkExcluded(t *testing.T) {
 	camp.AccountLinkURL = "https://example.com/link"
 	items := []domain.QueueItem{{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending}}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, true, now)
+	got, err := NextDrop(items, campaigns, nil, nil, Ordering{Mode: domain.PriorityTopDown}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestNextDrop_ConnectedAccountEligibleDespiteLinkURL(t *testing.T) {
 	camp.AccountConnected = &connected
 	items := []domain.QueueItem{{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending}}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, true, now)
+	got, err := NextDrop(items, campaigns, nil, nil, Ordering{Mode: domain.PriorityTopDown}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestNextDrop_ExpiredCampaignExcluded(t *testing.T) {
 	camp := baseCampaign("c1", past, domain.Drop{ID: "d1", CampaignID: "c1", RequiredMinutes: 60})
 	items := []domain.QueueItem{{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending}}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, true, now)
+	got, err := NextDrop(items, campaigns, nil, nil, Ordering{Mode: domain.PriorityTopDown}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestNextDrop_PreconditionUnmetSkipped(t *testing.T) {
 		{DropID: "d2", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending},
 	}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, map[string]bool{}, domain.PriorityTopDown, true, now)
+	got, err := NextDrop(items, campaigns, nil, map[string]bool{}, Ordering{Mode: domain.PriorityTopDown}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestNextDrop_PreconditionUnmetSkipped(t *testing.T) {
 	}
 
 	// Once claimed, it should become eligible.
-	got, err = NextDrop(items, campaigns, nil, map[string]bool{"d1": true}, domain.PriorityTopDown, true, now)
+	got, err = NextDrop(items, campaigns, nil, map[string]bool{"d1": true}, Ordering{Mode: domain.PriorityTopDown}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestNextDrop_CompletedOrClaimedSkipped(t *testing.T) {
 		"d1": {DropID: "d1", RealMinutes: 60, RequiredMinutes: 60, Source: domain.SourceInventory},
 	}
 	claimed := map[string]bool{"d2": true}
-	got, err := NextDrop(items, campaigns, progress, claimed, domain.PriorityTopDown, true, now)
+	got, err := NextDrop(items, campaigns, progress, claimed, Ordering{Mode: domain.PriorityTopDown}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestNextDrop_DisabledSkipped(t *testing.T) {
 		{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: false, Status: domain.ItemPending},
 	}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, true, now)
+	got, err := NextDrop(items, campaigns, nil, nil, Ordering{Mode: domain.PriorityTopDown}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestNextDrop_DisabledSkipped(t *testing.T) {
 
 func TestNextDrop_Empty(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	got, err := NextDrop(nil, nil, nil, nil, domain.PriorityTopDown, true, now)
+	got, err := NextDrop(nil, nil, nil, nil, Ordering{Mode: domain.PriorityTopDown}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestNextDrop_ServerProgressOverridesLinkGate(t *testing.T) {
 	progress := map[string]domain.Progress{
 		"d1": {DropID: "d1", RealMinutes: 4, RequiredMinutes: 30, Source: domain.SourceInventory},
 	}
-	got, err := NextDrop(items, campaigns, progress, nil, domain.PriorityTopDown, true, now)
+	got, err := NextDrop(items, campaigns, progress, nil, Ordering{Mode: domain.PriorityTopDown}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestNextDrop_SkipLinkOffDisablesGate(t *testing.T) {
 	camp.AccountLinkURL = "https://example.com/link"
 	items := []domain.QueueItem{{DropID: "d1", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending}}
 	campaigns := map[string]domain.Campaign{"c1": camp}
-	got, err := NextDrop(items, campaigns, nil, nil, domain.PriorityTopDown, false, now)
+	got, err := NextDrop(items, campaigns, nil, nil, Ordering{Mode: domain.PriorityTopDown}, false, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestNextDrop_OwnedRewardSkipped(t *testing.T) {
 	progress := map[string]domain.Progress{
 		"d1": {DropID: "d1", RealMinutes: 0, RequiredMinutes: 60, Source: domain.SourceInventory, Owned: true},
 	}
-	got, err := NextDrop(items, campaigns, progress, map[string]bool{}, domain.PriorityTopDown, true, now)
+	got, err := NextDrop(items, campaigns, progress, map[string]bool{}, Ordering{Mode: domain.PriorityTopDown}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestNextDrop_ForceWatchOverridesOwned(t *testing.T) {
 		"d1": {DropID: "d1", RequiredMinutes: 60, Source: domain.SourceInventory, Owned: true},
 		"d2": {DropID: "d2", RequiredMinutes: 60, Source: domain.SourceInventory, Owned: true, ClaimedAt: &claimedAt},
 	}
-	cands := EligibleCandidates(items, campaigns, progress, map[string]bool{}, domain.PriorityTopDown, true, now)
+	cands := EligibleCandidates(items, campaigns, progress, map[string]bool{}, Ordering{Mode: domain.PriorityTopDown}, true, now)
 	if len(cands) != 1 || cands[0].Drop.ID != "d1" {
 		t.Fatalf("forced owned drop d1 must be eligible and forced-claimed d2 must not, got %+v", cands)
 	}
@@ -463,7 +463,7 @@ func TestNextDrop_ClaimedZeroMinutesSkipped(t *testing.T) {
 	progress := map[string]domain.Progress{
 		"d1": {DropID: "d1", RealMinutes: 0, RequiredMinutes: 60, Source: domain.SourceInventory, ClaimedAt: &claimedAt},
 	}
-	got, err := NextDrop(items, campaigns, progress, map[string]bool{}, domain.PriorityTopDown, true, now)
+	got, err := NextDrop(items, campaigns, progress, map[string]bool{}, Ordering{Mode: domain.PriorityTopDown}, true, now)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

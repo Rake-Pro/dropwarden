@@ -6,10 +6,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/rake-pro/dropwarden/internal/browser"
 	"github.com/rake-pro/dropwarden/internal/config"
+	"github.com/rake-pro/dropwarden/internal/discovery"
 	"github.com/rake-pro/dropwarden/internal/domain"
 	"github.com/rake-pro/dropwarden/internal/kick"
+	"github.com/rake-pro/dropwarden/internal/queue"
 	"github.com/rake-pro/dropwarden/internal/store"
 	"github.com/rake-pro/dropwarden/internal/twitch"
 	"github.com/rake-pro/dropwarden/internal/watcher"
@@ -483,6 +487,17 @@ func (s *QueueService) Get(profile string) ([]QueueItemDTO, error) {
 			dmap[d.ID] = d
 		}
 	}
+	progress := map[string]domain.Progress{}
+	claimed := map[string]bool{}
+	for _, it := range items {
+		if p, err := st.GetProgress(it.DropID); err == nil && p != nil {
+			progress[it.DropID] = *p
+		}
+		if has, err := st.HasClaim(it.DropID); err == nil && has {
+			claimed[it.DropID] = true
+		}
+	}
+	alongside := queue.Alongside(items, cmap, progress, claimed, s.b.config().Claim.SkipAccountLink, time.Now())
 	out := make([]QueueItemDTO, 0, len(items))
 	for _, it := range items {
 		d := dmap[it.DropID]
@@ -491,15 +506,154 @@ func (s *QueueService) Get(profile string) ([]QueueItemDTO, error) {
 			DropName: d.Name,
 			Game:     cmap[it.CampaignID].GameName, Position: it.Position, Enabled: it.Enabled,
 			Status: string(it.Status), Reason: it.Reason, RequiredMinutes: d.RequiredMinutes,
-			ForceWatch: it.ForceWatch,
+			ForceWatch: it.ForceWatch, Pin: it.Pin, Alongside: alongside[it.DropID],
 		}
-		if p, err := st.GetProgress(it.DropID); err == nil && p != nil {
+		if p, ok := progress[it.DropID]; ok {
 			dto.CurrentMinutes, _ = p.Effective()
 			dto.Owned = p.Owned
 		}
 		out = append(out, dto)
 	}
 	return out, nil
+}
+
+// SetPin stars (pinned=true) or unstars one drop. Starring appends it to the
+// bottom of the pinned set and stores a pin rule keyed by its game and reward
+// name(s), so discovery re-pins the same reward in a later campaign instance;
+// unstarring clears the pin, deletes the rule, and closes the rank gap.
+func (s *QueueService) SetPin(profile, dropID string, pinned bool) error {
+	st, err := s.b.storeFor(profile)
+	if err != nil {
+		return err
+	}
+	it, c, d, err := queueEntry(st, dropID)
+	if err != nil {
+		return err
+	}
+	game, reward := "", ""
+	if c != nil && d != nil {
+		game, reward = discovery.PinKey(*c, *d)
+	}
+	if !pinned {
+		if it.Pin == 0 {
+			return nil
+		}
+		if err := st.SetPin(dropID, 0); err != nil {
+			return err
+		}
+		if reward != "" {
+			if err := st.DeletePinRule(it.Platform, game, reward); err != nil {
+				return err
+			}
+		}
+		return s.syncPins(st)
+	}
+	if it.Pin > 0 {
+		return nil
+	}
+	last, err := st.MaxPin()
+	if err != nil {
+		return err
+	}
+	if err := st.SetPin(dropID, last+1); err != nil {
+		return err
+	}
+	if reward != "" {
+		if err := st.UpsertPinRule(store.PinRule{Platform: it.Platform, GameName: game, RewardKey: reward, Rank: last + 1}); err != nil {
+			return err
+		}
+	}
+	return s.syncPins(st)
+}
+
+// MovePin swaps a pinned drop with its neighbor in the pinned set
+// (direction "up" = toward rank 1, "down" = away from it). Moving past either
+// end is a no-op.
+func (s *QueueService) MovePin(profile, dropID, direction string) error {
+	st, err := s.b.storeFor(profile)
+	if err != nil {
+		return err
+	}
+	var step int
+	switch direction {
+	case "up":
+		step = -1
+	case "down":
+		step = 1
+	default:
+		return fmt.Errorf("invalid direction %q (want up or down)", direction)
+	}
+	it, _, _, err := queueEntry(st, dropID)
+	if err != nil {
+		return err
+	}
+	if it.Pin == 0 {
+		return fmt.Errorf("drop %q is not pinned", dropID)
+	}
+	if err := st.CompactPins(); err != nil {
+		return err
+	}
+	items, err := st.GetQueue()
+	if err != nil {
+		return err
+	}
+	var rank int
+	byRank := map[int]string{}
+	for _, q := range items {
+		if q.Pin > 0 {
+			byRank[q.Pin] = q.DropID
+		}
+		if q.DropID == dropID {
+			rank = q.Pin
+		}
+	}
+	other, ok := byRank[rank+step]
+	if !ok {
+		return nil
+	}
+	if err := st.SetPin(other, rank); err != nil {
+		return err
+	}
+	if err := st.SetPin(dropID, rank+step); err != nil {
+		return err
+	}
+	return s.syncPins(st)
+}
+
+// syncPins compacts pin ranks and mirrors them into the pin rules. Ranks are
+// queue-wide, so a move can shift another platform's pin: sync every platform.
+func (s *QueueService) syncPins(st *store.Store) error {
+	for _, pf := range []domain.Platform{domain.PlatformTwitch, domain.PlatformKick} {
+		if err := discovery.ApplyPinRules(st, pf, log.Logger); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// queueEntry loads one queue item plus its campaign and drop (nil when the
+// campaign or drop is no longer stored).
+func queueEntry(st *store.Store, dropID string) (domain.QueueItem, *domain.Campaign, *domain.Drop, error) {
+	items, err := st.GetQueue()
+	if err != nil {
+		return domain.QueueItem{}, nil, nil, err
+	}
+	for _, it := range items {
+		if it.DropID != dropID {
+			continue
+		}
+		c, err := st.GetCampaign(it.CampaignID)
+		if err != nil || c == nil {
+			return it, nil, nil, nil
+		}
+		for i := range c.Drops {
+			if c.Drops[i].ID == dropID {
+				return it, c, &c.Drops[i], nil
+			}
+		}
+		return it, c, nil, nil
+	}
+	return domain.QueueItem{}, nil, nil, fmt.Errorf("drop %q is not in the queue", dropID)
 }
 
 func (s *QueueService) SetOrder(profile string, dropIDs []string) error {

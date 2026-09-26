@@ -572,3 +572,27 @@ func TestUpdateValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestPreferChannelSpecificDefault(t *testing.T) {
+	cfg, err := parse([]byte("theme: dark\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.PreferChannelSpecific() {
+		t.Fatal("prefer_channel_specific should default to true when omitted")
+	}
+	cfg, err = parse([]byte("queue:\n  prefer_channel_specific: false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PreferChannelSpecific() {
+		t.Fatal("an explicit prefer_channel_specific: false must stick")
+	}
+	cfg, err = parse([]byte(StarterConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.PreferChannelSpecific() || cfg.Queue.PreferChannelSpecific == nil {
+		t.Fatal("the starter config should set prefer_channel_specific: true explicitly")
+	}
+}

@@ -43,6 +43,11 @@ type QueueItemDTO struct {
 	// "Watch anyway" toggle when Owned is set.
 	Owned      bool `json:"owned"`
 	ForceWatch bool `json:"forceWatch"`
+	// Pin is the focus rank (0 = not pinned, 1 = selected first). Alongside
+	// marks an any-channel drop that an eligible channel-specific drop of the
+	// same game and platform also credits (ranked after those drops).
+	Pin       int  `json:"pin"`
+	Alongside bool `json:"alongside"`
 }
 
 type ClaimDTO struct {
@@ -113,6 +118,9 @@ type ConfigDTO struct {
 	StoredEnabled      bool     `json:"storedEnabled"`
 	LogLevel           string   `json:"logLevel"`
 	CaptureGQLBodies   bool     `json:"captureGqlBodies"`
+	// PreferChannelSpecific is read-only here (config file only; Save ignores
+	// it): the Queue view uses it to describe the selection order accurately.
+	PreferChannelSpecific bool `json:"preferChannelSpecific"`
 
 	// Updates pane. Pointers so a partial POST that omits them (an older
 	// client, a scripted call) leaves the update block untouched instead of

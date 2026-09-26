@@ -56,4 +56,10 @@ type QueueItem struct {
 	// It bypasses ONLY the Owned gate - a genuinely claimed or complete drop is
 	// still excluded - and the reactive no-credit give-up still bounds the grind.
 	ForceWatch bool
+
+	// Pin is the user's focus rank: 0 = not pinned, 1..n = pinned with rank 1
+	// selected first. Pinned drops outrank game order, the channel-specific
+	// preference, the priority mode, and queue position. Like ForceWatch it is
+	// user-set and survives a re-upsert; see store.SetPin.
+	Pin int
 }

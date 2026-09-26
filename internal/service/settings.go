@@ -226,6 +226,8 @@ func toConfigDTO(c *config.Config) ConfigDTO {
 		LogLevel:           c.Logging.Level,
 		CaptureGQLBodies:   c.Logging.CaptureGQLBodies,
 
+		PreferChannelSpecific: c.PreferChannelSpecific(),
+
 		UpdateEnabled:       ptr(c.UpdateEnabled()),
 		UpdateAutoInstall:   ptr(c.UpdateAutoInstall()),
 		UpdateShowChangelog: ptr(c.UpdateShowChangelog()),

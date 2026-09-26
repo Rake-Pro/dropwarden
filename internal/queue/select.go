@@ -2,6 +2,7 @@ package queue
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/domain"
@@ -12,6 +13,13 @@ import (
 type Candidate struct {
 	Drop     domain.Drop
 	Campaign domain.Campaign
+
+	// Ranking inputs, carried for logging: the item's pin rank (0 = not
+	// pinned), the game's rank in the games list, and whether the drop credits
+	// alongside a channel-specific drop of the same game (see Alongside).
+	Pin       int
+	GameRank  int
+	Alongside bool
 }
 
 // findDrop looks up a drop by id within a campaign.
@@ -131,54 +139,170 @@ func eligibleNow(item domain.QueueItem, campaigns map[string]domain.Campaign, pr
 	return campaign, drop, true
 }
 
-// EligibleCandidates returns every currently-eligible drop, ordered according
-// to mode (highest priority first). The watcher uses this to fall through to the
-// next available drop when the top one has no live channel.
-func EligibleCandidates(items []domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, mode domain.PriorityMode, skipLink bool, now time.Time) []Candidate {
+// Ordering configures how eligible drops are ranked. The sort keys, in order:
+//
+//  0. Pin rank ascending: pinned (focus) drops first, rank 1 before rank 2.
+//  1. Game rank: the index of the campaign's game in Games (case-insensitive,
+//     trimmed); games not in the list sort after every listed game.
+//  2. When PreferChannelSpecific is set, drops that credit alongside a
+//     channel-specific drop of the same game and platform (see Alongside)
+//     sort after the rest, so within a game the ACL campaigns' drops come
+//     before the any-channel ones: watching an allowlisted streamer credits
+//     the any-channel drops too, so those should not take a slot of their own
+//     while ACL drops of that game are still eligible. Selection falls through
+//     past drops with no live channel, so the any-channel drops are still
+//     watched when no allowlisted streamer of the game is live.
+//  3. Mode (the PriorityMode) as the final tiebreaker, then input order.
+type Ordering struct {
+	Mode                  domain.PriorityMode
+	Games                 []string
+	PreferChannelSpecific bool
+}
+
+// GameRank returns the priority rank of a game name within games: its index
+// (case-insensitive, trimmed), or len(games) when it is not listed.
+func GameRank(games []string, name string) int {
+	n := strings.ToLower(strings.TrimSpace(name))
+	for i, g := range games {
+		if strings.ToLower(strings.TrimSpace(g)) == n {
+			return i
+		}
+	}
+	return len(games)
+}
+
+// groupKey identifies "the same game on the same platform" for the alongside
+// rule: the normalized game name, falling back to the game id.
+type groupKey struct {
+	platform domain.Platform
+	game     string
+}
+
+func gameGroup(pf domain.Platform, c domain.Campaign) groupKey {
+	g := strings.ToLower(strings.TrimSpace(c.GameName))
+	if g == "" {
+		g = "id:" + c.GameID
+	}
+	return groupKey{platform: pf.OrTwitch(), game: g}
+}
+
+// Alongside reports, per drop id, which currently-eligible queued drops are any-channel AND share
+// their game and platform with at least one currently-eligible channel-specific
+// (ACL) drop in items. Such a drop is credited by watching that ACL drop's
+// streamer, so Ordering (with PreferChannelSpecific) ranks it after the ACL
+// drops and the UI marks it "credits alongside channel drops".
+func Alongside(items []domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, skipLink bool, now time.Time) map[string]bool {
+	acl := map[groupKey]bool{}
+	for _, it := range items {
+		if c, _, ok := eligibleNow(it, campaigns, progress, claimed, skipLink, now); ok && !c.AnyChannel() {
+			acl[gameGroup(it.Platform, c)] = true
+		}
+	}
+	out := map[string]bool{}
+	if len(acl) == 0 {
+		return out
+	}
+	for _, it := range items {
+		// Only eligible any-channel drops: a completed/owned one waits on
+		// nothing, so the UI must not badge it.
+		if c, _, ok := eligibleNow(it, campaigns, progress, claimed, skipLink, now); ok && c.AnyChannel() && acl[gameGroup(it.Platform, c)] {
+			out[it.DropID] = true
+		}
+	}
+	return out
+}
+
+// pinLess orders pinned before unpinned, then by ascending rank. ok=false
+// means the two tie on this key.
+func pinLess(a, b int) (less, ok bool) {
+	switch {
+	case a == b:
+		return false, false
+	case a == 0:
+		return false, true
+	case b == 0:
+		return true, true
+	}
+	return a < b, true
+}
+
+// modeLess applies the PriorityMode key. ok=false means a tie on this key.
+func modeLess(mode domain.PriorityMode, a, b Candidate, pa, pb int, progress map[string]domain.Progress) (less, ok bool) {
+	switch mode {
+	case domain.PriorityEndingSoonest:
+		aZero, bZero := a.Campaign.EndAt.IsZero(), b.Campaign.EndAt.IsZero()
+		if aZero != bZero {
+			return bZero, true // zero EndAt sorts last, so a before b when b is zero
+		}
+		if !aZero && !a.Campaign.EndAt.Equal(b.Campaign.EndAt) {
+			return a.Campaign.EndAt.Before(b.Campaign.EndAt), true
+		}
+	case domain.PriorityClosestToComplete:
+		ra, rb := remainingMinutes(a.Drop, progress), remainingMinutes(b.Drop, progress)
+		if ra != rb {
+			return ra < rb, true
+		}
+	case domain.PriorityShortestFirst:
+		if a.Drop.RequiredMinutes != b.Drop.RequiredMinutes {
+			return a.Drop.RequiredMinutes < b.Drop.RequiredMinutes, true
+		}
+	default: // domain.PriorityTopDown and anything unrecognized
+		if pa != pb {
+			return pa < pb, true
+		}
+	}
+	return false, false
+}
+
+// EligibleCandidates returns every currently-eligible drop, ordered per ord
+// (highest priority first; see Ordering for the keys). The watcher uses this
+// to fall through to the next available drop when the top one has no live
+// channel.
+func EligibleCandidates(items []domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, ord Ordering, skipLink bool, now time.Time) []Candidate {
 	type entry struct {
-		item     domain.QueueItem
-		campaign domain.Campaign
-		drop     domain.Drop
+		cand     Candidate
+		position int
 		origIdx  int
 	}
 
 	var survivors []entry
+	var eligibleItems []domain.QueueItem
 	for i, item := range items {
 		campaign, drop, ok := eligibleNow(item, campaigns, progress, claimed, skipLink, now)
 		if !ok {
 			continue
 		}
-		survivors = append(survivors, entry{item: item, campaign: campaign, drop: drop, origIdx: i})
+		eligibleItems = append(eligibleItems, item)
+		survivors = append(survivors, entry{
+			cand: Candidate{
+				Drop: drop, Campaign: campaign, Pin: item.Pin,
+				GameRank: GameRank(ord.Games, campaign.GameName),
+			},
+			position: item.Position,
+			origIdx:  i,
+		})
 	}
 	if len(survivors) == 0 {
 		return nil
 	}
+	alongside := Alongside(eligibleItems, campaigns, progress, claimed, skipLink, now)
+	for i := range survivors {
+		survivors[i].cand.Alongside = alongside[survivors[i].cand.Drop.ID]
+	}
 
 	less := func(i, j int) bool {
 		a, b := survivors[i], survivors[j]
-		switch mode {
-		case domain.PriorityEndingSoonest:
-			aZero, bZero := a.campaign.EndAt.IsZero(), b.campaign.EndAt.IsZero()
-			if aZero != bZero {
-				return bZero // zero EndAt sorts last, so a before b when b is zero
-			}
-			if !aZero && !bZero && !a.campaign.EndAt.Equal(b.campaign.EndAt) {
-				return a.campaign.EndAt.Before(b.campaign.EndAt)
-			}
-		case domain.PriorityClosestToComplete:
-			ra := remainingMinutes(a.drop, progress)
-			rb := remainingMinutes(b.drop, progress)
-			if ra != rb {
-				return ra < rb
-			}
-		case domain.PriorityShortestFirst:
-			if a.drop.RequiredMinutes != b.drop.RequiredMinutes {
-				return a.drop.RequiredMinutes < b.drop.RequiredMinutes
-			}
-		default: // domain.PriorityTopDown and anything unrecognized
-			if a.item.Position != b.item.Position {
-				return a.item.Position < b.item.Position
-			}
+		if l, ok := pinLess(a.cand.Pin, b.cand.Pin); ok {
+			return l
+		}
+		if a.cand.GameRank != b.cand.GameRank {
+			return a.cand.GameRank < b.cand.GameRank
+		}
+		if ord.PreferChannelSpecific && a.cand.Alongside != b.cand.Alongside {
+			return b.cand.Alongside
+		}
+		if l, ok := modeLess(ord.Mode, a.cand, b.cand, a.position, b.position, progress); ok {
+			return l
 		}
 		return a.origIdx < b.origIdx
 	}
@@ -186,15 +310,15 @@ func EligibleCandidates(items []domain.QueueItem, campaigns map[string]domain.Ca
 
 	out := make([]Candidate, len(survivors))
 	for i, s := range survivors {
-		out[i] = Candidate{Drop: s.drop, Campaign: s.campaign}
+		out[i] = s.cand
 	}
 	return out
 }
 
 // NextDrop returns the single highest-priority eligible drop, or (nil, nil) when
 // nothing is currently eligible.
-func NextDrop(items []domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, mode domain.PriorityMode, skipLink bool, now time.Time) (*Candidate, error) {
-	cands := EligibleCandidates(items, campaigns, progress, claimed, mode, skipLink, now)
+func NextDrop(items []domain.QueueItem, campaigns map[string]domain.Campaign, progress map[string]domain.Progress, claimed map[string]bool, ord Ordering, skipLink bool, now time.Time) (*Candidate, error) {
+	cands := EligibleCandidates(items, campaigns, progress, claimed, ord, skipLink, now)
 	if len(cands) == 0 {
 		return nil, nil
 	}

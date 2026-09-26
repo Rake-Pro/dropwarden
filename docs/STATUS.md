@@ -4,6 +4,14 @@ Snapshot for resuming after a context clear. Repo: Rake-Pro/dropwarden (private)
 branch main. This file is the "where are we" note; deeper design is in README.md,
 NOTES-twitch.md, NOTES-wails.md.
 
+## 2026-09-26 - v0.1.3 queue pins + game order (uncommitted working tree)
+
+- Selection keys: pin rank, game rank (`games` order), alongside (any-channel
+  drop with an eligible same-game ACL drop, gated by
+  `queue.prefer_channel_specific`), then priority mode. Migrations 27-28
+  (`queue.pin`, `drop_pins`); queue row CSS rebuilt as a fixed six-cell grid.
+  Not yet verified in the real GUI.
+
 ## 2026-09-26 - v0.1.2 always_on_bottom (uncommitted working tree)
 
 - `browser.window.always_on_bottom` now real on Windows (HWND_BOTTOM via

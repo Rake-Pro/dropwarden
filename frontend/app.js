@@ -428,17 +428,133 @@ async function renderDashboard() {
   v.append(grid);
 }
 
+// Priority-mode labels for the Queue header's order description.
+const PRIO_LABEL = {
+  top_down: 'queue order',
+  ending_soonest: 'ending soonest',
+  closest_to_complete: 'closest to complete',
+  shortest_first: 'shortest first',
+};
+
+// queueOrderText describes the selection sort keys in order (queue.Ordering
+// in internal/queue/select.go).
+function queueOrderText(mode) {
+  const chan = !cfg || cfg.preferChannelSpecific !== false ? ', channel-specific before any-channel' : '';
+  return `Pinned drops first, then games in your list order${chan}, then ${PRIO_LABEL[mode] || PRIO_LABEL.top_down}`;
+}
+
+function setQueueOrderText(mode) {
+  const t = document.querySelector('#qorder');
+  if (t) t.textContent = queueOrderText(mode);
+}
+
+// queueDisplayOrder lists pinned rows first (rank 1 on top), then the rest in
+// queue position order.
+function queueDisplayOrder(queue) {
+  const pinned = queue.filter(q => q.pin > 0).sort((a, b) => a.pin - b.pin);
+  return pinned.concat(queue.filter(q => !(q.pin > 0)));
+}
+
+// queueActionsHTML renders the fixed-width actions cell, right-aligned so the
+// star lines up on every row: "Watch anyway" (owned rewards only), the pin
+// rank arrows (pinned rows only), then the star with its rank.
+function queueActionsHTML(q, pinCount) {
+  const pin = q.pin > 0 ? q.pin : 0;
+  const fw = !!q.forceWatch;
+  // Owned can be stale on a drop earned in this instance (its own reward is in
+  // the earned inventory); such a row only needs a manual claim, never a rewatch.
+  const earned = q.status === 'claimed' || (q.requiredMinutes > 0 && q.currentMinutes >= q.requiredMinutes);
+  const force = q.owned && !earned
+    ? `<button class="btn btn-sm force${fw ? ' on' : ''}" type="button" aria-pressed="${fw}" title="Override the already-owned skip and watch this drop anyway (to test crediting)">${fw ? 'Watching anyway' : 'Watch anyway'}</button>`
+    : '';
+  const ranks = pin
+    ? `<button class="qbtn" type="button" data-dir="up" title="Move pin up"${pin <= 1 ? ' disabled' : ''}>&#9650;</button>` +
+      `<button class="qbtn" type="button" data-dir="down" title="Move pin down"${pin >= pinCount ? ' disabled' : ''}>&#9660;</button>`
+    : '';
+  const star = `<button class="qbtn star${pin ? ' on' : ''}" type="button" aria-pressed="${!!pin}" title="${pin ? 'Pinned rank ' + pin + ' - click to unpin' : 'Pin: watch this drop before everything else'}">${pin ? '&#9733;' + pin : '&#9734;'}</button>`;
+  return `<div class="qact">${force}${ranks}${star}</div>`;
+}
+
+// queueRowHTML builds one queue row. Every row has the same six grid cells
+// (grip, title, progress, actions, status, toggle), so it stays on one line
+// whichever action buttons are present.
+function queueRowHTML(q, multi, pinCount) {
+  const active = q.status === 'active';
+  const cls = 'qrow' + (active ? ' active' : '') + (q.pin > 0 ? ' pinned' : '');
+  const badge = q.alongside
+    ? '<span class="qbadge" title="An allowlisted streamer of this game also credits this any-channel drop, so it waits behind the channel-specific drops">credits alongside channel drops</span> '
+    : '';
+  const barCls = active ? (q.platform === 'kick' ? 'kick' : '') : 'blue';
+  const mins = q.requiredMinutes ? q.currentMinutes + ' / ' + q.requiredMinutes + ' min' : '&mdash;';
+  const status = esc(cap(q.status));
+  // Pinned rows are ordered by rank (arrows), not by drag; data-pos keeps each
+  // row's queue position so a drag of the unpinned rows leaves pinned ones in place.
+  return `<div class="${cls}" data-id="${esc(q.dropID)}" data-pos="${Number(q.position) || 0}" draggable="${q.pin > 0 ? 'false' : 'true'}">
+    <span class="grip" title="${q.pin > 0 ? 'pinned: use the arrows to change rank' : 'drag to reorder'}">&#8285;&#8285;</span>
+    <div class="qname"><div class="n">${multi ? pfBadge(q.platform) + ' ' : ''}${esc(q.dropName || q.dropID)}</div><div class="meta">${badge}${esc(q.game)}${q.reason ? ' &middot; ' + esc(q.reason) : ''}</div></div>
+    <div class="qmini"><div class="bar"><i class="${barCls}" style="width:${pct(q.currentMinutes, q.requiredMinutes)}%"></i></div><div class="mm mono">${mins}</div></div>
+    ${queueActionsHTML(q, pinCount)}
+    <div class="qstat"><span class="pill ${esc(q.status)}" title="${status}"><span class="d"></span><span class="t">${status}</span></span></div>
+    <div class="switch ${q.enabled ? 'on' : ''}" role="switch" aria-checked="${q.enabled}" tabindex="0"><i></i></div>
+  </div>`;
+}
+
+// wireForceButton flips the owned-skip override, repainting optimistically.
+function wireForceButton(btn, q, profile) {
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const on = btn.getAttribute('aria-pressed') !== 'true';
+    const paint = (v) => {
+      btn.setAttribute('aria-pressed', String(v));
+      btn.textContent = v ? 'Watching anyway' : 'Watch anyway';
+      btn.classList.toggle('on', v);
+    };
+    paint(on);
+    try { await api.setForceWatch(q.dropID, on, profile); }
+    catch (_) { paint(!on); }
+  });
+}
+
+// wirePinButtons hooks the star and the rank arrows; each action re-renders
+// the queue from fresh state since it can reorder several rows.
+function wirePinButtons(row, q, profile) {
+  row.querySelector('.star').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try { await api.setPin(q.dropID, !(q.pin > 0), profile); } catch (_) {}
+    renderQueue();
+  });
+  row.querySelectorAll('[data-dir]').forEach(b => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try { await api.setPinRank(q.dropID, b.dataset.dir, profile); } catch (_) {}
+    renderQueue();
+  }));
+}
+
+function wireEnableSwitch(row, q, profile) {
+  const sw = row.querySelector('.switch');
+  const flipSwitch = async () => {
+    const on = !sw.classList.contains('on');
+    sw.classList.toggle('on', on);
+    sw.setAttribute('aria-checked', String(on));
+    try { await api.setEnabled(q.dropID, on, profile); }
+    catch (_) { sw.classList.toggle('on', !on); sw.setAttribute('aria-checked', String(!on)); }
+  };
+  sw.addEventListener('click', flipSwitch);
+  sw.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flipSwitch(); } });
+}
+
 async function renderQueue() {
   const state = await api.state();
   const { profiles, profile, multiProfile } = pickProfile(state);
   const prof = profile || { name: '', platforms: [], queue: [] };
   const multi = isMulti(prof.platforms);
   // Only current, workable items belong here; claimed/expired live in History.
-  const queue = (prof.queue || []).filter(q => q.status !== 'claimed' && q.status !== 'expired');
+  const queue = queueDisplayOrder((prof.queue || []).filter(q => q.status !== 'claimed' && q.status !== 'expired'));
+  const pinCount = queue.filter(q => q.pin > 0).length;
   const v = $('#v-queue');
   v.innerHTML = '';
   v.append(el(`<div class="qhead">
-    <div><h2 class="title">Queue</h2><p class="sub" style="margin:0">Drag to reorder. ${multi ? 'One shared list — each platform works its own drops top to bottom.' : 'The watcher works top to bottom.'}</p></div>
+    <div><h2 class="title">Queue</h2><p class="sub" style="margin:0"><span id="qorder">${esc(queueOrderText(cfg && cfg.priorityMode))}</span>. Drag to reorder${multi ? '; one shared list, each platform works its own drops' : ''}.</p></div>
     <div style="display:flex;gap:8px;align-items:center;">
       <span style="color:var(--text-tertiary);font-size:11.5px">Priority</span>
       <select class="popup" id="prio">
@@ -455,53 +571,18 @@ async function renderQueue() {
     try {
       await api.setPriority(e.target.value);
       if (cfg) cfg.priorityMode = e.target.value; // else the next poll snaps the select back
+      setQueueOrderText(e.target.value);
     } catch (_) { if (cfg) e.target.value = cfg.priorityMode; }
   });
 
   const list = el(`<div class="card qlist"></div>`);
   if (!queue.length) list.append(el('<div class="empty">No drops queued yet. Run a discovery pass.</div>'));
   for (const q of queue) {
-    // "Watch anyway" overrides the already-owned skip for one drop (e.g. to test
-    // crediting). Shown only for owned drops; amber accent while forcing.
-    const fw = !!q.forceWatch;
-    const forceStyle = fw ? ' style="border-color:#e0a800;color:#e0a800"' : '';
-    const forceBtnHtml = q.owned
-      ? `<button class="btn btn-sm force" aria-pressed="${fw}" title="Override the already-owned skip and watch this drop anyway (to test crediting)"${forceStyle}>${fw ? 'Watching anyway' : 'Watch anyway'}</button>`
-      : '';
-    const row = el(`<div class="qrow ${q.status === 'active' ? 'active' : ''}" data-id="${esc(q.dropID)}" draggable="true">
-      <span class="grip" title="drag to reorder">⁝⁝</span>
-      <div class="qname"><div class="n">${multi ? pfBadge(q.platform) + ' ' : ''}${esc(q.dropName || q.dropID)}</div><div class="meta">${esc(q.game)}${q.reason ? ' · ' + esc(q.reason) : ''}</div></div>
-      <div class="qmini"><div class="bar"><i class="${q.status === 'active' ? (q.platform === 'kick' ? 'kick' : '') : 'blue'}" style="width:${pct(q.currentMinutes, q.requiredMinutes)}%"></i></div><div class="mm mono">${q.requiredMinutes ? q.currentMinutes + ' / ' + q.requiredMinutes + ' min' : '—'}</div></div>
-      ${forceBtnHtml}
-      <span class="pill ${esc(q.status)}"><span class="d"></span> ${esc(cap(q.status))}</span>
-      <div class="switch ${q.enabled ? 'on' : ''}" role="switch" aria-checked="${q.enabled}" tabindex="0"><i></i></div>
-    </div>`);
+    const row = el(queueRowHTML(q, multi, pinCount));
     const forceBtn = row.querySelector('.force');
-    if (forceBtn) {
-      forceBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const on = forceBtn.getAttribute('aria-pressed') !== 'true';
-        const paint = (v) => {
-          forceBtn.setAttribute('aria-pressed', String(v));
-          forceBtn.textContent = v ? 'Watching anyway' : 'Watch anyway';
-          forceBtn.style.borderColor = v ? '#e0a800' : '';
-          forceBtn.style.color = v ? '#e0a800' : '';
-        };
-        paint(on);
-        try { await api.setForceWatch(q.dropID, on, prof.name); }
-        catch (_) { paint(!on); }
-      });
-    }
-    const sw = row.querySelector('.switch');
-    const flipSwitch = async () => {
-      const on = !sw.classList.contains('on');
-      sw.classList.toggle('on', on);
-      sw.setAttribute('aria-checked', String(on));
-      try { await api.setEnabled(q.dropID, on, prof.name); }
-      catch (_) { sw.classList.toggle('on', !on); sw.setAttribute('aria-checked', String(!on)); }
-    };
-    sw.addEventListener('click', flipSwitch);
-    sw.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flipSwitch(); } });
+    if (forceBtn) wireForceButton(forceBtn, q, prof.name);
+    wirePinButtons(row, q, prof.name);
+    wireEnableSwitch(row, q, prof.name);
     list.append(row);
   }
   v.append(list);
@@ -531,7 +612,12 @@ function attachQueueDrag(list, profile) {
     });
     row.addEventListener('dragend', async () => {
       row.classList.remove('dragging');
-      const ids = [...list.querySelectorAll('.qrow')].map(r => r.dataset.id).filter(Boolean);
+      // Pinned rows are displayed first but keep their queue positions: the
+      // dragged order fills only the slots the unpinned rows held.
+      const rows = [...list.querySelectorAll('.qrow')];
+      const moved = rows.filter(r => !r.classList.contains('pinned'));
+      const slots = [...rows].sort((a, b) => (+a.dataset.pos) - (+b.dataset.pos));
+      const ids = slots.map(r => (r.classList.contains('pinned') ? r : moved.shift()).dataset.id).filter(Boolean);
       // dragRow clears only after the order is saved: it also gates the poll
       // re-render, which would otherwise snap the list back mid-save.
       try { await api.setOrder(ids, profile); } catch (_) {}
@@ -542,6 +628,7 @@ function attachQueueDrag(list, profile) {
         api.setPriority('top_down').catch(() => {});
         const sel = document.querySelector('#prio');
         if (sel) sel.value = 'top_down';
+        setQueueOrderText('top_down');
       }
     });
   });
@@ -707,7 +794,7 @@ function settingsPaneHTML() {
     default: return `
       <div class="group"><div class="caption">Games</div><div class="card">
         <div class="row"><div class="lab"><div class="l">Any game</div><div class="h">Queue drops for every game, ignoring the list below. Good for a quick test.</div></div><div class="ctl">${toggleHTML('anyGame', cfg.anyGame)}</div></div>
-        <div class="row stacked"><div class="lab"><div class="l">Tracked games</div><div class="h">Only campaigns for these games are queued, on every platform.</div></div>
+        <div class="row stacked"><div class="lab"><div class="l">Tracked games</div><div class="h">Only campaigns for these games are queued, on every platform. The order is the priority: games higher in the list are watched first (pinned drops still come first).</div></div>
           <div class="ctl" id="games-ctl"></div></div>
         <div class="row"><div class="lab"><div class="l">Auto-enqueue new campaigns</div><div class="h">Add newly discovered drops to the bottom of the queue.</div></div><div class="ctl">${toggleHTML('autoEnqueueNew', cfg.autoEnqueueNew)}</div></div>
         <div class="row"><div class="lab"><div class="l">Fall through to next available</div><div class="h">If the top drop has no live channel, watch the next available one and return to the top when its channel is live. Off = wait on the top drop.</div></div><div class="ctl">${toggleHTML('fallThrough', cfg.fallThrough)}</div></div>
@@ -781,16 +868,35 @@ function renderSettingsContent() {
   $('#discard', host).addEventListener('click', () => renderSettings());
 }
 
+// gameRowHTML renders one tracked game with its priority rank, up/down
+// buttons (disabled at the ends), and remove.
+function gameRowHTML(g, i, n) {
+  return `<div class="grow"><span class="grank mono">${i + 1}</span><span class="gname">${esc(g)}</span>` +
+    `<button class="qbtn" type="button" data-mv="${i}" data-step="-1" title="Higher priority"${i === 0 ? ' disabled' : ''}>&#9650;</button>` +
+    `<button class="qbtn" type="button" data-mv="${i}" data-step="1" title="Lower priority"${i === n - 1 ? ' disabled' : ''}>&#9660;</button>` +
+    `<button class="qbtn" type="button" data-rm="${i}" title="remove">&times;</button></div>`;
+}
+
+// moveGame swaps game i with its neighbor at i+step; saved with Save changes.
+function moveGame(i, step) {
+  const j = i + step;
+  if (j < 0 || j >= cfg.games.length) return;
+  [cfg.games[i], cfg.games[j]] = [cfg.games[j], cfg.games[i]];
+  renderGamesCtl();
+}
+
 function renderGamesCtl() {
   const gamesCtl = document.querySelector('#games-ctl');
   if (!gamesCtl) return;
   const disabled = cfg.anyGame;
   gamesCtl.style.opacity = disabled ? '0.45' : '1';
   gamesCtl.style.pointerEvents = disabled ? 'none' : 'auto';
-  const chips = (cfg.games || []).map((g, i) => `<span class="chip">${esc(g)} <span class="x" data-rm="${i}" style="cursor:pointer" title="remove">×</span></span>`).join('');
-  gamesCtl.innerHTML = `<div class="chips" style="justify-content:flex-start">${chips || '<span style="color:var(--text-tertiary);font-size:12px">no games — add one or turn on Any game</span>'}</div>
+  const games = cfg.games || [];
+  const rows = games.map((g, i) => gameRowHTML(g, i, games.length)).join('');
+  gamesCtl.innerHTML = `<div class="glist">${rows || '<span style="color:var(--text-tertiary);font-size:12px">no games - add one or turn on Any game</span>'}</div>
     <div style="display:flex;gap:8px;margin-top:8px"><input class="input" id="game-add" placeholder="Exact game name, e.g. Special Events" style="flex:1"><button class="btn" id="game-add-btn" type="button">Add</button></div>`;
   gamesCtl.querySelectorAll('[data-rm]').forEach(x => x.addEventListener('click', () => { cfg.games.splice(+x.dataset.rm, 1); renderGamesCtl(); }));
+  gamesCtl.querySelectorAll('[data-mv]').forEach(b => b.addEventListener('click', () => moveGame(+b.dataset.mv, +b.dataset.step)));
   const addInput = gamesCtl.querySelector('#game-add');
   const addGame = () => { const val = addInput.value.trim(); if (val && !cfg.games.includes(val)) cfg.games.push(val); renderGamesCtl(); if (document.querySelector('#game-add')) document.querySelector('#game-add').focus(); };
   gamesCtl.querySelector('#game-add-btn').addEventListener('click', addGame);

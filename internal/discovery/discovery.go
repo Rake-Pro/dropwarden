@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -202,6 +203,20 @@ func (d *Discoverer) markOwnedDrops(owned map[string]bool) int {
 			if err != nil {
 				continue
 			}
+			// A drop earned in THIS instance (complete, claimable or claimed)
+			// puts its own reward into the earned inventory; that is not a prior
+			// instance's copy, so it must not be flagged owned (it would read
+			// as "Watch anyway" on a row that only needs a manual claim).
+			if earnedHere(p) {
+				if p.Owned { // heal a flag set by an older build
+					p.Owned = false
+					_ = d.store.SaveProgress(*p)
+				}
+				continue
+			}
+			if claimed, err := d.store.HasClaim(drop.ID); err == nil && claimed {
+				continue
+			}
 			if p == nil {
 				p = &domain.Progress{DropID: drop.ID, RequiredMinutes: drop.RequiredMinutes, Source: domain.SourceInventory}
 			} else if p.Owned {
@@ -222,6 +237,12 @@ func (d *Discoverer) markOwnedDrops(owned map[string]bool) int {
 		d.logger.Info().Int("owned_skipped", n).Msg("discovery: flagged already-owned rewards")
 	}
 	return n
+}
+
+// earnedHere reports whether a drop's own progress shows it earned in the
+// current campaign instance: watch time met, claimable, or claimed.
+func earnedHere(p *domain.Progress) bool {
+	return p != nil && (p.Complete() || p.Claimable || p.ClaimedAt != nil)
 }
 
 // rewardOwned reports whether a drop's reward is already held: any of its
@@ -409,9 +430,21 @@ func ReconcileQueue(st *store.Store, cfg *config.Config, pf domain.Platform, log
 			Msg("discovery: pruned stale/off-filter queue items")
 	}
 
-	if !cfg.Queue.AutoEnqueueNew {
-		return 0, nil
+	added := 0
+	if cfg.Queue.AutoEnqueueNew {
+		if added, err = enqueueNew(st, cfg, desired, queued); err != nil {
+			return added, err
+		}
 	}
+	if err := ApplyPinRules(st, pf, logger); err != nil {
+		return added, err
+	}
+	return added, nil
+}
+
+// enqueueNew appends every desired drop not yet queued to the bottom of the
+// queue, returning how many were added.
+func enqueueNew(st *store.Store, cfg *config.Config, desired map[string]domain.Campaign, queued map[string]bool) (int, error) {
 	pos, err := st.NextPosition()
 	if err != nil {
 		return 0, err
@@ -434,6 +467,145 @@ func ReconcileQueue(st *store.Store, cfg *config.Config, pf domain.Platform, log
 		added++
 	}
 	return added, nil
+}
+
+// PinKey returns the pin-rule identity of a drop: the normalized game name and
+// a reward key built from the drop's normalized benefit names (sorted, joined
+// by newlines). Reward and drop IDs are campaign-instance-scoped, so names are
+// the only stable cross-instance key (the same rule the owned-reward skip
+// uses). A drop with no benefits falls back to its normalized drop name. An
+// empty reward key means the drop cannot carry a rule.
+func PinKey(c domain.Campaign, d domain.Drop) (game, reward string) {
+	game = gql.NormalizeRewardName(c.GameName)
+	var names []string
+	for _, b := range d.Benefits {
+		if n := gql.NormalizeRewardName(b.Name); n != "" {
+			names = append(names, n)
+		}
+	}
+	if len(names) == 0 {
+		if n := gql.NormalizeRewardName(d.Name); n != "" {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return game, strings.Join(names, "\n")
+}
+
+// ApplyPinRules re-pins ONE platform's unpinned queue items whose reward
+// matches a stored pin rule (a later campaign instance re-offering a starred
+// reward under fresh IDs), then compacts pin ranks 1..n and writes the
+// resulting ranks back to the rules so the next re-application lands in the
+// same place. Items of other platforms are untouched.
+func ApplyPinRules(st *store.Store, pf domain.Platform, logger zerolog.Logger) error {
+	rules, err := st.ListPinRules(pf)
+	if err != nil {
+		return err
+	}
+	items, err := st.GetQueue()
+	if err != nil {
+		return err
+	}
+	if len(rules) == 0 && !pinsNeedCompact(items) {
+		return nil
+	}
+	campaigns, err := st.ListCampaigns()
+	if err != nil {
+		return err
+	}
+	cmap := make(map[string]domain.Campaign, len(campaigns))
+	for _, c := range campaigns {
+		cmap[c.ID] = c
+	}
+	ruleRank := make(map[[2]string]int, len(rules))
+	for _, r := range rules {
+		ruleRank[[2]string{r.GameName, r.RewardKey}] = r.Rank
+	}
+	keys := map[string][2]string{} // drop id -> rule key, for this platform's items
+	for _, it := range items {
+		if it.Platform.OrTwitch() != pf.OrTwitch() {
+			continue
+		}
+		c, ok := cmap[it.CampaignID]
+		if !ok {
+			continue
+		}
+		d, ok := findDrop(c, it.DropID)
+		if !ok {
+			continue
+		}
+		game, reward := PinKey(c, d)
+		if reward == "" {
+			continue
+		}
+		k := [2]string{game, reward}
+		keys[it.DropID] = k
+		rank, ok := ruleRank[k]
+		if !ok || it.Pin > 0 {
+			continue
+		}
+		if rank <= 0 {
+			rank = 1
+		}
+		if err := st.SetPin(it.DropID, rank); err != nil {
+			return err
+		}
+		logger.Info().Str("drop", d.Name).Str("campaign", c.Name).Str("game", c.GameName).Int("rank", rank).
+			Msg("discovery: pin rule re-applied")
+	}
+	if err := st.CompactPins(); err != nil {
+		return err
+	}
+	return syncPinRuleRanks(st, pf, keys, ruleRank)
+}
+
+// syncPinRuleRanks writes each pinned item's compacted rank back to its rule.
+func syncPinRuleRanks(st *store.Store, pf domain.Platform, keys map[string][2]string, ruleRank map[[2]string]int) error {
+	items, err := st.GetQueue()
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		k, ok := keys[it.DropID]
+		if !ok || it.Pin == 0 {
+			continue
+		}
+		if rank, has := ruleRank[k]; !has || rank == it.Pin {
+			continue
+		}
+		if err := st.UpsertPinRule(store.PinRule{Platform: pf, GameName: k[0], RewardKey: k[1], Rank: it.Pin}); err != nil {
+			return err
+		}
+		ruleRank[k] = it.Pin
+	}
+	return nil
+}
+
+// pinsNeedCompact reports whether the queue's pin ranks have gaps or ties.
+func pinsNeedCompact(items []domain.QueueItem) bool {
+	var ranks []int
+	for _, it := range items {
+		if it.Pin > 0 {
+			ranks = append(ranks, it.Pin)
+		}
+	}
+	sort.Ints(ranks)
+	for i, r := range ranks {
+		if r != i+1 {
+			return true
+		}
+	}
+	return false
+}
+
+// findDrop looks up a drop by id within a campaign.
+func findDrop(c domain.Campaign, dropID string) (domain.Drop, bool) {
+	for _, d := range c.Drops {
+		if d.ID == dropID {
+			return d, true
+		}
+	}
+	return domain.Drop{}, false
 }
 
 // dumpDebug writes a raw GraphQL body to <approot>/debug/<name> when the

@@ -151,7 +151,27 @@ body {
 .qhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
 .popup { appearance: none; background-color: var(--bg-control); background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'><path d='M1 1l4 4 4-4' stroke='%2398989d' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>"); background-repeat: no-repeat; background-position: right 10px center; border: 1px solid var(--hairline); color: var(--text-primary); font: inherit; font-size: 12.5px; padding: 7px 30px 7px 11px; border-radius: var(--radius-ctl); }
 .qlist { display: flex; flex-direction: column; }
-.qrow { display: grid; grid-template-columns: 22px minmax(0, 1fr) 150px 120px 44px; align-items: center; gap: 12px; padding: 12px 14px; border-top: 1px solid var(--hairline-card); }
+/* Six fixed cells per row (grip, title, progress, actions, status, toggle).
+   Only the title track flexes, and it is minmax(0, 1fr): a bare 1fr has a
+   min-content minimum, so a long drop name would push the status pill off the
+   right edge instead of truncating. */
+.qrow { display: grid; grid-template-columns: 22px minmax(0, 1fr) 120px 212px 124px 40px; align-items: center; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--hairline-card); }
+.qrow.pinned { box-shadow: inset 3px 0 0 var(--accent); }
+.qact { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.qact .force { flex: none; }
+.force.on { border-color: #e0a800; color: #e0a800; }
+.qstat { min-width: 0; display: flex; justify-content: flex-end; }
+.qstat .pill { max-width: 100%; overflow: hidden; }
+.qstat .pill .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.qbtn { flex: none; min-width: 24px; height: 24px; padding: 0 5px; border-radius: 6px; border: 1px solid var(--hairline); background: var(--bg-control); color: var(--text-secondary); font: inherit; font-size: 11px; line-height: 1; cursor: pointer; }
+.qbtn:disabled { opacity: .35; cursor: default; }
+.qbtn.star { min-width: 34px; font-size: 13px; }
+.qbtn.star.on { color: #e0a800; border-color: #e0a800; font-weight: 700; }
+.qbadge { display: inline-block; font-size: 10.5px; line-height: 16px; padding: 0 6px; border-radius: 999px; background: rgba(127,127,127,0.16); color: var(--text-secondary); }
+.glist { display: flex; flex-direction: column; gap: 4px; }
+.grow { display: grid; grid-template-columns: 22px minmax(0, 1fr) 24px 24px 24px; gap: 6px; align-items: center; padding: 4px 8px; border: 1px solid var(--hairline); border-radius: var(--radius-ctl); background: var(--bg-control); font-size: 12.5px; }
+.grow .grank { color: var(--text-tertiary); font-size: 11px; text-align: right; }
+.grow .gname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qrow:first-child { border-top: 0; }
 .qrow.active { background: var(--ok-dim); border-radius: 8px; }
 .grip { color: var(--text-tertiary); cursor: grab; font-size: 15px; line-height: 1; }
@@ -227,12 +247,13 @@ body {
 /* Queue drag reorder. */
 .qrow[draggable="true"] { cursor: default; }
 .qrow .grip { cursor: grab; }
+.qrow.pinned .grip { cursor: default; opacity: .35; }
 .qrow.dragging { opacity: 0.5; background: var(--bg-elev); border-radius: 8px; }
 .qlist { position: relative; }
 
 /* Narrow window: drop the progress column so the queue row never overflows. */
 @media (max-width: 560px) {
-  .qrow { grid-template-columns: 22px 1fr auto 44px; }
+  .qrow { grid-template-columns: 22px minmax(0, 1fr) auto 104px 40px; }
   .qrow .qmini { display: none; }
 }
 .input.mono { max-width: 100%; }

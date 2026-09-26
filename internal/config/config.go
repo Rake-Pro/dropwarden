@@ -97,7 +97,16 @@ type KickConfig struct {
 type QueueConfig struct {
 	PriorityMode   string `yaml:"priority_mode"` // top_down|ending_soonest|closest_to_complete|shortest_first
 	AutoEnqueueNew bool   `yaml:"auto_enqueue_new"`
+
+	// PreferChannelSpecific ranks, within one game, the drops of campaigns with
+	// a channel allowlist ahead of any-channel drops that the same streamers
+	// also credit. nil => true; read through Config.PreferChannelSpecific.
+	PreferChannelSpecific *bool `yaml:"prefer_channel_specific,omitempty"`
 }
+
+// PreferChannelSpecific reports whether selection ranks channel-specific
+// drops of a game ahead of that game's any-channel drops (default true).
+func (c *Config) PreferChannelSpecific() bool { return boolOr(c.Queue.PreferChannelSpecific, true) }
 
 type DiscoveryConfig struct {
 	Interval        time.Duration `yaml:"interval"`

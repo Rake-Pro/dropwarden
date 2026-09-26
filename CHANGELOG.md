@@ -4,6 +4,38 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.1.3 - 2026-09-26
+
+### Added
+- Pinned drops: star a drop in the Queue view to watch it before everything
+  else; pinned rows form a ranked set at the top (up/down arrows re-rank,
+  subtle left accent). Starring also stores a pin rule (new `drop_pins` table,
+  keyed by platform, game, and normalized reward name) so a later campaign
+  instance re-offering the same reward is re-pinned automatically by
+  discovery. `POST /api/queue/pin`, `POST /api/queue/pin-rank`; queue items in
+  `/api/state` carry `pin` and `alongside`.
+- Game-order priority: selection ranks drops by the position of their game in
+  the `games` list (unlisted games last), right after pins. Settings > Games
+  lists the games with up/down buttons.
+- Channel-specific first: within a game, drops of allowlisted campaigns are
+  selected before any-channel drops that the same streamers also credit
+  (`queue.prefer_channel_specific`, default true). Such any-channel rows show
+  a "credits alongside channel drops" badge; they are still watched when no
+  allowlisted streamer of the game is live.
+- The selecting log line carries the top candidate's pin, game rank, and
+  alongside flag; the fell-through line carries the chosen drop's.
+
+### Fixed
+- Queue rows no longer overflow: every row is one fixed six-cell grid, so the
+  status pill is never clipped and the enable toggle never wraps, whichever
+  buttons are present; long names and statuses truncate.
+- "Watch anyway" renders only on rows whose reward is already owned, and
+  never on a row that is complete or claimed.
+- Discovery no longer flags a drop as already owned when the matching earned
+  reward is the drop's own, earned in the current campaign instance (complete,
+  claimable, or claimed); a stale flag from an older build is cleared. Such a
+  row showed "completed - claim it manually" with a "Watch anyway" button.
+
 ## v0.1.2 - 2026-09-26
 
 ### Added

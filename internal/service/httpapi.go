@@ -204,6 +204,37 @@ func NewHTTPHandler(b *Backend) http.Handler {
 		}
 		writeJSON(w, map[string]any{"ok": true})
 	})
+	// Pins ("focus"): star/unstar a drop, and move a pinned drop one rank.
+	mux.HandleFunc("POST /api/queue/pin", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Profile string `json:"profile"`
+			DropID  string `json:"dropID"`
+			Pinned  bool   `json:"pinned"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if err := queue.SetPin(body.Profile, body.DropID, body.Pinned); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+	mux.HandleFunc("POST /api/queue/pin-rank", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Profile   string `json:"profile"`
+			DropID    string `json:"dropID"`
+			Direction string `json:"direction"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if err := queue.MovePin(body.Profile, body.DropID, body.Direction); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
 	// Priority mode is a root setting shared by every profile.
 	mux.HandleFunc("POST /api/queue/priority", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

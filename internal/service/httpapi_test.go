@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rake-pro/dropwarden/internal/browser"
 	"github.com/rake-pro/dropwarden/internal/config"
@@ -524,5 +525,92 @@ func TestHTTPLoginCheck(t *testing.T) {
 	// a logged-in window parked with no watcher must not linger open).
 	if got := rec.startedList(); len(got) != 2 || got[1] != "main/twitch" {
 		t.Fatalf("a confirmed login must trigger StartWatching, got %v", got)
+	}
+}
+
+func TestHTTPQueuePinAndRank(t *testing.T) {
+	b := testBackend(t)
+	st := b.FirstProfile().Store
+	end := time.Now().Add(48 * time.Hour)
+	acl := domain.Campaign{ID: "acl", GameName: "Rust", Status: domain.StatusActive, EndAt: end,
+		AllowedChannels: []domain.Channel{{Login: "streamer1"}},
+		Drops: []domain.Drop{{ID: "d-acl", CampaignID: "acl", Name: "ACL", RequiredMinutes: 60,
+			Benefits: []domain.Benefit{{Name: "Hazmat"}}}}}
+	gen := domain.Campaign{ID: "gen", GameName: "Rust", Status: domain.StatusActive, EndAt: end,
+		Drops: []domain.Drop{
+			{ID: "d-g1", CampaignID: "gen", Name: "G1", RequiredMinutes: 30, Benefits: []domain.Benefit{{Name: "Door"}}},
+			{ID: "d-g2", CampaignID: "gen", Name: "G2", RequiredMinutes: 90, Benefits: []domain.Benefit{{Name: "Box"}}},
+		}}
+	for _, c := range []domain.Campaign{acl, gen} {
+		if err := st.UpsertCampaign(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, id := range []string{"d-acl", "d-g1", "d-g2"} {
+		camp := "gen"
+		if id == "d-acl" {
+			camp = "acl"
+		}
+		st.UpsertQueueItem(domain.QueueItem{DropID: id, CampaignID: camp, Position: i, Enabled: true, Status: domain.ItemPending})
+	}
+	h := NewHTTPHandler(b)
+	post := func(path, body string, want int) {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, jsonReq("POST", path, body))
+		if rr.Code != want {
+			t.Fatalf("%s %s: code=%d want %d body=%s", path, body, rr.Code, want, rr.Body.String())
+		}
+	}
+	pinsOf := func() map[string]QueueItemDTO {
+		out := map[string]QueueItemDTO{}
+		for _, q := range getState(t, h).Profiles[0].Queue {
+			out[q.DropID] = q
+		}
+		return out
+	}
+
+	// Alongside: the any-channel Rust drops share the game with an eligible ACL drop.
+	q := pinsOf()
+	if !q["d-g1"].Alongside || !q["d-g2"].Alongside || q["d-acl"].Alongside {
+		t.Fatalf("alongside flags wrong: %+v", q)
+	}
+
+	// Star g2 then g1 (the JSON key casing dropId is accepted too).
+	post("/api/queue/pin", `{"profile":"main","dropId":"d-g2","pinned":true}`, 200)
+	post("/api/queue/pin", `{"profile":"main","dropID":"d-g1","pinned":true}`, 200)
+	q = pinsOf()
+	if q["d-g2"].Pin != 1 || q["d-g1"].Pin != 2 || q["d-acl"].Pin != 0 {
+		t.Fatalf("pins after star: g2=%d g1=%d acl=%d", q["d-g2"].Pin, q["d-g1"].Pin, q["d-acl"].Pin)
+	}
+	if rules, _ := st.ListPinRules(domain.PlatformTwitch); len(rules) != 2 {
+		t.Fatalf("expected 2 pin rules, got %+v", rules)
+	}
+
+	// Move g1 up: it becomes rank 1. Moving rank 1 up again is a no-op.
+	post("/api/queue/pin-rank", `{"profile":"main","dropID":"d-g1","direction":"up"}`, 200)
+	post("/api/queue/pin-rank", `{"profile":"main","dropID":"d-g1","direction":"up"}`, 200)
+	q = pinsOf()
+	if q["d-g1"].Pin != 1 || q["d-g2"].Pin != 2 {
+		t.Fatalf("pins after move up: g1=%d g2=%d", q["d-g1"].Pin, q["d-g2"].Pin)
+	}
+	rules, _ := st.ListPinRules(domain.PlatformTwitch)
+	if len(rules) != 2 || rules[0].RewardKey != "door" || rules[0].Rank != 1 {
+		t.Fatalf("rule ranks should follow the move: %+v", rules)
+	}
+
+	// Bad direction, unpinned drop, unknown drop -> 400.
+	post("/api/queue/pin-rank", `{"profile":"main","dropID":"d-g1","direction":"sideways"}`, http.StatusBadRequest)
+	post("/api/queue/pin-rank", `{"profile":"main","dropID":"d-acl","direction":"up"}`, http.StatusBadRequest)
+	post("/api/queue/pin", `{"profile":"main","dropID":"nope","pinned":true}`, http.StatusBadRequest)
+
+	// Unstar rank 1: the rule goes and g2 closes the gap to rank 1.
+	post("/api/queue/pin", `{"profile":"main","dropID":"d-g1","pinned":false}`, 200)
+	q = pinsOf()
+	if q["d-g1"].Pin != 0 || q["d-g2"].Pin != 1 {
+		t.Fatalf("pins after unstar: g1=%d g2=%d", q["d-g1"].Pin, q["d-g2"].Pin)
+	}
+	if rules, _ := st.ListPinRules(domain.PlatformTwitch); len(rules) != 1 || rules[0].RewardKey != "box" || rules[0].Rank != 1 {
+		t.Fatalf("rules after unstar: %+v", rules)
 	}
 }

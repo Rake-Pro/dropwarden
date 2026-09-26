@@ -2,7 +2,7 @@ package store
 
 // schemaVersion is bumped whenever migrations change. Migrations are applied
 // in order on Open; each is idempotent via IF NOT EXISTS so re-running is safe.
-const schemaVersion = 3
+const schemaVersion = 4
 
 // migrations are applied in slice order. Index+1 is the version each brings the
 // database to. Keep every statement idempotent.
@@ -148,4 +148,20 @@ var migrations = []string{
 	// owned-reward skip for that drop (user insists on watching an already-owned
 	// reward, e.g. to test crediting). NULL/0 = off. Append-only.
 	`ALTER TABLE queue ADD COLUMN force_watch INTEGER;`,
+
+	// pin is the user's focus rank for a queued drop (NULL/0 = not pinned,
+	// 1..n = rank, 1 selected first). drop_pins holds the pin RULES: one per
+	// starred reward, keyed by (platform, normalized game name, normalized
+	// reward key), so discovery can re-pin the same reward when a later
+	// campaign instance re-offers it under fresh drop IDs. rank mirrors the
+	// item's pin rank so a re-applied pin lands where it was. Append-only.
+	`ALTER TABLE queue ADD COLUMN pin INTEGER;`,
+	`CREATE TABLE IF NOT EXISTS drop_pins (
+		platform   TEXT NOT NULL,
+		game_name  TEXT NOT NULL,
+		reward_key TEXT NOT NULL,
+		rank       INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER,
+		PRIMARY KEY (platform, game_name, reward_key)
+	);`,
 }

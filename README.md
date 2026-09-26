@@ -19,8 +19,8 @@ v3. Development happens directly from GoLand.
 1. Discovery reads `twitch.tv/drops/campaigns` and `/drops/inventory` in the
    authenticated session and captures the page's own GraphQL responses
    passively (a small fetch/XHR shim buffers them; nothing extra is requested).
-2. You queue and prioritize drops. The watcher works one at a time, top to
-   bottom.
+2. You queue and prioritize drops. The watcher works one at a time, in the
+   order described under "Queue order" below.
 3. For each drop it opens an eligible live channel, validates that playback is
    real and crediting, then watches with a set of watchdogs:
    - progress stall (soft nudge, then hard refresh + re-validate),
@@ -29,6 +29,35 @@ v3. Development happens directly from GoLand.
    - raid (cancel the banner, or adopt an eligible target, always refreshing).
 4. When the minutes are met it claims the drop by clicking the real Claim
    button, records it, and moves on.
+
+### Queue order
+
+Selection ranks every eligible drop by these keys, in order, and tries them
+top down, falling through past drops with no live channel:
+
+| # | Key | Where it is set |
+|---|-----|-----------------|
+| 0 | Pinned drops first, rank 1 before rank 2 | Queue view: star a drop; up/down arrows re-rank pinned rows |
+| 1 | Game rank: position of the campaign's game in `games` (case-insensitive); unlisted games last | Settings > Games: up/down per game, then Save |
+| 2 | Channel-specific before any-channel, within a game | `queue.prefer_channel_specific` (default `true`) |
+| 3 | Priority mode (`top_down` = queue position, `ending_soonest`, `closest_to_complete`, `shortest_first`) | Queue view Priority menu / `queue.priority_mode` |
+
+- *Pins persist across campaign instances.* Starring a drop also stores a pin
+  rule keyed by platform, game, and the drop's normalized reward name(s). When
+  a later campaign re-offers the same reward under new IDs, discovery re-pins
+  it automatically (log line `pin rule re-applied`). Unstarring deletes the
+  rule.
+- *Credits alongside.* An allowlisted streamer also credits the game's
+  any-channel drops, so an any-channel drop that shares its game and platform
+  with an eligible channel-specific drop waits behind those drops instead of
+  taking a watch of its own. The Queue view marks it with a grey "credits
+  alongside channel drops" badge. It is still watched when no allowlisted
+  streamer of that game is live (selection falls through). Set
+  `queue.prefer_channel_specific: false` to rank by game and priority mode only.
+- Dragging rows changes queue position (and switches the mode to `top_down`);
+  it never changes a pin rank. Pinned rows are not draggable and keep their
+  queue position, so an unpinned drop returns to where it was.
+- A profile with its own games list ranks games by that list's order.
 
 ### Safety posture (anti-bot)
 
