@@ -294,12 +294,23 @@ jobs:
       DOWNLOADS_BASE_URL: ${{ vars.DOWNLOADS_BASE_URL || 'https://cdn.rake.pro/releases' }}
       DOWNLOADS_UPLOAD_TOKEN: ${{ secrets.DOWNLOADS_UPLOAD_TOKEN }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
           path: assets
           pattern: "{windows,macos,linux}"
           merge-multiple: true
+
+      # Release notes = this version's CHANGELOG.md section, verbatim. They
+      # are the body of the GitHub release AND the "notes" the in-app
+      # What's new dialog renders from latest.json, so the changelog is the
+      # single source; nothing links back to GitHub (the repo is private).
+      - name: Release notes from CHANGELOG.md
+        run: python3 scripts/changelog-notes.py "$TAG" > "$RUNNER_TEMP/notes.md"
 
       - name: Checksums
         run: |
@@ -310,32 +321,49 @@ jobs:
       - name: Create or update release
         run: |
           set -euo pipefail
-          notes="Binaries are not code-signed: Windows SmartScreen asks for More info > Run anyway (Windows 11 Smart App Control must be off), and macOS Gatekeeper needs right-click > Open on first launch. Google Chrome must be installed; dropwarden drives its own dedicated Chrome profile."
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/notes.md"
           else
             pre=""
             [ "${PRERELEASE}" = "true" ] && pre="--prerelease"
             gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" $pre \
-              --title "dropwarden $TAG" --generate-notes --notes "$notes"
+              --title "dropwarden $TAG" --notes-file "$RUNNER_TEMP/notes.md"
           fi
 
       # Updater manifest: every asset with its absolute URL on the downloads
-      # host, sha256 and size, plus the release notes GitHub now holds.
+      # host, sha256 and size, plus the release notes. A versioned asset the
+      # host already serves is immutable there (a re-run's rebuild is not
+      # byte-identical), so the manifest hashes the HOSTED bytes for those,
+      # or the feed would name a sha256 the updater can never verify.
       - name: Write latest.json
         run: |
           set -euo pipefail
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body > "$RUNNER_TEMP/notes.md"
           python3 - <<'PY'
-          import datetime, hashlib, json, os
+          import datetime, hashlib, json, os, urllib.request
           base = os.environ["DOWNLOADS_BASE_URL"].rstrip("/")
           tag, version = os.environ["TAG"], os.environ["VERSION"]
+          token = os.environ.get("DOWNLOADS_UPLOAD_TOKEN", "")
           notes = open(os.path.join(os.environ["RUNNER_TEMP"], "notes.md"), encoding="utf-8").read().strip()
+          def hosted(url):
+              if not token:
+                  return None
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": "Bearer " + token}), timeout=120) as r:
+                      return r.read()
+              except Exception:
+                  return None
           assets = []
           for name in sorted(os.listdir("assets")):
               if name == "latest.json":
                   continue
-              data = open(os.path.join("assets", name), "rb").read()
+              data = None
+              if name != "checksums.txt":
+                  data = hosted(f"{base}/dropwarden/{tag}/{name}")
+                  if data is not None:
+                      print(f"{name}: hashing the hosted copy")
+              if data is None:
+                  data = open(os.path.join("assets", name), "rb").read()
               assets.append({
                   "name": name,
                   "url": f"{base}/dropwarden/{tag}/{name}",

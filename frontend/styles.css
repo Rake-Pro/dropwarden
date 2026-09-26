@@ -92,11 +92,13 @@ body {
 .card { min-width: 0; }
 
 .now { padding: 18px; }
-.now .head { display: flex; align-items: center; gap: 13px; }
+.now .head { display: flex; align-items: center; gap: 13px; flex-wrap: wrap; }
+.now .head > .pill { margin-left: auto; }
 .avatar { width: 46px; height: 46px; border-radius: 11px; background: linear-gradient(140deg,#3a3a3c,#4a4a4d); display: grid; place-items: center; font-size: 17px; font-weight: 700; color: #cfcfd4; border: 1px solid var(--hairline); }
 .now .who { flex: 1; min-width: 0; }
 .now .who .ch { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; min-width: 0; }
-.now .who .ch .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now .who .ch .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 48px; }
+.now .who .ch .pf, .now .who .ch .live { flex: none; }
 .now .who .ch .live { font-size: 9.5px; font-weight: 800; letter-spacing: .06em; color: #fff; background: var(--live); padding: 2px 6px; border-radius: 4px; }
 /* Platform badges (brand colors; shown wherever more than one platform is on). */
 .pf { font-size: 9px; font-weight: 800; letter-spacing: .07em; padding: 1.5px 5px; border-radius: 4px; vertical-align: 1px; white-space: nowrap; }
@@ -164,6 +166,13 @@ body {
 .qrow { display: grid; grid-template-columns: 22px minmax(0, 1fr) 110px 240px 150px 40px; grid-template-areas: "grip name mini act stat sw"; align-items: center; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--hairline-card); }
 .qrow .grip { grid-area: grip; } .qrow .qname { grid-area: name; } .qrow .qmini { grid-area: mini; } .qrow .qact { grid-area: act; } .qrow .qstat { grid-area: stat; } .qrow .switch { grid-area: sw; }
 .qrow.pinned { box-shadow: inset 3px 0 0 var(--accent); }
+/* Narrow window: the fixed action/status columns would squeeze the name to
+   nothing, so the row reflows onto two lines (name + status + switch, then
+   progress + actions). */
+@media (max-width: 980px) {
+  .qrow { grid-template-columns: 22px minmax(0, 1fr) auto 40px; grid-template-areas: "grip name stat sw" "grip mini act act"; row-gap: 8px; }
+  .qrow .qact { justify-content: flex-start; }
+}
 .qact { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .qact .force { flex: none; }
 .force.on { border-color: var(--warn); color: var(--pill-warn); }
@@ -309,7 +318,7 @@ body {
 .toast.info { border-left-color: var(--accent); }
 
 /* Dashboard cards. */
-.now-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.now-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
 .card-msg { margin-top: 14px; font-size: 12.5px; color: var(--text-secondary); }
 .card-msg p { margin: 0; }
 .login-msg { margin-top: 8px; min-height: 1.2em; font-size: 12px; }

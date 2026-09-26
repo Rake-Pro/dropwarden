@@ -4,6 +4,22 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.2.5 - 2026-09-26
+
+### Fixed
+- Release notes: the GitHub release body and the "What's new" dialog now carry
+  this file's section for the version, verbatim. The install boilerplate
+  and the GitHub compare link (unreachable for anyone outside the repo) are
+  gone. A tag without a changelog section fails the release.
+- Release re-runs: the updater manifest hashes the copy the downloads host
+  already serves for any asset it refuses to overwrite, so a rebuilt
+  release can no longer publish a sha256 the updater cannot verify.
+- Dashboard cards at narrow widths: the channel name no longer collapses
+  under the status pill (header wraps, badges keep their size), and the two
+  platform cards stack below 320 px each instead of cramping side by side.
+- Queue rows reflow onto two lines in a narrow window instead of squeezing
+  the drop name out.
+
 ## v0.2.4 - 2026-09-26
 
 ### Added
