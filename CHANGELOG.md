@@ -4,6 +4,12 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.1.1 - 2026-09-26
+
+### Changed
+- macOS builds are signed with the Developer ID certificate and notarized;
+  Gatekeeper no longer blocks the first launch. No code changes.
+
 ## v0.1.0 - 2026-09-26
 
 ### Added
