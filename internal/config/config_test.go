@@ -502,3 +502,73 @@ kick:
 		t.Fatalf("deliberate kick override clobbered: (%d,%d)", cfg.Kick.Browser.Window.X, cfg.Kick.Browser.Window.Y)
 	}
 }
+
+func TestUpdateDefaultsWhenBlockAbsent(t *testing.T) {
+	cfg, err := parse([]byte("theme: dark\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.UpdateEnabled() || !cfg.UpdateAutoInstall() || !cfg.UpdateShowChangelog() {
+		t.Error("update toggles must default on when the block is absent")
+	}
+	if cfg.UpdateFeedURL() != DefaultUpdateFeedURL {
+		t.Errorf("feed = %q, want the default", cfg.UpdateFeedURL())
+	}
+	if cfg.Update.IntervalHours != 24 {
+		t.Errorf("interval = %d, want 24", cfg.Update.IntervalHours)
+	}
+}
+
+func TestUpdateStarterValues(t *testing.T) {
+	cfg, err := StarterDefaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.UpdateEnabled() || !cfg.UpdateAutoInstall() || !cfg.UpdateShowChangelog() || cfg.UpdateFeedURL() != DefaultUpdateFeedURL || cfg.Update.IntervalHours != 24 {
+		t.Errorf("starter update block = %+v", cfg.Update)
+	}
+}
+
+func TestUpdateExplicitFalseAndEmptyFeedStick(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg, err := parse([]byte("update:\n  enabled: false\n  auto_install: false\n  show_changelog: false\n  feed_url: \"\"\n  interval_hours: 6\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UpdateEnabled() || cfg.UpdateAutoInstall() || cfg.UpdateShowChangelog() || cfg.UpdateFeedURL() != "" || cfg.Update.IntervalHours != 6 {
+		t.Fatalf("explicit values lost on parse: %+v", cfg.Update)
+	}
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UpdateEnabled() || got.UpdateAutoInstall() || got.UpdateShowChangelog() || got.UpdateFeedURL() != "" || got.Update.IntervalHours != 6 {
+		t.Fatalf("explicit values lost on save round trip: %+v", got.Update)
+	}
+}
+
+func TestUpdateValidation(t *testing.T) {
+	for _, body := range []string{
+		"update:\n  interval_hours: -1\n",
+		"update:\n  feed_url: \"ftp://example.com/latest.json\"\n",
+		"update:\n  feed_url: \"not a url\"\n",
+		"update:\n  feed_url: \"http://example.com/latest.json\"\n",
+		"update:\n  feed_url: \"http://localhost.example.com/latest.json\"\n",
+	} {
+		if _, err := parse([]byte(body)); err == nil || !strings.Contains(err.Error(), "update.") {
+			t.Errorf("%q: err = %v, want an update.* validation error", body, err)
+		}
+	}
+	for _, feed := range []string{
+		"https://example.com/latest.json",
+		"http://localhost:8080/latest.json",
+		"http://127.0.0.1/latest.json",
+	} {
+		if _, err := parse([]byte("update:\n  feed_url: \"" + feed + "\"\n")); err != nil {
+			t.Errorf("%s: unexpected error %v", feed, err)
+		}
+	}
+}

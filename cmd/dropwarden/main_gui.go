@@ -7,6 +7,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -14,6 +15,8 @@ import (
 	webui "github.com/rake-pro/dropwarden/frontend"
 	"github.com/rake-pro/dropwarden/internal/app"
 	"github.com/rake-pro/dropwarden/internal/service"
+	"github.com/rake-pro/dropwarden/internal/update"
+	"github.com/rake-pro/dropwarden/internal/version"
 )
 
 func main() {
@@ -21,6 +24,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	// Close tears down every engine and Chrome. It is ALSO registered as the
+	// Wails OnShutdown hook below: on macOS a quit ends in [NSApp terminate:],
+	// which exits the process without wapp.Run ever returning, so this defer
+	// alone would never run there. Close is idempotent.
 	defer a.Close()
 
 	profiles := make([]*service.ProfileBackend, 0, len(a.Profiles))
@@ -39,6 +46,13 @@ func main() {
 	assets.Handle("/api/", service.NewHTTPHandler(backend))
 	assets.Handle("/", webui.Handler())
 
+	// The self-updater follows the live config (a.Config), so the Updates
+	// settings pane applies without a restart. Its lifetime is the app's:
+	// cancelled when Wails starts shutting down.
+	updCtx, updCancel := context.WithCancel(context.Background())
+	updates := newUpdateController(updCtx, a.Config, backend)
+	backend.SetUpdater(updates)
+
 	wapp := application.New(application.Options{
 		Name:        "dropwarden",
 		Description: "Twitch and Kick drops collector",
@@ -46,10 +60,28 @@ func main() {
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "pro.rake.dropwarden",
 		},
+		OnShutdown: func() {
+			updCancel()
+			a.Close()
+		},
+		// Runs after the single-instance lock is released, so an in-process
+		// update can start the new binary without it being turned away.
+		PostShutdown: updates.postShutdown,
 	})
+	a.Log.Info().Str("version", version.Version).Msg("dropwarden starting")
+
+	// application.New acquires the single-instance lock synchronously (a
+	// second instance notifies the first and os.Exits inside New), so from
+	// here on this is the only instance: drop what a previous self-update
+	// left behind (*.old binaries, stage dirs) and pick up its failure marker.
+	update.CleanupOld()
+	updates.loadFailure()
 
 	win := newDashboardWindow(wapp, a.Cfg.UI.StartMinimized)
-	buildTray(wapp, win, backend)
+	updates.quit = wapp.Quit
+	updates.show = func() { win.Show() }
+	buildTray(wapp, win, backend, updates)
+	updates.start()
 
 	// Launch the browsers + engines in the background so the window is
 	// responsive immediately. If Chrome cannot start (not installed, profile

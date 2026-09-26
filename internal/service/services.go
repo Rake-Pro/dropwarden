@@ -139,6 +139,7 @@ type Backend struct {
 	mu       sync.RWMutex
 	cfg      *config.Config
 	rec      Reconciler
+	upd      Updater
 	profiles map[string]*ProfileBackend
 	order    []string
 }

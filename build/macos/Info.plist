@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Info.plist for dropwarden.app.
+
+  Placeholders __VERSION__ and __BUNDLE_ID__ are substituted by scripts/bundle.sh
+  from the VERSION and BUNDLE_ID environment variables. BUNDLE_ID defaults to
+  pro.rake.dropwarden (the same id as the Wails single-instance lock).
+
+  Dock icon: kept on purpose. dropwarden is tray-first, but it has a real
+  dashboard window, and LSUIElement would hide the app from the Dock and the
+  Cmd-Tab switcher, leaving no way back to a closed dashboard except the menu
+  bar item. So LSUIElement is omitted (= false).
+
+  LSMinimumSystemVersion 12.0: Go 1.25+ binaries require macOS 12 Monterey,
+  which is stricter than Wails v3's own 10.13/10.15 floor.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>dropwarden</string>
+
+	<key>CFBundleDisplayName</key>
+	<string>dropwarden</string>
+
+	<key>CFBundleIdentifier</key>
+	<string>__BUNDLE_ID__</string>
+
+	<key>CFBundleExecutable</key>
+	<string>dropwarden</string>
+
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+
+	<!-- AppIcon.icns is generated from build/icons/dropwarden_icon.png and
+	     copied into Contents/Resources by scripts/bundle.sh. -->
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+
+	<!-- Marketing version (e.g. 1.2.3) and build number; both from VERSION. -->
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__VERSION__</string>
+
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>

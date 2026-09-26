@@ -267,6 +267,62 @@ function needyBanner(needy, profileName) {
   return banner;
 }
 
+// updateBanner renders the "new version available" banner (the needyBanner
+// layout with the accent palette). What's new appears only when the backend
+// sent notes (update.show_changelog on); Install now installs immediately,
+// even while a watch is in progress.
+function updateBanner(upd) {
+  const p = upd.pending;
+  let detail = `You are on v${upd.currentVersion}.`;
+  if (upd.installing) detail = 'Downloading and installing - dropwarden will restart by itself.';
+  else if (upd.busyDeferred) detail = 'It installs automatically when the current watch finishes, or install it now.';
+  else if (upd.lastError) detail = 'Last attempt failed: ' + upd.lastError;
+  const hasNotes = upd.showChangelog && (p.notes || []).length > 0;
+  const off = api.offline || upd.installing ? 'disabled' : '';
+  const banner = el(`<div class="banner update">
+    <span class="ic">&#8593;</span>
+    <div class="tx"><div class="t">dropwarden v${esc(p.version)} is available</div>
+    <div class="d">${esc(detail)}</div></div>
+    ${hasNotes ? '<button class="btn btn-sm" data-upd="notes">What\'s new</button>' : ''}
+    <button class="btn btn-sm primary" data-upd="install" ${off}>${upd.installing ? 'Installing...' : 'Install now'}</button>
+  </div>`);
+  const notesBtn = banner.querySelector('[data-upd="notes"]');
+  if (notesBtn) notesBtn.addEventListener('click', () => showNotesModal(p));
+  banner.querySelector('[data-upd="install"]').addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    e.target.textContent = 'Installing...';
+    try { await api.installUpdate(); } catch (err) { e.target.textContent = 'Install failed'; e.target.title = err.message || String(err); }
+    setTimeout(() => renderDashboard(), 1500);
+  });
+  return banner;
+}
+
+// showNotesModal lists a pending update's rendered release notes. It lives on
+// document.body so the 5 s dashboard re-render does not close it.
+function showNotesModal(p) {
+  const old = document.querySelector('.modal-back');
+  if (old) old.remove();
+  const lines = (p.notes || []).map(l => l.heading
+    ? `<div class="nl h">${esc(l.text)}</div>`
+    : (l.text ? `<div class="nl">${esc(l.text)}</div>` : '<div class="nl gap"></div>')).join('');
+  const back = el(`<div class="modal-back"><div class="modal card" role="dialog" aria-modal="true" aria-label="What's new">
+    <h3>What's new in v${esc(p.version)}</h3>
+    <div class="notes">${lines}</div>
+    <div class="foot-btns"><button class="btn primary" data-m="install" ${api.offline ? 'disabled' : ''}>Install now</button><button class="btn" data-m="close">Close</button></div>
+  </div></div>`);
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  const close = () => { back.remove(); document.removeEventListener('keydown', onKey); };
+  back.addEventListener('click', (e) => { if (e.target === back) close(); });
+  back.querySelector('[data-m="close"]').addEventListener('click', close);
+  back.querySelector('[data-m="install"]').addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try { await api.installUpdate(); close(); } catch (err) { e.target.textContent = 'Install failed: ' + (err.message || err); }
+    renderDashboard();
+  });
+  document.addEventListener('keydown', onKey);
+  document.body.append(back);
+}
+
 // combineStats sums headline stats across enabled profiles for the shared
 // Totals card; successRate is a session-weighted average, not a plain mean.
 function combineStats(profiles) {
@@ -302,6 +358,7 @@ async function renderDashboard() {
       ? 'One channel per platform. The watcher keeps each window unfocused and dimmed while progress ticks.'
       : 'One channel at a time. The watcher keeps this window unfocused and dimmed while progress ticks.'}</p>
   </div>`));
+  if (state.update && state.update.pending) v.append(updateBanner(state.update));
 
   const left = el(`<div class="stack"></div>`);
 
@@ -543,7 +600,23 @@ const SETTINGS_PANES = [
   { key: 'browser', label: 'Browser', icon: '◱', tint: 'rgba(127,127,127,0.16)', fg: 'var(--text-primary)' },
   { key: 'app', label: 'App', icon: '◐', tint: 'rgba(127,127,127,0.16)', fg: 'var(--text-primary)' },
   { key: 'profiles', label: 'Profiles', icon: '◈', tint: 'rgba(127,127,127,0.16)', fg: 'var(--text-primary)' },
+  { key: 'updates', label: 'Updates', icon: '&#8593;', tint: 'var(--accent-dim)', fg: '#7cc0ff' },
 ];
+
+// updState/appVersion feed the Updates pane; refreshed on every renderSettings.
+let updState = null;
+let appVersion = '';
+
+// updResultText summarizes an update state for the Updates pane's inline
+// result: the error, the pending version, or up to date.
+function updResultText(u) {
+  if (!u) return { text: '', color: '' };
+  if (u.skippedVersion) return { text: `automatic install of v${u.skippedVersion} failed: ${u.lastError || 'unknown error'}; use Install now to retry`, color: 'var(--err)' };
+  if (u.lastError) return { text: u.lastError, color: 'var(--err)' };
+  if (u.pending) return { text: `v${u.pending.version} available - see the dashboard banner to install`, color: 'var(--accent)' };
+  if (u.lastCheck) return { text: 'Up to date', color: 'var(--ok)' };
+  return { text: '', color: '' };
+}
 
 const toggleHTML = (id, on) => `<div class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${on}" tabindex="0" data-toggle="${id}"><i></i></div>`;
 
@@ -553,6 +626,8 @@ async function renderSettings() {
   v.innerHTML = '';
   v.append(el(`<div><h2 class="title">Settings</h2><p class="sub">Saved to config.yaml. Platform and profile changes apply immediately; Chrome launch settings apply the next time that window opens.</p></div>`));
   const state = await api.state();
+  updState = state.update || null;
+  appVersion = state.version || (updState && updState.currentVersion) || '';
   const allProfiles = state.profiles || [];
   if (allProfiles.length > 1) {
     const enabled = allProfiles.filter(p => p.enabled);
@@ -603,6 +678,23 @@ function settingsPaneHTML() {
         <div class="row"><div class="lab"><div class="l">Auth mode</div><div class="h">Manual login is safest.</div></div><div class="ctl"><select class="popup" data-field="authMode"><option value="manual">Manual</option><option value="stored" disabled>Stored (unsupported)</option></select></div></div>
       </div>
       <div class="warnnote">⚠ Stored credentials are disabled by design and unsupported. Leave off unless manual login stops working.</div></div>`;
+    case 'updates': {
+      const dev = updState && updState.dev;
+      const res = updResultText(updState);
+      return `
+      <div class="group"><div class="caption">Version</div><div class="card">
+        <div class="row"><div class="lab"><div class="l">Current version</div><div class="h">${dev ? 'Development build: background checks are off; a manual check still works.' : 'Installed from a release.'}</div></div><div class="ctl mono">v${esc(appVersion)}</div></div>
+        <div class="row"><div class="lab"><div class="l">Check for updates</div><div class="h">Reads the saved feed URL - save changes first. <span id="upd-result" style="color:${res.color}">${esc(res.text)}</span></div></div><div class="ctl"><button class="btn" id="upd-check" type="button" ${api.offline ? 'disabled' : ''}>Check for updates</button></div></div>
+      </div></div>
+      <div class="group"><div class="caption">Automatic updates</div><div class="card">
+        <div class="row"><div class="lab"><div class="l">Check automatically</div><div class="h">About 30 seconds after start, then every interval below.</div></div><div class="ctl">${toggleHTML('updateEnabled', cfg.updateEnabled)}</div></div>
+        <div class="row"><div class="lab"><div class="l">Install automatically</div><div class="h">Installs a found update and restarts. Waits while any profile is opening, validating, watching or claiming, then installs between watches.</div></div><div class="ctl">${toggleHTML('updateAutoInstall', cfg.updateAutoInstall)}</div></div>
+        <div class="row"><div class="lab"><div class="l">Show what's new</div><div class="h">Offer the release notes on the dashboard banner.</div></div><div class="ctl">${toggleHTML('updateShowChangelog', cfg.updateShowChangelog)}</div></div>
+        <div class="row"><div class="lab"><div class="l">Check interval</div><div class="h">Hours between background checks.</div></div><div class="ctl"><input class="input" type="number" min="1" step="1" value="${esc(cfg.updateIntervalHours)}" data-field="updateIntervalHours" style="width:96px"></div></div>
+        <div class="row stacked"><div class="lab"><div class="l">Feed URL</div><div class="h">The release manifest (latest.json). Empty disables update checks.</div></div>
+          <div class="ctl"><input class="input mono" type="text" data-field="updateFeedURL" value="${esc(cfg.updateFeedURL)}" placeholder="empty = update checks disabled" style="width:100%"></div></div>
+      </div></div>`;
+    }
     default: return `
       <div class="group"><div class="caption">Games</div><div class="card">
         <div class="row"><div class="lab"><div class="l">Any game</div><div class="h">Queue drops for every game, ignoring the list below. Good for a quick test.</div></div><div class="ctl">${toggleHTML('anyGame', cfg.anyGame)}</div></div>
@@ -648,10 +740,27 @@ function renderSettingsContent() {
       if (Number.isFinite(n)) cfg.volume = n; // keep last good value if the field is cleared
       const p = $('#vol-pct', host);
       if (p) p.textContent = Math.round((Number.isFinite(n) ? n : cfg.volume) * 100) + '%';
+    } else if (f === 'updateIntervalHours') {
+      const n = parseInt(inp.value, 10);
+      if (Number.isFinite(n)) cfg.updateIntervalHours = n; // validated server-side (> 0)
     } else {
       cfg[f] = inp.value;
     }
   }));
+  const updCheck = host.querySelector('#upd-check');
+  if (updCheck) updCheck.addEventListener('click', async () => {
+    const out = $('#upd-result', host);
+    updCheck.disabled = true;
+    if (out) { out.textContent = 'Checking...'; out.style.color = 'var(--text-secondary)'; }
+    try {
+      updState = await api.checkUpdate();
+      const r = updResultText(updState);
+      if (out) { out.textContent = r.text || 'Up to date'; out.style.color = r.color || 'var(--ok)'; }
+    } catch (e) {
+      if (out) { out.textContent = 'Check failed: ' + (e.message || e); out.style.color = 'var(--err)'; }
+    }
+    updCheck.disabled = false;
+  });
   const authSel = host.querySelector('select[data-field="authMode"]');
   if (authSel) authSel.value = cfg.authMode;
   const themeSel = host.querySelector('select[data-field="theme"]');

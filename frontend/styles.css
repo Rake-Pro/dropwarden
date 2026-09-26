@@ -199,6 +199,15 @@ body {
 .banner .tx { flex: 1; } .banner .tx .t { font-weight: 600; font-size: 13px; } .banner .tx .d { font-size: 12px; color: var(--text-secondary); }
 .banner.needs { background: var(--warn-dim); border: 1px solid rgba(255,159,10,0.3); } .banner.needs .ic { background: var(--warn); color: #3a2600; }
 .banner.err { background: var(--err-dim); border: 1px solid rgba(255,107,107,0.3); } .banner.err .ic { background: var(--err); color: #3a0000; }
+.banner.update { background: var(--accent-dim); border: 1px solid rgba(10,132,255,0.3); } .banner.update .ic { background: var(--accent); color: #fff; }
+
+/* What's new dialog (self-updater release notes). */
+.modal-back { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: grid; place-items: center; z-index: 50; padding: 16px; }
+.modal { width: min(560px, 100%); max-height: min(560px, 90vh); display: flex; flex-direction: column; padding: 16px 18px; }
+.modal h3 { margin: 0 0 10px; font-size: 15px; }
+.modal .notes { overflow: auto; flex: 1; font-size: 12.5px; line-height: 1.5; }
+.modal .notes .nl.h { font-weight: 600; margin-top: 6px; }
+.modal .notes .nl.gap { height: 8px; }
 
 /* Stacked settings row: label on top, full-width control below. */
 .row.stacked { flex-direction: column; align-items: stretch; gap: 8px; }

@@ -115,6 +115,13 @@ ui:
   start_minimized: false   # true = start hidden in the tray (the dashboard window can always be opened from the tray icon)
   show_debug_pane: false
 
+update:
+  enabled: true                # background checks: ~30s after start, then every interval_hours (dev builds never auto-check)
+  auto_install: true           # install a found update right away, or as soon as no watch is in progress
+  show_changelog: true         # offer "What's new" release notes on the dashboard banner
+  feed_url: "https://cdn.rake.pro/releases/dropwarden/latest.json"   # release manifest; "" disables update checks
+  interval_hours: 24
+
 # No profiles block = a single implicit profile named "main" rooted at this
 # app directory itself: existing single-profile installs need zero file
 # moves and zero behavior change. Add profiles to manage drops for more than

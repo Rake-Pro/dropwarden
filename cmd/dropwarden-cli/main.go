@@ -48,6 +48,10 @@ func main() {
 		err = watch()
 	case "report":
 		err = report()
+	case "update-apply":
+		// Hidden: the self-updater's out-of-process installer, started by the
+		// GUI host (see updateapply.go). Not listed in usage.
+		err = updateApply(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 		return

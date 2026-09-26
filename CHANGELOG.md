@@ -1,8 +1,41 @@
 # Changelog
 
-All notable changes to dropwarden. No releases have been tagged yet; entries are
-grouped by day and theme on `main`. When semver releases start (vX.Y.Z), new
-entries get version headings.
+All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
+version heading each; the dated entries below v0.1.0 predate tagged releases
+and are grouped by day and theme on `main`.
+
+## v0.1.0 - 2026-09-26
+
+### Added
+- Self-updater (`internal/update`): checks a release manifest (`latest.json`,
+  default `https://cdn.rake.pro/releases/dropwarden/latest.json`) ~30 s after
+  start and every `update.interval_hours`, verifies the download's sha256
+  against the manifest (fails closed), and installs through
+  `dropwarden-cli update-apply`, which restarts the old version on any
+  failure. Auto-install waits while any profile is opening, validating,
+  watching or claiming. Dashboard banner with "What's new" and "Install now",
+  tray item "Check for Updates" / "Install Update vX.Y.Z", Settings > Updates
+  pane, `GET /api/update`, `POST /api/update/check`, `POST /api/update/install`,
+  and an `update:` config block (`enabled`, `auto_install`, `show_changelog`,
+  `feed_url`, `interval_hours`).
+- Release pipeline (`.github/workflows/release.yml`, on `v*` tags or manual
+  dispatch): Windows Inno Setup installer (per-user, optional login startup
+  task, Smart App Control warning), macOS universal dmg + zip (ad-hoc signed,
+  Developer ID signing/notarization when the secrets exist), Linux tarball,
+  `checksums.txt`, `latest.json`, and an optional upload to the downloads host.
+- App icon (`build/icons`, drawn from the loot-chest logo by
+  `scripts/gen-icons.py`), Windows exe icon + manifest via
+  `wails3 generate syso`, macOS `Info.plist` + `scripts/bundle.sh`.
+- Build version stamp (`internal/version`, set with `-ldflags -X`), shown in
+  Settings > Updates and returned by `/api/state`.
+
+### Fixed
+- Offline allowlist campaigns no longer consume the fall-through budget:
+  `watcher.max_select_attempts` now bounds only any-channel directory scrapes,
+  so an any-channel campaign further down the queue is still tried when many
+  single-streamer allowlist campaigns are offline. (`dd08b93`)
+- Quitting on macOS now tears down Chrome: `App.Close` is registered as the
+  Wails shutdown hook, since a macOS quit exits without `wapp.Run` returning.
 
 ## 2026-08-31 - Live-debug arc: crediting, owned rewards, Kick login
 

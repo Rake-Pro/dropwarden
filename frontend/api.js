@@ -59,6 +59,21 @@ const SAMPLE = {
     priorityMode: 'top_down', autoEnqueueNew: true, volume: 0.01, forceLowestQuality: true,
     neverFocus: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, kickEnabled: true, claimStrategy: 'in_page',
     allowGqlFallback: false, skipAccountLink: true, authMode: 'manual', storedEnabled: false, logLevel: 'info',
+    updateEnabled: true, updateAutoInstall: true, updateShowChangelog: true,
+    updateFeedURL: 'https://cdn.rake.pro/releases/dropwarden/latest.json', updateIntervalHours: 24,
+  },
+  // Mirrors GET /api/update; a pending update so the dashboard banner and the
+  // What's new dialog are designable offline.
+  version: '0.1.0',
+  update: {
+    currentVersion: '0.1.0', enabled: true, available: true, dev: false,
+    feedURL: 'https://cdn.rake.pro/releases/dropwarden/latest.json', showChangelog: true,
+    pending: { version: '0.2.0', notes: [
+      { text: 'v0.2.0  (2026-10-01)', heading: true },
+      { text: 'Added', heading: true },
+      { text: '- Sample release note line' },
+    ] },
+    lastCheck: null, lastError: '', busyDeferred: false, checking: false, installing: false,
   },
 };
 
@@ -187,6 +202,21 @@ export const api = {
   },
   // body: { name, displayName, kickEnabled, games, inheritGames }.
   updateProfile(body) { return post('/api/profiles/update', body); },
+
+  // Self-updater. update() is cheap (no network); checkUpdate() runs a real
+  // feed check and returns the resulting state; installUpdate() starts the
+  // install and returns at once (the app quits and restarts when done).
+  async update() {
+    try {
+      const r = await fetch('/api/update', { cache: 'no-store' });
+      if (!r.ok) throw new Error('update ' + r.status);
+      return await r.json();
+    } catch (e) {
+      return SAMPLE.update;
+    }
+  },
+  checkUpdate() { return post('/api/update/check'); },
+  installUpdate() { return post('/api/update/install'); },
 
   // Events arrive via polling in app.js; this is a no-op placeholder kept for
   // the call sites.

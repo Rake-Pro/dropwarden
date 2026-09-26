@@ -27,3 +27,6 @@ Thumbs.db
 # Keep GoLand run configs (.run/) committed, but ignore the rest of .idea
 /.idea/
 !/.run/
+
+# Windows resources generated in CI (wails3 generate syso)
+*.syso

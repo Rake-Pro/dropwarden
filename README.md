@@ -47,6 +47,60 @@ v3. Development happens directly from GoLand.
   (progress poll, player reassert, session rotation) by +/- that fraction so
   they do not land on an exact fixed interval every time; 0 disables it.
 
+## Install
+
+Releases are built by `.github/workflows/release.yml` from a `vX.Y.Z` tag and
+published on the GitHub release and on the downloads host
+(`https://cdn.rake.pro/releases/dropwarden/<tag>/`).
+
+### Prerequisites
+
+- Google Chrome installed (dropwarden drives its own dedicated Chrome profile,
+  never your everyday one).
+- A Twitch login done by hand once, in the dropwarden-driven Chrome window
+  (dashboard: Log in). Kick, if enabled, the same.
+
+### Per platform
+
+| Platform | Asset | Install |
+| --- | --- | --- |
+| Windows 10/11 x64 | `dropwarden_<ver>_windows_amd64_setup.exe` | Run it; per-user install to `%LOCALAPPDATA%\Programs\dropwarden`, no admin. Optional "Start dropwarden when you log in" task. |
+| macOS 12+ (universal) | `dropwarden_<ver>_darwin_universal.dmg` | Open the dmg, drag `dropwarden.app` to Applications. First launch: right-click the app > Open > Open. |
+| Linux x64 | `dropwarden_<ver>_linux_amd64.tar.gz` | Extract anywhere writable (e.g. `~/.local/opt/dropwarden`), run `./dropwarden`. Needs GTK3 + webkit2gtk-4.1 runtime libs. |
+
+- The binaries are not code-signed:
+  - Windows SmartScreen: More info > Run anyway.
+  - Windows 11 Smart App Control blocks unsigned apps with no per-app
+    exception; the installer detects it and offers to open Windows Security
+    (App & browser control > Smart App Control settings > Off).
+  - macOS Gatekeeper: right-click > Open on first launch (ad-hoc signed only).
+- Every install ships two binaries side by side: `dropwarden` (the tray app)
+  and `dropwarden-cli` (the headless CLI, also the updater's installer).
+
+### Updates
+
+- The app checks a release manifest (`latest.json`) ~30 s after start and then
+  every `update.interval_hours`; dev builds (`0.0.0-dev`) never auto-check.
+- A found update shows a dashboard banner ("What's new", "Install now") and
+  retitles the tray item to "Install Update vX.Y.Z".
+- Auto-install never cuts a watch short: while any profile is opening,
+  validating, watching or claiming, the install waits (re-checked every
+  5 minutes) and runs between watches. "Install now" installs immediately.
+- Install flow: the app downloads the platform archive, verifies its sha256
+  against the manifest (fails closed), hands it to `dropwarden-cli
+  update-apply`, and quits; the helper swaps the files, restarts dropwarden,
+  and on any failure restarts the old version and logs to `update.log` in the
+  app root.
+- Settings > Updates edits these keys (config.yaml `update:` block):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Background checks on/off. The manual check always works. |
+| `auto_install` | `true` | Install a found update without asking (deferred while watching). |
+| `show_changelog` | `true` | Offer the release notes on the dashboard banner. |
+| `feed_url` | `https://cdn.rake.pro/releases/dropwarden/latest.json` | Release manifest. Empty disables update checks. |
+| `interval_hours` | `24` | Hours between background checks (must be > 0). |
+
 ## Layout
 
 ```
@@ -61,6 +115,8 @@ internal/discovery    reconcile campaigns + inventory into the store, auto-enque
 internal/queue        pure ordering, precondition topo-sort, channel ranking
 internal/watcher      the single-owner state machine + watchdogs + claim flow
 internal/service      thin Wails-bound services (DTOs) + engine event emitter
+internal/update       self-updater: manifest check, verified download, apply, helper job
+internal/version      build-time version stamp (-ldflags -X)
 frontend              vanilla HTML/CSS/JS UI (no build step), embeddable
 ```
 
@@ -132,5 +188,57 @@ task check     # gofmt + vet + test + windows build + forbidden-call scan
 task test
 ```
 
-There is intentionally no GitHub Actions workflow yet; builds and tests are run
-locally during active development.
+CI:
+
+- `.github/workflows/govulncheck.yml` - weekly + per-push vulnerability scan.
+- `.github/workflows/release.yml` - tag-triggered release builds (below).
+- Tests and `task check` run locally; there is no per-push test workflow.
+
+### Releasing
+
+- Tag and push: `git tag v0.1.0 && git push --tags`, or run the Release
+  workflow by hand (workflow_dispatch) with `version` = an existing tag.
+- Jobs: windows (Inno Setup installer + updater zip, icon/manifest via
+  `wails3 generate syso`), macos (universal .app, ad-hoc signed unless the
+  Developer ID secrets exist, dmg + zip), linux (tar.gz), publish.
+- publish writes `checksums.txt` and `latest.json`, attaches all of it to the
+  GitHub release, then uploads to the downloads host when the
+  `DOWNLOADS_UPLOAD_TOKEN` secret is set.
+- Repo settings the workflow reads:
+
+| Name | Kind | Purpose |
+| --- | --- | --- |
+| `DOWNLOADS_BASE_URL` | variable | Downloads host base; default `https://cdn.rake.pro/releases`. |
+| `DOWNLOADS_UPLOAD_TOKEN` | secret | Enables the "Publish to downloads host" step. |
+| `MACOS_CERT_P12`, `MACOS_CERT_P12_PASSWORD`, `DEVELOPER_ID_APP` | secrets | Developer ID signing (optional). |
+| `AC_APPLE_ID`, `AC_PASSWORD`, `TEAM_ID` | secrets | Notarization (optional, needs signing). |
+
+- Downloads host contract (the "Publish to downloads host" step):
+
+| Request | Path | Body |
+| --- | --- | --- |
+| `PUT`, `Authorization: Bearer <DOWNLOADS_UPLOAD_TOKEN>` | `<base>/dropwarden/<tag>/<asset>` | each release asset, raw bytes |
+| same | `<base>/dropwarden/latest.json` | the manifest, uploaded last |
+
+- Manifest schema (`latest.json`, Go type `update.Manifest`):
+
+```
+{
+  "name": "dropwarden",
+  "version": "0.1.0",
+  "tag": "v0.1.0",
+  "published_at": "2026-09-26T18:00:00Z",
+  "notes": "markdown body (the GitHub release notes)",
+  "assets": [
+    {"name": "dropwarden_0.1.0_windows_amd64.zip",
+     "url": "https://cdn.rake.pro/releases/dropwarden/v0.1.0/dropwarden_0.1.0_windows_amd64.zip",
+     "sha256": "<hex>", "size": 12345}
+  ]
+}
+```
+
+- The updater picks the asset named `dropwarden_<ver>_windows_<arch>.zip`,
+  `dropwarden_<ver>_darwin_universal.zip` or
+  `dropwarden_<ver>_<goos>_<arch>.tar.gz`; a missing or empty `sha256` fails
+  the install.
+- Icons: `task icons` regenerates `build/icons/` (committed) from the logo.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/rake-pro/dropwarden/internal/config"
 )
@@ -223,8 +224,16 @@ func toConfigDTO(c *config.Config) ConfigDTO {
 		StoredEnabled:      c.Auth.Stored.Enabled,
 		LogLevel:           c.Logging.Level,
 		CaptureGQLBodies:   c.Logging.CaptureGQLBodies,
+
+		UpdateEnabled:       ptr(c.UpdateEnabled()),
+		UpdateAutoInstall:   ptr(c.UpdateAutoInstall()),
+		UpdateShowChangelog: ptr(c.UpdateShowChangelog()),
+		UpdateFeedURL:       ptr(c.UpdateFeedURL()),
+		UpdateIntervalHours: ptr(c.Update.IntervalHours),
 	}
 }
+
+func ptr[T any](v T) *T { return &v }
 
 // applyConfigDTO writes editable fields from the DTO onto cfg. Fields the UI
 // does not expose are left untouched.
@@ -250,4 +259,27 @@ func applyConfigDTO(c *config.Config, d ConfigDTO) {
 	c.Auth.Stored.Enabled = d.StoredEnabled
 	c.Logging.Level = d.LogLevel
 	c.Logging.CaptureGQLBodies = d.CaptureGQLBodies
+	// Fresh pointers, never the DTO's own: the copy must not alias the request.
+	// A still-nil field is only pinned when the value differs from its
+	// default, so saving another pane (which echoes the resolved values back)
+	// does not bake today's defaults into config.yaml.
+	setUpdate(&c.Update.Enabled, d.UpdateEnabled, c.UpdateEnabled())
+	setUpdate(&c.Update.AutoInstall, d.UpdateAutoInstall, c.UpdateAutoInstall())
+	setUpdate(&c.Update.ShowChangelog, d.UpdateShowChangelog, c.UpdateShowChangelog())
+	if d.UpdateFeedURL != nil {
+		feed := strings.TrimSpace(*d.UpdateFeedURL)
+		setUpdate(&c.Update.FeedURL, &feed, c.UpdateFeedURL())
+	}
+	if d.UpdateIntervalHours != nil {
+		c.Update.IntervalHours = *d.UpdateIntervalHours
+	}
+}
+
+// setUpdate applies a DTO value onto an optional config field: nil leaves it
+// alone, and an unset field stays unset while the value equals effective.
+func setUpdate[T comparable](field **T, v *T, effective T) {
+	if v == nil || (*field == nil && *v == effective) {
+		return
+	}
+	*field = ptr(*v)
 }

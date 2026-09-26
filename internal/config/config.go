@@ -27,6 +27,7 @@ type Config struct {
 	Auth      AuthConfig      `yaml:"auth"`
 	Logging   LoggingConfig   `yaml:"logging"`
 	UI        UIConfig        `yaml:"ui"`
+	Update    UpdateConfig    `yaml:"update"`
 
 	// Profiles lists the people this instance manages drops for. A config with
 	// no profiles block synthesizes exactly one profile (MainProfileName)
@@ -238,6 +239,47 @@ type LoggingConfig struct {
 type UIConfig struct {
 	StartMinimized bool `yaml:"start_minimized"`
 	ShowDebugPane  bool `yaml:"show_debug_pane"`
+}
+
+// UpdateConfig configures the in-app self-updater. The bools and feed_url are
+// pointers so a config written before this block existed (nil) keeps the
+// defaults, while an explicit false or "" in YAML sticks; read them through
+// the Update* accessors.
+type UpdateConfig struct {
+	Enabled       *bool   `yaml:"enabled,omitempty"`        // nil => true: background checks
+	AutoInstall   *bool   `yaml:"auto_install,omitempty"`   // nil => true: install found updates when no watch is in progress
+	ShowChangelog *bool   `yaml:"show_changelog,omitempty"` // nil => true: offer release notes in the dashboard
+	FeedURL       *string `yaml:"feed_url,omitempty"`       // nil => DefaultUpdateFeedURL; "" disables checking
+	IntervalHours int     `yaml:"interval_hours"`           // background check period; 0 => 24
+}
+
+// DefaultUpdateFeedURL is the release manifest the updater reads by default.
+const DefaultUpdateFeedURL = "https://cdn.rake.pro/releases/dropwarden/latest.json"
+
+// UpdateEnabled reports whether background update checks run (default true).
+func (c *Config) UpdateEnabled() bool { return boolOr(c.Update.Enabled, true) }
+
+// UpdateAutoInstall reports whether a found update installs itself once no
+// watch is in progress (default true).
+func (c *Config) UpdateAutoInstall() bool { return boolOr(c.Update.AutoInstall, true) }
+
+// UpdateShowChangelog reports whether the dashboard offers the release notes
+// of a pending update (default true).
+func (c *Config) UpdateShowChangelog() bool { return boolOr(c.Update.ShowChangelog, true) }
+
+// UpdateFeedURL returns the manifest URL; "" means checking is disabled.
+func (c *Config) UpdateFeedURL() string {
+	if c.Update.FeedURL == nil {
+		return DefaultUpdateFeedURL
+	}
+	return strings.TrimSpace(*c.Update.FeedURL)
+}
+
+func boolOr(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
 }
 
 // Load reads, defaults, and validates the config at path.

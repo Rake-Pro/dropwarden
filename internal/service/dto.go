@@ -112,6 +112,15 @@ type ConfigDTO struct {
 	StoredEnabled      bool     `json:"storedEnabled"`
 	LogLevel           string   `json:"logLevel"`
 	CaptureGQLBodies   bool     `json:"captureGqlBodies"`
+
+	// Updates pane. Pointers so a partial POST that omits them (an older
+	// client, a scripted call) leaves the update block untouched instead of
+	// zeroing it; the settings UI always sends all five.
+	UpdateEnabled       *bool   `json:"updateEnabled,omitempty"`
+	UpdateAutoInstall   *bool   `json:"updateAutoInstall,omitempty"`
+	UpdateShowChangelog *bool   `json:"updateShowChangelog,omitempty"`
+	UpdateFeedURL       *string `json:"updateFeedURL,omitempty"`
+	UpdateIntervalHours *int    `json:"updateIntervalHours,omitempty"`
 }
 
 type LoginDTO struct {

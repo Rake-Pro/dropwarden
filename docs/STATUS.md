@@ -4,6 +4,22 @@ Snapshot for resuming after a context clear. Repo: Rake-Pro/dropwarden (private)
 branch main. This file is the "where are we" note; deeper design is in README.md,
 NOTES-twitch.md, NOTES-wails.md.
 
+## 2026-09-26 - v0.1.0 release plumbing (uncommitted working tree)
+
+- Added: `internal/version`, `internal/update` (manifest feed at
+  `update.feed_url`, sha256-verified download, apply, helper job),
+  `dropwarden-cli update-apply` (hidden), host update controller
+  (`cmd/dropwarden/updates.go`: tray item, 30 s + interval checks, auto-install
+  deferred while any engine is opening/validating/watching/claiming),
+  `/api/update*`, dashboard banner + Settings > Updates pane.
+- Packaging: `.github/workflows/release.yml` (tag or dispatch), Inno Setup
+  script, Wails manifest + CI-generated syso, macOS Info.plist +
+  `scripts/bundle.sh`, icons from `scripts/gen-icons.py`.
+- Fixed: `App.Close` is now the Wails OnShutdown hook (macOS quit never
+  returned from `wapp.Run`, so Chrome was not torn down there).
+- Not yet exercised: the release workflow on real runners, the downloads host
+  (PUT receiver does not exist yet), an end-to-end update on any OS.
+
 Everything below is COMMITTED and PUSHED to main (commits b9a9996..851ac1a,
 plus 7edcaca from the Windows session): multi-profile support, the live
 runtime lifecycle, the shared-window/one-Chrome-per-profile work, and the

@@ -18,8 +18,13 @@ The "Watch anyway" override (`914a620`) exists to force this test.
   carve-out). Replace with a no-activation solution, or prove muted
   background-tab playback reliable. Confirmed working on macOS, but this is
   the known silent-failure family.
-- Thin-client deployment story is absent: no packaging, autostart, or update
-  mechanism (goals adversarial review P1).
+- Thin-client deployment story - PARTIALLY CLOSED 2026-09-26 (v0.1.0):
+  packaging (Windows installer, macOS dmg, Linux tarball) and the self-update
+  mechanism are done; Windows autostart is the installer's optional login
+  task. Still open: macOS and Linux autostart (Wails v3 beta.17 ships an
+  autostart API, `pkg/application/autostart_*`, worth evaluating), and a real
+  first run of the release workflow + updater on each OS (goals adversarial
+  review P1).
 - Kick live verification (deliberately parked until a campaign the user wants
   is running): progress sources are nil-stubbed (`internal/kick/pages.go`),
   server accrues silently and unclaimed Kick rewards EXPIRE; claim/play/offline
@@ -75,7 +80,8 @@ The "Watch anyway" override (`914a620`) exists to force this test.
   review P2).
 - Goals adversarial review decision form D1-D5 pending answers (workspace
   report `reports/2026-08-31_dropwarden-goals-adversarial-review.html`).
-- First semver release not yet minted (no tags; standard is vX.Y.Z).
+- First semver release: v0.1.0 prepared 2026-09-26 (CHANGELOG, release
+  workflow); the tag is not pushed yet.
 
 ## Minor (P2)
 

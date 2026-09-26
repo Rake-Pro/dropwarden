@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"time"
 
@@ -80,6 +81,8 @@ func (c *Config) applyDefaults() {
 
 	setString(&c.Logging.Level, "info")
 	setInt(&c.Logging.MaxSizeMB, 5)
+
+	setInt(&c.Update.IntervalHours, 24)
 
 	// No profiles block = legacy single-profile install: synthesize the one
 	// implicit profile rooted at the app dir itself. This gets written back
@@ -168,6 +171,18 @@ func (c *Config) validate() error {
 	}
 	if _, err := zerologLevel(c.Logging.Level); err != nil {
 		return err
+	}
+	if c.Update.IntervalHours <= 0 {
+		return fmt.Errorf("config: update.interval_hours %d must be greater than 0", c.Update.IntervalHours)
+	}
+	if feed := c.UpdateFeedURL(); feed != "" {
+		u, err := url.Parse(feed)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return fmt.Errorf("config: update.feed_url %q must be an http(s) URL, or empty to disable update checks", feed)
+		}
+		if h := u.Hostname(); u.Scheme != "https" && h != "localhost" && h != "127.0.0.1" {
+			return fmt.Errorf("config: update.feed_url %q must use https (plain http is only allowed for localhost)", feed)
+		}
 	}
 	return nil
 }

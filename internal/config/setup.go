@@ -128,6 +128,13 @@ logging:
 ui:
   start_minimized: false   # true = start hidden in the tray (the dashboard window can always be opened from the tray icon)
   show_debug_pane: false
+
+update:
+  enabled: true                # background checks: ~30s after start, then every interval_hours (dev builds never auto-check)
+  auto_install: true           # install a found update right away, or as soon as no watch is in progress
+  show_changelog: true         # offer "What's new" release notes on the dashboard banner
+  feed_url: "https://cdn.rake.pro/releases/dropwarden/latest.json"   # release manifest; "" disables update checks
+  interval_hours: 24
 `
 
 // dirName is the app root folder name: dotted on unix/macOS, undotted on

@@ -12,6 +12,10 @@ version: "3"
 vars:
   GOTMPDIR:
     sh: go env GOTMPDIR
+  # Version stamped into local release-style builds; override with
+  # `task build-gui-win VERSION=0.1.0`. Releases stamp it in release.yml.
+  VERSION: '{{.VERSION | default "0.0.0-dev"}}'
+  VERSION_LDFLAG: -X github.com/rake-pro/dropwarden/internal/version.Version={{.VERSION}}
 
 tasks:
   default:
@@ -42,6 +46,21 @@ tasks:
     desc: Cross-compile check of the GUI for Windows (CGO-free)
     cmds:
       - GOOS=windows go build ./...
+
+  build-gui-win:
+    desc: Build the Windows GUI into dist/windows (CGO-free, production, no console window)
+    cmds:
+      - GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags production -ldflags "-H windowsgui {{.VERSION_LDFLAG}}" -o dist/windows/dropwarden.exe ./cmd/dropwarden
+
+  build-cli-win:
+    desc: Build the Windows CLI (also the self-updater's helper) into dist/windows
+    cmds:
+      - GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "{{.VERSION_LDFLAG}}" -o dist/windows/dropwarden-cli.exe ./cmd/dropwarden-cli
+
+  icons:
+    desc: Regenerate build/icons (app PNG, Windows ico, tray PNG) from the logo; needs Python 3 + Pillow
+    cmds:
+      - python3 scripts/gen-icons.py
 
   build-linux:
     desc: Build the Linux GUI (GTK3 backend; needs GTK dev stack or the container sysroot env)

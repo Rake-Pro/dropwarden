@@ -32,7 +32,7 @@ func (t *trayEngine) items() []*application.MenuItem {
 // buildTray creates the system tray, its menu, and a background goroutine that
 // keeps the status lines current. Menu actions drive the engines through the
 // backend (which may not have engines attached yet while Chrome starts).
-func buildTray(wapp *application.App, win *application.WebviewWindow, backend *service.Backend) {
+func buildTray(wapp *application.App, win *application.WebviewWindow, backend *service.Backend, updates *updateController) {
 	tray := wapp.SystemTray.New()
 	tray.SetLabel("dropwarden")
 	tray.SetTooltip("dropwarden")
@@ -102,6 +102,9 @@ func buildTray(wapp *application.App, win *application.WebviewWindow, backend *s
 	})
 	menu.AddSeparator()
 	menu.Add("Open dashboard").OnClick(func(*application.Context) { win.Show() })
+	menu.AddSeparator()
+	// Retitles itself: "Install Update vX.Y.Z" once an update is pending.
+	updates.attach(menu.Add("Check for Updates"))
 	menu.AddSeparator()
 	menu.Add("Quit dropwarden").OnClick(func(*application.Context) { wapp.Quit() })
 

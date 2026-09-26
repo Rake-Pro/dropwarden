@@ -12,6 +12,7 @@ import (
 	"github.com/rake-pro/dropwarden/internal/domain"
 	"github.com/rake-pro/dropwarden/internal/kick"
 	"github.com/rake-pro/dropwarden/internal/logging"
+	"github.com/rake-pro/dropwarden/internal/version"
 	"github.com/rake-pro/dropwarden/internal/watcher"
 )
 
@@ -39,7 +40,36 @@ func NewHTTPHandler(b *Backend) http.Handler {
 		writeJSON(w, map[string]any{
 			"config":   settings.Load(),
 			"profiles": profileStates(b, queue, history),
+			"version":  version.Version,
+			"update":   b.updateState(),
 		})
+	})
+
+	// Self-updater. GET is cheap (no network); check runs a manual feed check
+	// and returns the resulting state; install starts the pending install and
+	// returns at once (the app quits and relaunches when it is done).
+	mux.HandleFunc("GET /api/update", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, b.updateState())
+	})
+	mux.HandleFunc("POST /api/update/check", func(w http.ResponseWriter, r *http.Request) {
+		u := b.updater()
+		if u == nil {
+			writeErr(w, fmt.Errorf("the updater is not running in this process"))
+			return
+		}
+		writeJSON(w, u.CheckNow(r.Context()))
+	})
+	mux.HandleFunc("POST /api/update/install", func(w http.ResponseWriter, r *http.Request) {
+		u := b.updater()
+		if u == nil {
+			writeErr(w, fmt.Errorf("the updater is not running in this process"))
+			return
+		}
+		if err := u.InstallNow(); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
 	})
 
 	mux.HandleFunc("GET /api/debug", func(w http.ResponseWriter, r *http.Request) {

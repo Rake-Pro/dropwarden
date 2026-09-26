@@ -1,0 +1,377 @@
+# Release: a pushed vX.Y.Z tag (or a manual dispatch naming an existing tag)
+# builds and packages dropwarden for Windows, macOS and Linux, attaches
+# everything to a GitHub Release, writes the updater manifest (latest.json),
+# and - when DOWNLOADS_UPLOAD_TOKEN is set - publishes the lot to the
+# downloads host the in-app updater reads (internal/update). Asset names must
+# stay in sync with update.AssetName().
+#
+# Artifact matrix:
+#   Windows  dropwarden_<ver>_windows_amd64_setup.exe  (Inno Setup, per-user)
+#            dropwarden_<ver>_windows_amd64.zip        (updater feed, loose exes)
+#   macOS    dropwarden_<ver>_darwin_universal.dmg     (human install)
+#            dropwarden_<ver>_darwin_universal.zip     (updater feed, whole .app)
+#   Linux    dropwarden_<ver>_linux_amd64.tar.gz       (both binaries; updater feed too)
+#   checksums.txt  (sha256 of every asset)
+#   latest.json    (updater manifest; see README "Releasing")
+#
+# macOS signing/notarization are gated on secrets and skipped cleanly when
+# absent (ad-hoc signature instead): MACOS_CERT_P12 (base64 .p12) +
+# MACOS_CERT_P12_PASSWORD + DEVELOPER_ID_APP to sign; AC_APPLE_ID +
+# AC_PASSWORD + TEAM_ID to notarize.
+#
+# Go: go.mod's directive is 1.27rc2, which setup-go's go-version-file would
+# resolve to that release candidate, so the toolchain is pinned to the 1.27
+# release line here instead.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Existing tag to build and publish (vX.Y.Z)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.27.x"
+  VERSION_PKG: github.com/rake-pro/dropwarden/internal/version.Version
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - name: Resolve tag
+        id: v
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${INPUT_VERSION}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          if ! [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag '${tag}' is not vX.Y.Z" >&2
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: [version]
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.version.outputs.tag }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Icon + manifest resource for dropwarden.exe, with the Wails CLI pinned
+      # to the go.mod version. *.syso is gitignored.
+      - name: Generate Windows resources (syso)
+        shell: bash
+        run: |
+          go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17 generate syso \
+            -arch amd64 -icon build/icons/dropwarden.ico \
+            -manifest build/windows/wails.exe.manifest \
+            -out cmd/dropwarden/rsrc_windows_amd64.syso
+
+      - name: Build (CGO off)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/windows
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags production \
+            -ldflags "-H windowsgui -X ${VERSION_PKG}=${VERSION}" \
+            -o dist/windows/dropwarden.exe ./cmd/dropwarden
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+            -ldflags "-X ${VERSION_PKG}=${VERSION}" \
+            -o dist/windows/dropwarden-cli.exe ./cmd/dropwarden-cli
+
+      - name: Package zip (updater feed)
+        shell: bash
+        run: |
+          mkdir -p out
+          7z a -tzip "out/dropwarden_${VERSION}_windows_amd64.zip" ./dist/windows/dropwarden.exe ./dist/windows/dropwarden-cli.exe
+
+      # pwsh, not bash: git-bash rewrites /D... /O... switches as POSIX paths.
+      # iscc ships preinstalled on the runner image; choco only as fallback.
+      - name: Build Inno Setup installer
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+          }
+          iscc "/DAppVersion=$env:VERSION" "/DBinDir=$PWD\dist\windows" /Oout build\windows\dropwarden.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: out/*
+          if-no-files-found: error
+
+  macos:
+    needs: [version]
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.version.outputs.tag }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build universal binaries (arm64 + amd64 + lipo)
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for arch in arm64 amd64; do
+            CGO_ENABLED=1 GOOS=darwin GOARCH=$arch go build -tags production \
+              -ldflags "-X ${VERSION_PKG}=${VERSION}" -o "dist/dropwarden-$arch" ./cmd/dropwarden
+            CGO_ENABLED=1 GOOS=darwin GOARCH=$arch go build \
+              -ldflags "-X ${VERSION_PKG}=${VERSION}" -o "dist/dropwarden-cli-$arch" ./cmd/dropwarden-cli
+          done
+          lipo -create -output dist/dropwarden dist/dropwarden-arm64 dist/dropwarden-amd64
+          lipo -create -output dist/dropwarden-cli dist/dropwarden-cli-arm64 dist/dropwarden-cli-amd64
+
+      - name: Assemble dropwarden.app
+        run: VERSION="${VERSION}" BIN=dist/dropwarden CLI_BIN=dist/dropwarden-cli APP=dist/dropwarden.app scripts/bundle.sh
+
+      - name: Check signing secrets
+        id: secrets
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          AC_APPLE_ID: ${{ secrets.AC_APPLE_ID }}
+        run: |
+          echo "sign=$([ -n "$MACOS_CERT_P12" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "notarize=$([ -n "$AC_APPLE_ID" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Sign (Developer ID)
+        if: steps.secrets.outputs.sign == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_P12_PASSWORD: ${{ secrets.MACOS_CERT_P12_PASSWORD }}
+          DEVELOPER_ID_APP: ${{ secrets.DEVELOPER_ID_APP }}
+        run: |
+          set -euo pipefail
+          echo "$MACOS_CERT_P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security import "$RUNNER_TEMP/cert.p12" -k build.keychain -P "$MACOS_CERT_P12_PASSWORD" -T /usr/bin/codesign
+          # Developer ID intermediates: a Keychain-exported p12 carries only
+          # the leaf + key, and the runner keychain cannot chain it without them.
+          curl -fsSL -o "$RUNNER_TEMP/devid_g1.cer" https://www.apple.com/certificateauthority/DeveloperIDCA.cer
+          curl -fsSL -o "$RUNNER_TEMP/devid_g2.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security import "$RUNNER_TEMP/devid_g1.cer" -k build.keychain
+          security import "$RUNNER_TEMP/devid_g2.cer" -k build.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP"/devid_g*.cer
+          # Sign by identity hash (the build keychain holds exactly one), so
+          # formatting drift in DEVELOPER_ID_APP cannot break the match.
+          identity=$(security find-identity -v -p codesigning build.keychain | awk '/^ *1\)/{print $2; exit}')
+          if [ -z "$identity" ]; then
+            echo "sign: no valid codesigning identity (DEVELOPER_ID_APP=${DEVELOPER_ID_APP})" >&2
+            exit 1
+          fi
+          # Inner binary first, then the bundle (hardened runtime for notarization).
+          codesign --force --options runtime --timestamp -s "$identity" dist/dropwarden.app/Contents/MacOS/dropwarden-cli
+          codesign --force --options runtime --timestamp -s "$identity" dist/dropwarden.app
+          codesign --verify --strict --verbose=2 dist/dropwarden.app
+
+      # No cert secrets: ad-hoc sign the WHOLE bundle so it carries one
+      # consistent identity (Apple Silicon refuses to run unsigned arm64 code).
+      - name: Ad-hoc sign (fallback)
+        if: steps.secrets.outputs.sign != 'true'
+        run: codesign --force --deep -s - dist/dropwarden.app
+
+      - name: Notarize and staple
+        if: steps.secrets.outputs.sign == 'true' && steps.secrets.outputs.notarize == 'true'
+        env:
+          AC_APPLE_ID: ${{ secrets.AC_APPLE_ID }}
+          AC_PASSWORD: ${{ secrets.AC_PASSWORD }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          ditto -c -k --keepParent dist/dropwarden.app "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --apple-id "$AC_APPLE_ID" --team-id "$TEAM_ID" --password "$AC_PASSWORD" --wait
+          xcrun stapler staple dist/dropwarden.app
+
+      - name: Package dmg + zip
+        run: |
+          set -euo pipefail
+          mkdir -p out dmg
+          ditto -c -k --keepParent dist/dropwarden.app "out/dropwarden_${VERSION}_darwin_universal.zip"
+          # dmg with an /Applications link for drag-to-install.
+          cp -R dist/dropwarden.app dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname dropwarden -srcfolder dmg -ov -format UDZO \
+            "out/dropwarden_${VERSION}_darwin_universal.dmg"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: out/*
+          if-no-files-found: error
+
+  linux:
+    needs: [version]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.version.outputs.tag }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install GTK/webkit dev headers
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libx11-dev
+
+      - name: Build and package
+        run: |
+          set -euo pipefail
+          mkdir -p dist out
+          go build -tags "gtk3 production" -ldflags "-X ${VERSION_PKG}=${VERSION}" -o dist/dropwarden ./cmd/dropwarden
+          go build -tags "gtk3 production" -ldflags "-X ${VERSION_PKG}=${VERSION}" -o dist/dropwarden-cli ./cmd/dropwarden-cli
+          tar -C dist -czf "out/dropwarden_${VERSION}_linux_amd64.tar.gz" dropwarden dropwarden-cli
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: out/*
+          if-no-files-found: error
+
+  publish:
+    needs: [version, windows, macos, linux]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.version.outputs.tag }}
+      VERSION: ${{ needs.version.outputs.version }}
+      DOWNLOADS_BASE_URL: ${{ vars.DOWNLOADS_BASE_URL || 'https://cdn.rake.pro/releases' }}
+      DOWNLOADS_UPLOAD_TOKEN: ${{ secrets.DOWNLOADS_UPLOAD_TOKEN }}
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: assets
+          pattern: "{windows,macos,linux}"
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd assets
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create or update release
+        run: |
+          set -euo pipefail
+          notes="Binaries are not code-signed: Windows SmartScreen asks for More info > Run anyway (Windows 11 Smart App Control must be off), and macOS Gatekeeper needs right-click > Open on first launch. Google Chrome must be installed; dropwarden drives its own dedicated Chrome profile."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" \
+              --title "dropwarden $TAG" --generate-notes --notes "$notes"
+          fi
+
+      # Updater manifest: every asset with its absolute URL on the downloads
+      # host, sha256 and size, plus the release notes GitHub now holds.
+      - name: Write latest.json
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body > "$RUNNER_TEMP/notes.md"
+          python3 - <<'PY'
+          import datetime, hashlib, json, os
+          base = os.environ["DOWNLOADS_BASE_URL"].rstrip("/")
+          tag, version = os.environ["TAG"], os.environ["VERSION"]
+          notes = open(os.path.join(os.environ["RUNNER_TEMP"], "notes.md"), encoding="utf-8").read().strip()
+          assets = []
+          for name in sorted(os.listdir("assets")):
+              if name == "latest.json":
+                  continue
+              data = open(os.path.join("assets", name), "rb").read()
+              assets.append({
+                  "name": name,
+                  "url": f"{base}/dropwarden/{tag}/{name}",
+                  "sha256": hashlib.sha256(data).hexdigest(),
+                  "size": len(data),
+              })
+          manifest = {
+              "name": "dropwarden",
+              "version": version,
+              "tag": tag,
+              "published_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "notes": notes,
+              "assets": assets,
+          }
+          with open("assets/latest.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, indent=2)
+              f.write("\n")
+          PY
+          cat assets/latest.json
+          gh release upload "$TAG" assets/latest.json --repo "$GITHUB_REPOSITORY" --clobber
+
+      # Contract for the receiving service: PUT with a Bearer token, layout
+      # <base>/dropwarden/<tag>/<asset> plus <base>/dropwarden/latest.json.
+      # latest.json goes last so the feed never names files not yet uploaded.
+      - name: Publish to downloads host
+        if: env.DOWNLOADS_UPLOAD_TOKEN != ''
+        run: |
+          set -euo pipefail
+          base="${DOWNLOADS_BASE_URL%/}"
+          for f in assets/*; do
+            name=$(basename "$f")
+            # Versioned assets are served as immutable: a re-run of the tag
+            # must never overwrite one. latest.json and checksums.txt always go.
+            if [ "$name" != "latest.json" ] && [ "$name" != "checksums.txt" ]; then
+              code=$(curl -sS -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer ${DOWNLOADS_UPLOAD_TOKEN}" \
+                "${base}/dropwarden/${TAG}/${name}" || true)
+              if [ "$code" = "200" ]; then
+                echo "${base}/dropwarden/${TAG}/${name} exists, skipping"
+                continue
+              fi
+            fi
+            echo "PUT ${base}/dropwarden/${TAG}/${name}"
+            curl --fail -sS -X PUT -H "Authorization: Bearer ${DOWNLOADS_UPLOAD_TOKEN}" \
+              --data-binary "@${f}" "${base}/dropwarden/${TAG}/${name}"
+          done
+          echo "PUT ${base}/dropwarden/latest.json"
+          curl --fail -sS -X PUT -H "Authorization: Bearer ${DOWNLOADS_UPLOAD_TOKEN}" \
+            --data-binary "@assets/latest.json" "${base}/dropwarden/latest.json"
