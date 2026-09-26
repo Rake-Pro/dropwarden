@@ -462,3 +462,72 @@ func TestPollProgressSweepsOtherCompletedDrop(t *testing.T) {
 		t.Fatal("swept drop should be in History")
 	}
 }
+
+func TestClaimIDFromCampaignDetailsWhenInventoryDroppedIt(t *testing.T) {
+	// Live 2026-09-25: at 60/60 Twitch removed the campaign from
+	// dropCampaignsInProgress, so neither the current-drop session nor the
+	// inventory knew the claim id. The campaign details view still has it.
+	st, _, pager, emit, e := claimFixture(t, "")
+	pager.claimStatus = "ELIGIBLE_FOR_ALL"
+	pager.inventory = []domain.Progress{{DropID: "other", ClaimID: "u#campX#other", RealMinutes: 5, RequiredMinutes: 60}}
+	pager.details = map[string][]domain.Progress{"camp1": {{DropID: "d1", ClaimID: "u#camp1#d1", RealMinutes: 60, RequiredMinutes: 60, Claimable: true}}}
+
+	e.runClaiming(context.Background())
+	if pager.detailsCalls != 1 {
+		t.Fatalf("the details view should be read once, got %d", pager.detailsCalls)
+	}
+	if len(pager.claimed) != 1 || pager.claimed[0] != "u#camp1#d1" {
+		t.Fatalf("the mutation should run with the details claim id, got %v", pager.claimed)
+	}
+	if p, _ := st.GetProgress("d1"); p == nil || p.ClaimID != "u#camp1#d1" {
+		t.Fatalf("the learned claim id should be saved, got %+v", p)
+	}
+	assertClaimed(t, st, emit)
+}
+
+func TestClaimSweepReadsDetailsForDroppedCampaign(t *testing.T) {
+	st, pager, _, e := sweepFixture(t, 2)
+	pager.details = map[string][]domain.Progress{"camp1": pager.inventory}
+	pager.inventory = nil // campaign complete: gone from dropCampaignsInProgress
+
+	e.claimSweep(context.Background(), "test")
+	if pager.detailsCalls != 1 {
+		t.Fatalf("one details fetch for the one campaign, got %d", pager.detailsCalls)
+	}
+	if len(pager.claimed) != 2 {
+		t.Fatalf("both drops should be claimed from the details rows, sent %v", pager.claimed)
+	}
+	if has, _ := st.HasClaim("d01"); !has {
+		t.Fatal("swept drop should be in History")
+	}
+}
+
+func TestClaimSweepDetailsFetchesAreBounded(t *testing.T) {
+	st, pager, _, e := sweepFixture(t, 0)
+	for i := 0; i < 5; i++ {
+		cid, did := fmt.Sprintf("c%d", i), fmt.Sprintf("x%d", i)
+		c := domain.Campaign{ID: cid, Name: cid, Status: domain.StatusActive, EndAt: time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC),
+			Drops: []domain.Drop{{ID: did, CampaignID: cid, Name: did, RequiredMinutes: 60}}}
+		if err := st.UpsertCampaign(c); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SaveProgress(domain.Progress{DropID: did, RealMinutes: 60, RequiredMinutes: 60, Claimable: true, Source: domain.SourceInventory}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pager.inventory = []domain.Progress{} // read succeeds, lists nothing
+
+	e.claimSweep(context.Background(), "test")
+	if pager.detailsCalls != sweepDetailsMax {
+		t.Fatalf("details fetches should cap at %d, got %d", sweepDetailsMax, pager.detailsCalls)
+	}
+	// The three read (no claim id came back) are parked; the next pass reads the other two.
+	e.claimSweep(context.Background(), "test")
+	if pager.detailsCalls != 5 {
+		t.Fatalf("second pass should read the remaining two campaigns, total %d", pager.detailsCalls)
+	}
+	e.claimSweep(context.Background(), "test")
+	if pager.detailsCalls != 5 {
+		t.Fatalf("parked drops must not cost a details fetch every pass, total %d", pager.detailsCalls)
+	}
+}

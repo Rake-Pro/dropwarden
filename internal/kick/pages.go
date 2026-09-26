@@ -123,6 +123,11 @@ func (p *Pages) FetchInventoryProgress(ctx context.Context) ([]domain.Progress, 
 	return nil, errors.ErrUnsupported
 }
 
+// CampaignProgress has no known Kick endpoint (no campaign details query).
+func (p *Pages) CampaignProgress(context.Context, string, string) ([]domain.Progress, error) {
+	return nil, errors.ErrUnsupported
+}
+
 // DrainProgress: Kick has no passive capture shim yet; the stream page's
 // on-screen progress widget is the future source (verify live).
 func (p *Pages) DrainProgress(ctx context.Context) ([]domain.Progress, error) {

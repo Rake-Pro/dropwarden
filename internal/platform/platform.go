@@ -69,8 +69,9 @@ type Controller interface {
 	CancelRaid(ctx context.Context) (bool, error)
 
 	// ClaimInInventory clicks the claim button on the already-loaded inventory
-	// page: the first element matching selector whose label text equals text
-	// (config claim.inventory_button_selector / _text). Returns false (no
-	// error) when nothing matches.
-	ClaimInInventory(ctx context.Context, selector, text string) (bool, error)
+	// page, matched by selector and label text (config
+	// claim.inventory_button_selector / _text). Returns false (no error) when
+	// nothing matches, with candidates holding the trimmed labels of up to 12
+	// buttons on the page so the miss can be diagnosed from the log alone.
+	ClaimInInventory(ctx context.Context, selector, text string) (clicked bool, candidates []string, err error)
 }

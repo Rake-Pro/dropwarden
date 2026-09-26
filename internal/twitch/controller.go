@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/rake-pro/dropwarden/internal/browser"
 )
@@ -76,29 +79,84 @@ func (c *controller) CancelRaid(ctx context.Context) (bool, error) {
 	return c.sess.Click(ctx, selRaidCancel)
 }
 
+// Claim button wait on the inventory page. Live 2026-09-25 a capture 8 s after
+// load held no claim button at all (the claimable card had not rendered), so
+// the fallback polls, then pages in more cards via "Load More", before giving
+// up. Vars so tests can shrink them.
+var (
+	claimPollWindow = 30 * time.Second // first poll after the page settled
+	claimPollEvery  = time.Second
+	loadMoreRounds  = 5
+	loadMoreGap     = 2 * time.Second // poll window after each Load More round
+)
+
 // ClaimInInventory clicks the claim button on the already-loaded inventory
-// page: the first element matching selector whose label text equals text
-// (case-insensitive; both from config claim.inventory_button_*). It returns
-// false with no error when selector is empty or nothing matches. The match is
-// done in page JS (tag the element), the click is the session's real CDP mouse
-// dispatch on the tagged element.
-func (c *controller) ClaimInInventory(ctx context.Context, selector, text string) (bool, error) {
+// page (selector and text from config claim.inventory_button_*), matched by
+// jsMarkClaimButton's tiers: label equals text, then label or aria-label
+// contains it, then any button labelled "claim". It polls for the button every
+// claimPollEvery for claimPollWindow; if none shows, it clicks every visible
+// "Load More" button and scrolls to the bottom, up to loadMoreRounds rounds
+// loadMoreGap apart, polling again after each. It returns false with no error
+// when selector is empty or nothing matched; on a miss candidates holds the
+// trimmed labels of up to 12 buttons on the page. The match is done in page JS
+// (tag the element), the click is the session's real CDP mouse dispatch on
+// the tagged element.
+func (c *controller) ClaimInInventory(ctx context.Context, selector, text string) (bool, []string, error) {
 	if strings.TrimSpace(selector) == "" {
-		return false, nil
+		return false, nil, nil
 	}
-	var res struct {
-		Found   bool   `json:"found"`
-		Matches int    `json:"matches"`
-		Error   string `json:"error"`
+	res, err := c.pollClaimButton(ctx, selector, text, claimPollWindow)
+	for round := 1; err == nil && !res.Found && round <= loadMoreRounds && ctx.Err() == nil; round++ {
+		var n int
+		if lerr := c.sess.Eval(ctx, jsLoadMore, &n); lerr != nil || n == 0 {
+			break
+		}
+		log.Info().Int("round", round).Int("buttons", n).Msg("twitch: no claim button yet; clicked Load More")
+		res, err = c.pollClaimButton(ctx, selector, text, loadMoreGap)
 	}
-	if err := c.sess.Eval(ctx, jsMarkClaimButton(selector, text), &res); err != nil {
-		return false, fmt.Errorf("twitch: find claim button: %w", err)
-	}
-	if res.Error != "" {
-		return false, fmt.Errorf("twitch: find claim button (selector %q): %s", selector, res.Error)
+	if err != nil {
+		return false, res.Candidates, err
 	}
 	if !res.Found {
-		return false, nil
+		return false, res.Candidates, nil
 	}
-	return c.sess.Click(ctx, selMarkedClaim)
+	if res.Tier != "exact" {
+		log.Info().Str("tier", res.Tier).Str("text", text).Msg("twitch: claim button matched by a looser rule; consider updating claim.inventory_button_*")
+	}
+	ok, err := c.sess.Click(ctx, selMarkedClaim)
+	return ok, nil, err
+}
+
+// pollClaimButton runs jsMarkClaimButton every claimPollEvery until it finds
+// (and tags) the claim button, reports a page error, or window elapses. It
+// always probes at least once.
+func (c *controller) pollClaimButton(ctx context.Context, selector, text string, window time.Duration) (claimMarkResult, error) {
+	deadline := time.Now().Add(window)
+	for {
+		var res claimMarkResult
+		if err := c.sess.Eval(ctx, jsMarkClaimButton(selector, text), &res); err != nil {
+			return res, fmt.Errorf("twitch: find claim button: %w", err)
+		}
+		if res.Error != "" {
+			return res, fmt.Errorf("twitch: find claim button (selector %q): %s", selector, res.Error)
+		}
+		if res.Found || !time.Now().Before(deadline) {
+			return res, nil
+		}
+		select {
+		case <-ctx.Done():
+			return res, nil
+		case <-time.After(claimPollEvery):
+		}
+	}
+}
+
+// claimMarkResult is jsMarkClaimButton's answer. Tier names which rule
+// matched ("exact", "contains", "claim"); Candidates is filled on a miss.
+type claimMarkResult struct {
+	Found      bool     `json:"found"`
+	Matches    int      `json:"matches"`
+	Tier       string   `json:"tier"`
+	Candidates []string `json:"candidates"`
+	Error      string   `json:"error"`
 }

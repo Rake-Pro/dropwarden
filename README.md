@@ -37,13 +37,20 @@ v3. Development happens directly from GoLand.
   drop's `dropInstanceID`. A claim only counts once a fresh inventory read
   confirms it (success status plus the row `isClaimed` or gone; a failed or
   user-less read never confirms).
+- Claim id: the stored progress row, the current drop session, the
+  in-progress inventory, then the campaign's details view (Twitch drops a
+  completed campaign from the in-progress list at once).
 - Fallback (mutation unsupported or failed): the tab opens the drops
-  inventory, writes `debug/inventory-buttons.json`, and clicks the first
-  element matching `claim.inventory_button_selector` whose label is
-  `claim.inventory_button_text` (defaults
+  inventory, waits up to 30 s for a claim button (then clicks "Load More" up
+  to 5 times), and clicks the element matching `claim.inventory_button_selector`
+  whose label is `claim.inventory_button_text` (defaults
   `button:has([data-a-target="tw-core-button-label-text"])` / "Claim Now";
-  Settings > Platforms > Twitch > Advanced). An empty selector only writes the capture.
-- One bounded attempt (60 s) per completed drop; if both paths fail the
+  Settings > Platforms > Twitch > Advanced), or whose label or aria-label
+  contains it, or any button labelled "claim". It then writes
+  `debug/inventory-buttons.json` (URL, section headings, buttons). An empty
+  selector only writes the capture.
+- One bounded attempt per completed drop (60 s for the mutation path, a
+  separate 90 s for the inventory fallback); if both paths fail the
   queue item goes to needs_action for a manual claim.
 - Claim sweep (`claim.sweep`, default true): after each discovery pass and
   after a progress poll that sees another drop complete, up to 10 completed,

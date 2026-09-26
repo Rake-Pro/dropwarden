@@ -62,11 +62,13 @@ claim:
   # Claiming: the DropsPage_ClaimDropRewards GraphQL mutation (sent from the
   # page with its own auth/integrity headers) is the primary path, verified by
   # re-reading the inventory. If it fails, the tab opens the inventory page,
-  # writes debug/inventory-buttons.json and clicks the first element matching
-  # inventory_button_selector whose label text is inventory_button_text.
+  # waits for a claim button (paging with "Load More"), clicks the element
+  # matching inventory_button_selector whose label is (or contains)
+  # inventory_button_text, else any button labelled "claim", and writes
+  # debug/inventory-buttons.json.
   sweep: true                  # also claim every completed, unclaimed drop after discovery / progress polls (max 10 per pass)
   # inventory_button_selector: 'button:has([data-a-target="tw-core-button-label-text"])'   # default; "" = capture only, no click
-  inventory_button_text: "Claim Now"   # case-insensitive, whole trimmed label
+  inventory_button_text: "Claim Now"   # case-insensitive, whitespace-collapsed; exact label first, then contains
   strategy: in_page            # legacy, not read by the claim flow
   allow_gql_fallback: false    # legacy, ignored since v0.1.4 (the mutation is now the primary path)
   retry_backoff: 5m

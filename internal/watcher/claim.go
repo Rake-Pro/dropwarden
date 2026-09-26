@@ -10,10 +10,20 @@ import (
 	"github.com/rake-pro/dropwarden/internal/twitch/gql"
 )
 
-// claimTimeout bounds the ENTIRE claim attempt (mutation, verification, DOM
-// fallback). A live run spent 9+ minutes stuck in a single claim click;
-// nothing in this state is worth more than a minute of stream time.
-const claimTimeout = 60 * time.Second
+// A live run spent 9+ minutes stuck in a single claim click, so every claim
+// step is bounded. The two paths have SEPARATE budgets so a slow mutation path
+// never eats the DOM fallback's time:
+//
+//   - claimAPITimeout: claim id lookup (stored row, current drop, inventory,
+//     campaign details) plus the mutation and its verification read; also
+//     each sweep claim.
+//   - claimTimeout: the DOM fallback - open the inventory (~7 s settle), wait
+//     up to 30 s for a claim button, up to 5 "Load More" rounds 2 s apart,
+//     click, settle and verify.
+const (
+	claimAPITimeout = 60 * time.Second
+	claimTimeout    = 90 * time.Second
+)
 
 // URLInventoryClaim is where the user can claim manually when we could not.
 const URLInventoryClaim = "https://www.twitch.tv/drops/inventory"
@@ -43,11 +53,11 @@ func (e *Engine) runClaiming(parent context.Context) (State, string) {
 		return StateCooldown, "nothing to claim"
 	}
 	drop := e.cur.drop
-	ctx, cancel := context.WithTimeout(parent, claimTimeout)
+	ctx, cancel := context.WithTimeout(parent, claimAPITimeout)
 	defer cancel()
 
 	path, detected := "", false
-	claimID := e.claimIDFor(ctx, drop.ID)
+	claimID := e.claimIDFor(ctx, drop.ID, e.cur.campaign.ID)
 	if claimID == "" {
 		e.deps.Log.Warn().Str("drop", drop.ID).Msg("claim: no claim id known; skipping the mutation")
 	} else {
@@ -61,8 +71,13 @@ func (e *Engine) runClaiming(parent context.Context) (State, string) {
 			e.deps.Log.Warn().Err(err).Str("drop", drop.ID).Str("status", status).Msg("claim: mutation failed; trying the inventory page")
 		}
 	}
-	if path == "" && e.claimByDOM(ctx, parent, drop.ID, claimID) {
-		path = "dom"
+	if path == "" {
+		dctx, dcancel := context.WithTimeout(parent, claimTimeout)
+		ok := e.claimByDOM(dctx, parent, drop.ID, claimID)
+		dcancel()
+		if ok {
+			path = "dom"
+		}
 	}
 
 	if path == "" {
@@ -204,8 +219,12 @@ func (e *Engine) dropsByID() map[string]sweepCandidate {
 }
 
 // claimIDFor returns the drop's claim id (Twitch dropInstanceID), refreshing it
-// from the server-side inventory when the stored progress row has none.
-func (e *Engine) claimIDFor(ctx context.Context, dropID string) string {
+// from the server when the stored progress row has none: the current drop
+// session, the in-progress inventory, and last the campaign's details view,
+// because Twitch removes a campaign from dropCampaignsInProgress the moment its
+// drop hits the required minutes (live 2026-09-25: inventory_rows 6,
+// active_in_rows false, then "no claim id known").
+func (e *Engine) claimIDFor(ctx context.Context, dropID, campaignID string) string {
 	p, _ := e.deps.Store.GetProgress(dropID)
 	if p != nil && p.ClaimID != "" {
 		return p.ClaimID
@@ -219,6 +238,22 @@ func (e *Engine) claimIDFor(ctx context.Context, dropID string) string {
 	}
 	for _, r := range rows {
 		if r.DropID == dropID && r.ClaimID != "" {
+			return e.saveClaimID(p, r)
+		}
+	}
+	if campaignID == "" {
+		return ""
+	}
+	rows, err = e.deps.Pages.CampaignProgress(ctx, campaignID, "")
+	if err != nil {
+		if !errors.Is(err, errors.ErrUnsupported) {
+			e.deps.Log.Warn().Err(err).Str("campaign", campaignID).Msg("claim: campaign details read for claim id failed")
+		}
+		return ""
+	}
+	for _, r := range rows {
+		if r.DropID == dropID && r.ClaimID != "" {
+			e.deps.Log.Info().Str("drop", dropID).Str("campaign", campaignID).Msg("claim: claim id learned from campaign details")
 			return e.saveClaimID(p, r)
 		}
 	}
@@ -287,8 +322,8 @@ func (e *Engine) verifyClaimed(ctx context.Context, dropID, claimID string, abse
 }
 
 // claimByDOM is the fallback: open the inventory page (holding the window
-// visible for it), write the button capture, click the configured claim button
-// and verify. The click has no status to vouch for it, so only an isClaimed
+// visible for it), find and click the claim button (the controller waits for
+// it to render and pages in more cards), write the button capture and verify. The click has no status to vouch for it, so only an isClaimed
 // row confirms it; a platform with no inventory read (Kick) trusts the click.
 // It reports whether the claim is confirmed.
 func (e *Engine) claimByDOM(ctx, parent context.Context, dropID, claimID string) bool {
@@ -298,9 +333,11 @@ func (e *Engine) claimByDOM(ctx, parent context.Context, dropID, claimID string)
 		e.deps.Log.Warn().Err(err).Msg("claim: open inventory failed")
 		return false
 	}
-	e.captureInventoryButtons(ctx)
 	sel, text := e.deps.Cfg.ClaimInventorySelector(), e.deps.Cfg.Claim.InventoryButtonText
-	clicked, err := e.deps.Ctrl.ClaimInInventory(ctx, sel, text)
+	clicked, cands, err := e.deps.Ctrl.ClaimInInventory(ctx, sel, text)
+	// Captured after the attempt, which waits for the claim card to render and
+	// pages in more cards, so the file shows what the matcher finally saw.
+	e.captureInventoryButtons(ctx)
 	if err != nil {
 		e.deps.Log.Warn().Err(err).Msg("claim: inventory click failed")
 		return false
@@ -309,7 +346,7 @@ func (e *Engine) claimByDOM(ctx, parent context.Context, dropID, claimID string)
 		if sel == "" {
 			e.deps.Log.Info().Msg("claim: no inventory selector configured, wrote capture")
 		} else {
-			e.deps.Log.Warn().Str("selector", sel).Str("text", text).Msg("claim: no inventory button matched; see debug/inventory-buttons.json")
+			e.deps.Log.Warn().Str("selector", sel).Str("text", text).Strs("buttons", cands).Msg("claim: no inventory button matched; see debug/inventory-buttons.json")
 		}
 		return false
 	}
@@ -365,6 +402,7 @@ func (e *Engine) claimSweep(ctx context.Context, trigger string) {
 		}
 		return
 	}
+	rows = append(rows, e.sweepDetailsRows(ctx, rows)...)
 	e.reconcileClaimedRows(rows)
 	cands := e.sweepCandidates(rows)
 	if len(cands) == 0 {
@@ -378,7 +416,7 @@ func (e *Engine) claimSweep(ctx context.Context, trigger string) {
 		if ctx.Err() != nil {
 			return
 		}
-		cctx, cancel := context.WithTimeout(ctx, claimTimeout)
+		cctx, cancel := context.WithTimeout(ctx, claimAPITimeout)
 		status, err := e.claimByAPI(cctx, c.drop.ID, c.claimID)
 		cancel()
 		if errors.Is(err, errors.ErrUnsupported) {
@@ -394,6 +432,85 @@ func (e *Engine) claimSweep(ctx context.Context, trigger string) {
 		e.deps.Log.Info().Str("drop", c.drop.Name).Str("path", "gql").Msg("claim: gql (sweep)")
 		e.recordClaim(c.drop, c.campaign, status == gql.ClaimStatusAlreadyClaimed)
 	}
+}
+
+// sweepDetailsMax caps the campaign details fetches one sweep spends on
+// completed drops the inventory read no longer lists.
+const sweepDetailsMax = 3
+
+// sweepDetailsRows covers what the inventory read cannot see: a stored row
+// that is complete but unclaimed (no claim on record) whose drop is missing
+// from inventoryRows, because Twitch drops a campaign from
+// dropCampaignsInProgress once it completes. It fetches the details view of up
+// to sweepDetailsMax such campaigns and returns their rows for candidate
+// gathering. A missing drop the details did not make claimable (no claim id,
+// or read failed) is parked for claim.retry_backoff so it does not cost a
+// details fetch on every poll. The drop being watched is left to runClaiming.
+func (e *Engine) sweepDetailsRows(ctx context.Context, inventoryRows []domain.Progress) []domain.Progress {
+	stored, err := e.deps.Store.ListProgress()
+	if err != nil || len(stored) == 0 {
+		return nil
+	}
+	listed := map[string]bool{}
+	for _, r := range inventoryRows {
+		listed[r.DropID] = true
+	}
+	byDrop := e.dropsByID()
+	now := e.deps.Now()
+	missing := map[string][]string{} // campaign id -> drop ids
+	var order []string
+	for _, p := range stored {
+		if listed[p.DropID] || p.ClaimedAt != nil || !(p.Complete() || p.Claimable) || p.PreconditionsUnmet {
+			continue
+		}
+		if e.cur != nil && p.DropID == e.cur.drop.ID {
+			continue
+		}
+		if at, ok := e.sweepTried[p.DropID]; ok && now.Sub(at) < e.deps.Cfg.Claim.RetryBackoff {
+			continue
+		}
+		x, ok := byDrop[p.DropID]
+		if !ok || x.campaign.ID == "" {
+			continue
+		}
+		if has, err := e.deps.Store.HasClaim(p.DropID); err != nil || has {
+			continue
+		}
+		if _, seen := missing[x.campaign.ID]; !seen {
+			order = append(order, x.campaign.ID)
+		}
+		missing[x.campaign.ID] = append(missing[x.campaign.ID], p.DropID)
+	}
+	var out []domain.Progress
+	for i, cid := range order {
+		if i >= sweepDetailsMax || ctx.Err() != nil {
+			break
+		}
+		var rows []domain.Progress
+		err := e.bounded(ctx, func(c context.Context) (err error) { rows, err = e.deps.Pages.CampaignProgress(c, cid, ""); return })
+		if errors.Is(err, errors.ErrUnsupported) {
+			return out
+		}
+		if err != nil {
+			e.deps.Log.Warn().Err(err).Str("campaign", cid).Msg("claim sweep: campaign details read failed")
+		}
+		got := map[string]bool{}
+		for _, r := range rows {
+			if r.ClaimID != "" || r.ClaimedAt != nil {
+				got[r.DropID] = true
+			}
+		}
+		for _, id := range missing[cid] {
+			if !got[id] {
+				e.sweepTried[id] = now
+			}
+		}
+		out = append(out, rows...)
+	}
+	if len(out) > 0 {
+		e.deps.Log.Info().Int("campaigns", min(len(order), sweepDetailsMax)).Int("rows", len(out)).Msg("claim sweep: read campaign details for completed drops missing from the inventory")
+	}
+	return out
 }
 
 type sweepCandidate struct {

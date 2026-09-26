@@ -4,6 +4,18 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.2.1 - 2026-09-26
+
+### Fixed
+- Claim id at completion: when the stored row, the current drop session and the in-progress inventory have no `dropInstanceID` (Twitch drops a campaign from `dropCampaignsInProgress` the moment it hits its minutes), the claim reads the campaign's details view (`Pager.CampaignProgress`) and saves the id, so the mutation runs instead of "no claim id known".
+- The claim sweep reads the details view for completed, unclaimed stored rows missing from the inventory read (at most 3 campaigns per sweep; a drop the details cannot make claimable waits `claim.retry_backoff`).
+- Page-context GraphQL never runs on a non-Twitch document: an off-site tab (about:blank after a Chrome relaunch) is sent to the drops inventory first ("twitch: tab was off-site, navigated before GQL"), a relaunched or rebuilt Twitch tab reopens twitch.tv at once so the header capture refills, and an unreadable auth cookie yields a descriptive error instead of a SecurityError.
+- Inventory claim fallback: waits up to 30 s for a claim button, then clicks visible "Load More" (up to 5 rounds, 2 s apart, scrolling to the bottom) before giving up; labels are whitespace-collapsed and case-folded and match exact, then contains (text or aria-label), then any "claim" button (not "claimed"). A miss logs up to 12 button labels.
+
+### Changed
+- `debug/inventory-buttons.json` is now `{url, headings, buttons}` (h2/h3/h4 section headings, per-button `disabled`) and is written after the claim attempt, so it shows what the matcher finally saw.
+- The claim attempt has separate budgets: 60 s for claim id lookup + mutation + verification, and 90 s for the inventory fallback (was 60 s for both together), so a slow mutation never eats the fallback's wait.
+
 ## v0.2.0 - 2026-09-26
 
 ### Added

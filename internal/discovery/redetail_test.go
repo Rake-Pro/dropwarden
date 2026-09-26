@@ -24,9 +24,11 @@ type evalSession struct {
 	evals   []string
 }
 
-func (s *evalSession) Navigate(context.Context, string) error          { return nil }
-func (s *evalSession) Reload(context.Context, bool) error              { return nil }
-func (s *evalSession) CurrentURL(context.Context) (string, error)      { return "", nil }
+func (s *evalSession) Navigate(context.Context, string) error { return nil }
+func (s *evalSession) Reload(context.Context, bool) error     { return nil }
+func (s *evalSession) CurrentURL(context.Context) (string, error) {
+	return "https://www.twitch.tv/drops/campaigns", nil
+}
 func (s *evalSession) Click(context.Context, string) (bool, error)     { return false, nil }
 func (s *evalSession) SeedOnNewDocument(context.Context, string) error { return nil }
 func (s *evalSession) Events() <-chan browser.Event                    { return nil }
@@ -52,7 +54,9 @@ func (c evalCtrl) ReassertVolume(context.Context, platform.PlayerPolicy) error  
 func (c evalCtrl) ClickPlay(context.Context) error                                { return nil }
 func (c evalCtrl) ToggleDropsPanel(context.Context) error                         { return nil }
 func (c evalCtrl) CancelRaid(context.Context) (bool, error)                       { return false, nil }
-func (c evalCtrl) ClaimInInventory(context.Context, string, string) (bool, error) { return false, nil }
+func (c evalCtrl) ClaimInInventory(context.Context, string, string) (bool, []string, error) {
+	return false, nil, nil
+}
 
 func detailsCount(s *evalSession) int {
 	n := 0

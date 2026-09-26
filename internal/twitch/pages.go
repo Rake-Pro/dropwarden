@@ -157,18 +157,23 @@ func (p *Pages) OpenInventory(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// InventoryButtons returns every button-like element on the current page as
-// indented JSON (text, aria-label, data-test-selector, data-a-target, class,
-// nearest ancestor data-test-selector, truncated outerHTML) plus the count, so
-// the claim selector can be set from real markup.
+// InventoryButtons returns the current page's URL, section headings and every
+// button-like element (text, aria-label, data-test-selector, data-a-target,
+// class, nearest ancestor data-test-selector, disabled, truncated outerHTML)
+// as indented JSON plus the button count, so the claim selector can be set
+// from real markup.
 func (p *Pages) InventoryButtons(ctx context.Context) ([]byte, int, error) {
-	var rows []map[string]any
-	if err := p.ctrl.Session().Eval(ctx, jsInventoryButtons, &rows); err != nil {
+	var capture struct {
+		URL      string           `json:"url"`
+		Headings []string         `json:"headings"`
+		Buttons  []map[string]any `json:"buttons"`
+	}
+	if err := p.ctrl.Session().Eval(ctx, jsInventoryButtons, &capture); err != nil {
 		return nil, 0, fmt.Errorf("twitch: capture inventory buttons: %w", err)
 	}
-	b, err := json.MarshalIndent(rows, "", "  ")
+	b, err := json.MarshalIndent(capture, "", "  ")
 	if err != nil {
 		return nil, 0, fmt.Errorf("twitch: encode inventory buttons: %w", err)
 	}
-	return b, len(rows), nil
+	return b, len(capture.Buttons), nil
 }

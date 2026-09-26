@@ -261,9 +261,12 @@ const jsLoggedIn = `(() => {
 // jsInventoryButtons collects every button-like element on the current page
 // (the drops inventory) with the attributes a claim selector could key on, so
 // the owner can pick the exact claim.inventory_button_selector /
-// claim.inventory_button_text from real markup when Twitch changes it. Written
-// to debug/inventory-buttons.json on every DOM claim fallback run. Bounded:
-// at most 400 buttons, text 200 and outerHTML 600 characters each.
+// claim.inventory_button_text from real markup when Twitch changes it, plus
+// the page URL and its section headings (h2/h3/h4), which show whether an "In
+// Progress" section rendered at all. Written to debug/inventory-buttons.json
+// on every DOM claim fallback run as {url, headings, buttons}. Bounded: at
+// most 400 buttons (text 200, outerHTML 600 characters) and 60 headings (120
+// characters).
 const jsInventoryButtons = `(() => {
   const out = [];
   document.querySelectorAll("button, a[role='button']").forEach(b => {
@@ -276,32 +279,94 @@ const jsInventoryButtons = `(() => {
       dataATarget: b.getAttribute('data-a-target') || '',
       className: (typeof b.className === 'string') ? b.className : '',
       ancestorTestSelector: anc ? (anc.getAttribute('data-test-selector') || '') : '',
+      disabled: !!b.disabled,
       outerHTML: (b.outerHTML || '').slice(0, 600),
     });
   });
-  return out;
+  const headings = [];
+  document.querySelectorAll('h2, h3, h4').forEach(h => {
+    if (headings.length >= 60) return;
+    const t = String(h.textContent || '').replace(/\s+/g, ' ').trim();
+    if (t) headings.push(h.tagName.toLowerCase() + ': ' + t.slice(0, 120));
+  });
+  return { url: location.href, headings: headings, buttons: out };
 })()`
 
-// jsMarkClaimButton returns JS that finds the first element matching selector
-// whose trimmed textContent equals text (case-insensitive), scrolls it into
+// jsLoadMore clicks every visible "Load More" button on the inventory page
+// (label text, whitespace collapsed, case folded), then scrolls the window and
+// Twitch's root scroller to the bottom so lazily rendered cards mount. It
+// returns the number of buttons clicked. Plain element.click() is enough for a
+// pagination control. // verify live: root scroller selector.
+const jsLoadMore = `(() => {
+  let n = 0;
+  document.querySelectorAll("button, a[role='button'], [role='button']").forEach(b => {
+    const t = String(b.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (t !== 'load more' || b.disabled) return;
+    const r = b.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return;
+    try { b.scrollIntoView({ block: 'center' }); b.click(); n++; } catch (e) {}
+  });
+  try { window.scrollTo(0, document.body.scrollHeight); } catch (e) {}
+  document.querySelectorAll("[data-a-target='root-scroller'], .simplebar-scroll-content, main").forEach(el => {
+    try { el.scrollTop = el.scrollHeight; } catch (e) {}
+  });
+  return n;
+})()`
+
+// jsMarkClaimButton returns JS that finds the claim button, scrolls it into
 // view and tags it data-dw-claim="1" so the session's human-like CDP click can
 // target it by attribute (Session.Click only takes a CSS selector, and the
-// button is only distinguishable by its label text). selector and text are
-// injected as JSON string literals. The result is {found, matches, error}.
+// button is only distinguishable by its label text). Labels are compared with
+// whitespace collapsed and case folded, in tiers, enabled buttons first:
+//
+//  1. "exact": an element matching selector whose text equals text;
+//  2. "contains": an element matching selector whose text or aria-label
+//     contains text;
+//  3. "claim": any button whose text or aria-label contains "claim" (but not
+//     "claimed"), for when the configured selector or text went stale.
+//
+// Live 2026-09-25 the selector plus "Claim Now" matched none of 40 buttons. On
+// a miss the result lists the labels of up to 12 buttons on the page
+// (candidates), so the warn log alone explains it. selector and text are
+// injected as JSON string literals; an invalid selector skips tiers 1-2. The
+// result is {found, matches, tier, candidates, error}.
 func jsMarkClaimButton(selector, text string) string {
 	sel, _ := json.Marshal(selector)
 	txt, _ := json.Marshal(text)
 	return `(() => {
   try {
     document.querySelectorAll('[data-dw-claim]').forEach(x => x.removeAttribute('data-dw-claim'));
-    const want = ` + string(txt) + `.trim().toLowerCase();
-    const els = Array.from(document.querySelectorAll(` + string(sel) + `));
-    const hit = els.find(x => (x.textContent || '').trim().toLowerCase() === want);
-    if (!hit) return { found: false, matches: els.length, error: '' };
-    hit.scrollIntoView({ block: 'center' });
-    hit.setAttribute('data-dw-claim', '1');
-    return { found: true, matches: els.length, error: '' };
-  } catch (e) { return { found: false, matches: 0, error: String(e) }; }
+    const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const label = (x) => norm(x.textContent);
+    const aria = (x) => norm(x.getAttribute('aria-label'));
+    const enabledFirst = (arr) => arr.filter(x => !x.disabled).concat(arr.filter(x => x.disabled));
+    const want = norm(` + string(txt) + `);
+    let els = [];
+    try { els = Array.from(document.querySelectorAll(` + string(sel) + `)); } catch (e) {}
+    const all = Array.from(document.querySelectorAll("button, a[role='button'], [role='button']"));
+    const pick = (tier, arr) => {
+      const hit = enabledFirst(arr)[0];
+      if (!hit) return null;
+      hit.scrollIntoView({ block: 'center' });
+      hit.setAttribute('data-dw-claim', '1');
+      return { found: true, matches: els.length, tier: tier, candidates: [], error: '' };
+    };
+    let r = null;
+    if (want) {
+      r = pick('exact', els.filter(x => label(x) === want)) ||
+          pick('contains', els.filter(x => label(x).includes(want) || aria(x).includes(want)));
+    }
+    const claimish = (s) => s.includes('claim') && !s.includes('claimed');
+    r = r || pick('claim', all.filter(x => claimish(label(x)) || claimish(aria(x))));
+    if (r) return r;
+    const candidates = [];
+    for (const x of all) {
+      if (candidates.length >= 12) break;
+      const t = label(x) || (aria(x) ? '[aria] ' + aria(x) : '');
+      if (t) candidates.push(t.slice(0, 60));
+    }
+    return { found: false, matches: els.length, tier: '', candidates: candidates, error: '' };
+  } catch (e) { return { found: false, matches: 0, tier: '', candidates: [], error: String(e) }; }
 })()`
 }
 

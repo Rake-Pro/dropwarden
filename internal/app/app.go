@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -591,9 +592,21 @@ func (a *App) startTwitchRuntime(ctx context.Context, pr *ProfileRuntime, stagge
 	// initTab is what makes a raw tab Twitch-ready. The supervisor re-runs it on
 	// every rebuilt tab, so an overnight Chrome crash comes back with the GQL
 	// capture shim installed instead of silently capturing nothing.
+	// Every run after the first is a relaunch (Managed) or rebuild (Group):
+	// the fresh tab sits on about:blank, where a page-context GQL call cannot
+	// read the auth cookie and nothing refills the captured headers. Load the
+	// Twitch home page right away so the shim captures them again.
+	var tabInits atomic.Int32
 	initTab := func(ictx context.Context, s browser.Session) error {
 		if err := twitch.InstallCapture(ictx, s); err != nil {
 			log.Warn().Err(err).Msg("app: install capture shim failed")
+		}
+		if tabInits.Add(1) > 1 {
+			if err := s.Navigate(ictx, twitch.URLBase+"/"); err != nil {
+				log.Warn().Err(err).Msg("app: open twitch after browser relaunch failed")
+			} else {
+				log.Info().Msg("app: twitch tab reopened on twitch.tv after browser relaunch")
+			}
 		}
 		return nil
 	}

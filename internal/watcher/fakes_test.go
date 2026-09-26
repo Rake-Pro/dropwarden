@@ -55,10 +55,13 @@ func (f *fakeController) ReassertVolume(context.Context, twitch.PlayerPolicy) er
 func (f *fakeController) ClickPlay(context.Context) error                              { return nil }
 func (f *fakeController) ToggleDropsPanel(context.Context) error                       { return nil }
 func (f *fakeController) CancelRaid(context.Context) (bool, error)                     { return false, nil }
-func (f *fakeController) ClaimInInventory(_ context.Context, selector, _ string) (bool, error) {
+func (f *fakeController) ClaimInInventory(_ context.Context, selector, _ string) (bool, []string, error) {
 	f.claimInvHits++
 	f.claimInvSel = selector
-	return f.claimInv, nil
+	if f.claimInv {
+		return true, nil, nil
+	}
+	return false, []string{"Claimed", "Details"}, nil
 }
 
 // fakePager implements Pager.
@@ -86,6 +89,20 @@ type fakePager struct {
 	invErr       error // FetchInventoryProgress error (e.g. no currentUser, errors.ErrUnsupported)
 	openInvCalls int
 	buttonsCalls int
+
+	// details is CampaignProgress's result per campaign id (detailsErr wins);
+	// detailsCalls counts the fetches.
+	details      map[string][]domain.Progress
+	detailsErr   error
+	detailsCalls int
+}
+
+func (f *fakePager) CampaignProgress(_ context.Context, campaignID, _ string) ([]domain.Progress, error) {
+	f.detailsCalls++
+	if f.detailsErr != nil {
+		return nil, f.detailsErr
+	}
+	return f.details[campaignID], nil
 }
 
 func (f *fakePager) OpenChannel(context.Context, string, twitch.PlayerPolicy) error { return nil }

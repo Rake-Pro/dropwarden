@@ -34,6 +34,12 @@ type Pager interface {
 	LiveChannels(ctx context.Context, logins []string) ([]domain.Channel, error)
 	FetchCurrentDrop(ctx context.Context) (*domain.Progress, error)
 	FetchInventoryProgress(ctx context.Context) ([]domain.Progress, error)
+	// CampaignProgress returns the viewer's per-drop progress for one campaign
+	// from its details view (login "" = the logged-in user). It still sees a
+	// drop that just completed, which the in-progress inventory has already
+	// dropped, so the claim path can learn its claim id. Platforms without a
+	// details query return errors.ErrUnsupported.
+	CampaignProgress(ctx context.Context, campaignID, login string) ([]domain.Progress, error)
 	// DrainProgress returns progress entries observed passively since the last
 	// call (Twitch: the GQL capture shim). Platforms without passive capture
 	// return nil.

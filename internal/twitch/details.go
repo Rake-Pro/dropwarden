@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
 
@@ -31,11 +34,19 @@ func gqlFetchIIFE(bodyJSON []byte) string {
 	return `(async () => {
   try {
     const base = window.__dw_headers || {};
-    const m = document.cookie.match(/auth-token=(\w+)/);
-    const t = m ? m[1] : '';
+    // document.cookie throws a SecurityError on an opaque-origin document
+    // (about:blank after a relaunch); fall back to the captured headers only.
+    let t = '', cookieErr = '';
+    try {
+      const m = document.cookie.match(/auth-token=(\w+)/);
+      t = m ? m[1] : '';
+    } catch (e) { cookieErr = String(e); }
     const headers = Object.assign({}, base, { 'Content-Type': 'application/json' });
     if (!headers['client-id'] && !headers['Client-Id']) headers['Client-Id'] = '` + clientID + `';
-    if (!headers['authorization'] && !headers['Authorization']) headers['Authorization'] = 'OAuth ' + t;
+    if (!headers['authorization'] && !headers['Authorization']) {
+      if (cookieErr) return JSON.stringify({ error: 'no twitch auth on ' + location.href + ': no captured authorization header and the auth-token cookie is unreadable (' + cookieErr + ')' });
+      headers['Authorization'] = 'OAuth ' + t;
+    }
     const r = await fetch('` + gqlEndpoint + `', {
       method: 'POST',
       headers: headers,
@@ -47,6 +58,52 @@ func gqlFetchIIFE(bodyJSON []byte) string {
 })()`
 }
 
+// offSiteSettle is the dwell after navigating an off-site tab back to Twitch,
+// so the page fires its own GraphQL requests and the capture shim picks up the
+// auth and integrity headers before we replay them.
+var offSiteSettle = 3 * time.Second
+
+// isTwitchURL reports whether u is on twitch.tv or a subdomain of it.
+func isTwitchURL(u string) bool {
+	pu, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+	h := strings.ToLower(pu.Hostname())
+	return h == "twitch.tv" || strings.HasSuffix(h, ".twitch.tv")
+}
+
+// ensureOnTwitch makes sure the tab shows a twitch.tv document before a
+// page-context GraphQL call. Such a call runs in the page's origin: on
+// about:blank (a relaunched Chrome) or any other site it cannot read the auth
+// cookie or reach gql.twitch.tv with the site's headers (live 2026-09-25: a
+// SecurityError on document.cookie degraded channel selection). An off-site
+// tab is navigated to the drops inventory (neutral, no playback) once and
+// given a short settle. A failed URL read is left to the Eval to report.
+func (p *Pages) ensureOnTwitch(ctx context.Context) {
+	sess := p.ctrl.Session()
+	cur, err := sess.CurrentURL(ctx)
+	if err != nil || isTwitchURL(cur) {
+		return
+	}
+	log.Info().Str("url", cur).Msg("twitch: tab was off-site, navigated before GQL")
+	if err := sess.Navigate(ctx, URLInventory); err != nil {
+		log.Warn().Err(err).Msg("twitch: navigate off-site tab back to twitch failed")
+		return
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(offSiteSettle):
+	}
+}
+
+// gqlEval runs one page-context GraphQL request (gqlFetchIIFE) on a twitch.tv
+// document and stores the response text in raw.
+func (p *Pages) gqlEval(ctx context.Context, body []byte, raw *string) error {
+	p.ensureOnTwitch(ctx)
+	return p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), raw)
+}
+
 // FetchLogin returns the logged-in user's login via a page-context GraphQL call.
 func (p *Pages) FetchLogin(ctx context.Context) (string, error) {
 	if p.login != "" {
@@ -54,7 +111,7 @@ func (p *Pages) FetchLogin(ctx context.Context) (string, error) {
 	}
 	body, _ := json.Marshal(map[string]any{"query": "{ currentUser { login } }"})
 	var raw string
-	if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
+	if err := p.gqlEval(ctx, body, &raw); err != nil {
 		return "", fmt.Errorf("twitch: fetch login: %w", err)
 	}
 	var resp struct {
@@ -93,7 +150,7 @@ func (p *Pages) FetchCampaignDetails(ctx context.Context, login, campaignID stri
 		"variables": map[string]string{"login": login, "id": campaignID},
 	})
 	var raw string
-	if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
+	if err := p.gqlEval(ctx, body, &raw); err != nil {
 		return domain.Campaign{}, nil, raw, fmt.Errorf("twitch: fetch details %s: %w", campaignID, err)
 	}
 	c, prog, err := gql.ParseCampaignDetails([]byte(raw))
@@ -101,6 +158,24 @@ func (p *Pages) FetchCampaignDetails(ctx context.Context, login, campaignID stri
 		return domain.Campaign{}, nil, raw, fmt.Errorf("twitch: parse details %s (%.160s): %w", campaignID, raw, err)
 	}
 	return c, prog, raw, nil
+}
+
+// CampaignProgress returns the viewer's per-drop progress for one campaign from
+// its details query (watcher.Pager). Unlike the inventory read it still lists
+// a drop that just completed, whose campaign Twitch drops from
+// dropCampaignsInProgress the moment it hits its required minutes, so the
+// claim path can learn the dropInstanceID there. An empty login is resolved
+// (and cached) via FetchLogin.
+func (p *Pages) CampaignProgress(ctx context.Context, campaignID, login string) ([]domain.Progress, error) {
+	if login == "" {
+		l, err := p.FetchLogin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		login = l
+	}
+	_, prog, _, err := p.FetchCampaignDetails(ctx, login, campaignID)
+	return prog, err
 }
 
 // currentDropQuery is a full dropCurrentSession query (not a persisted hash).
@@ -115,7 +190,7 @@ const currentDropQuery = `{currentUser{dropCurrentSession{dropID currentMinutesW
 func (p *Pages) FetchCurrentDrop(ctx context.Context) (*domain.Progress, error) {
 	body, _ := json.Marshal(map[string]any{"query": currentDropQuery})
 	var raw string
-	if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
+	if err := p.gqlEval(ctx, body, &raw); err != nil {
 		return nil, fmt.Errorf("twitch: fetch current drop: %w", err)
 	}
 	prog, err := gql.ParseCurrentDrop([]byte(raw))
@@ -137,7 +212,7 @@ const inventoryQuery = `{currentUser{inventory{dropCampaignsInProgress{id timeBa
 func (p *Pages) FetchInventoryProgress(ctx context.Context) ([]domain.Progress, error) {
 	body, _ := json.Marshal(map[string]any{"query": inventoryQuery})
 	var raw string
-	if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
+	if err := p.gqlEval(ctx, body, &raw); err != nil {
 		return nil, fmt.Errorf("twitch: fetch inventory progress: %w", err)
 	}
 	ps, err := gql.ParseInventory([]byte(raw))
@@ -173,7 +248,7 @@ func (p *Pages) LiveChannels(ctx context.Context, logins []string) ([]domain.Cha
 			"variables": map[string]any{"logins": chunk},
 		})
 		var raw string
-		if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
+		if err := p.gqlEval(ctx, body, &raw); err != nil {
 			return nil, fmt.Errorf("twitch: fetch live channels: %w", err)
 		}
 		return gql.ParseLiveChannels([]byte(raw))
@@ -235,7 +310,7 @@ func (p *Pages) ClaimDrop(ctx context.Context, dropInstanceID string) (string, s
 		"variables":     map[string]any{"input": map[string]string{"dropInstanceID": dropInstanceID}},
 	})
 	var raw string
-	if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
+	if err := p.gqlEval(ctx, body, &raw); err != nil {
 		return "", raw, fmt.Errorf("twitch: claim %s: %w", dropInstanceID, err)
 	}
 	status, err := gql.ParseClaimDropRewards([]byte(raw))
