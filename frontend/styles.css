@@ -163,6 +163,7 @@ body {
 .switch.on { background: var(--ok); }
 .switch i { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
 .switch.on i { transform: translateX(14px); }
+.switch.disabled { opacity: .45; cursor: not-allowed; }
 
 .stat-row { display: grid; grid-template-columns: repeat(auto-fit,minmax(130px,1fr)); gap: 12px; margin-bottom: 16px; }
 @media (max-width: 720px){ .stat-row { grid-template-columns: repeat(2,minmax(0,1fr)); } }

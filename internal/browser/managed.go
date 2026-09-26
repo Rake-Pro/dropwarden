@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -193,6 +194,22 @@ func (m *Managed) SetMinimized(ctx context.Context, minimized bool) error {
 		return err
 	}
 	return s.SetMinimized(ctx, minimized)
+}
+
+// SendToBottom pushes the CURRENT browser's window to the bottom of the z-order.
+// It resolves the live session on every call, so a relaunch (new Chrome, new
+// pid) is picked up without re-wiring. errors.ErrUnsupported means the session
+// or platform cannot reorder windows.
+func (m *Managed) SendToBottom(ctx context.Context) error {
+	s, err := m.guard()
+	if err != nil {
+		return err
+	}
+	b, ok := s.(bottomable)
+	if !ok {
+		return errors.ErrUnsupported
+	}
+	return b.SendToBottom(ctx)
 }
 
 // Alive reports whether a live session is currently attached.

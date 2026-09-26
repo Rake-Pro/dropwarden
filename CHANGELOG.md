@@ -4,6 +4,29 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.1.2 - 2026-09-26
+
+### Added
+- `browser.window.always_on_bottom` is implemented on Windows: the watcher
+  Chrome window(s) are pushed to the bottom of the z-order (`HWND_BOTTOM`,
+  `SWP_NOACTIVATE`, never focused) at launch and relaunch, after every window
+  restore/validation hold change, and on the player reassert interval while
+  watching, so they stay covered but visible and keep crediting.
+- Settings > Browser toggle "Keep Chrome behind other windows (Windows only)";
+  `/api/state` now carries `host.os`.
+
+### Changed
+- macOS/Linux: `always_on_bottom` is unsupported (logged once at debug); the
+  settings toggle is disabled there.
+- The starter/example `kick.browser.window` block no longer sets
+  `always_on_bottom`; it inherits the root `browser.window` value so the
+  settings toggle also governs a separate Kick window.
+
+### Fixed
+- Windows: the burn-in window shift no longer creates a new EnumWindows
+  callback on every tick (the Go runtime caps callbacks per process, so a long
+  session would eventually panic); it shares one callback with the z-order push.
+
 ## v0.1.1 - 2026-09-26
 
 ### Changed

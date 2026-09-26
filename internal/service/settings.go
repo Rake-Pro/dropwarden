@@ -212,6 +212,7 @@ func toConfigDTO(c *config.Config) ConfigDTO {
 		Volume:             c.Browser.Player.Volume,
 		ForceLowestQuality: c.Browser.Player.ForceLowestQuality,
 		NeverFocus:         c.Browser.Window.NeverFocus,
+		AlwaysOnBottom:     c.Browser.Window.AlwaysOnBottom,
 		StartMinimized:     c.Browser.Window.StartMinimized,
 		DimOpacity:         c.Browser.Burnin.DimOpacity,
 		ChromePath:         c.Browser.ChromePath,
@@ -247,6 +248,7 @@ func applyConfigDTO(c *config.Config, d ConfigDTO) {
 	c.Browser.Player.Volume = d.Volume
 	c.Browser.Player.ForceLowestQuality = d.ForceLowestQuality
 	c.Browser.Window.NeverFocus = d.NeverFocus
+	c.Browser.Window.AlwaysOnBottom = d.AlwaysOnBottom
 	c.Browser.Window.StartMinimized = d.StartMinimized
 	c.Browser.Burnin.DimOpacity = d.DimOpacity
 	c.Browser.ChromePath = d.ChromePath

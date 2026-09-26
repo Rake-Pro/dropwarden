@@ -149,7 +149,26 @@ func LaunchInstance(ctx context.Context, bcfg config.BrowserConfig, profileDir s
 	in.alive.Store(true)
 	in.adopt(page, true)
 	go in.pump()
+	if bcfg.Window.AlwaysOnBottom {
+		// Launch and every relaunch go through here, so a replacement Chrome
+		// starts behind other windows too. The coordinator and the watch loop
+		// keep re-asserting afterwards.
+		if err := in.SendToBottom(ctx); err != nil {
+			logBottomErr(logger, err)
+		}
+	}
 	return in, nil
+}
+
+// SendToBottom pushes this Chrome's window(s) to the bottom of the OS z-order
+// without activating them. errors.ErrUnsupported off Windows.
+func (in *Instance) SendToBottom(context.Context) error {
+	n, err := sendToBottom(uint32(in.chrome.pid))
+	if err != nil {
+		return err
+	}
+	in.logger.Debug().Int("windows", n).Msg("window: pushed to bottom of z-order")
+	return nil
 }
 
 // waitDevToolsPort polls the profile for the port file Chrome writes after

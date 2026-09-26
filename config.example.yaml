@@ -62,7 +62,7 @@ browser:
     # x/y omitted: computed from platform + profile window_slot (window
     # tiling default); set both explicitly here to override for every profile.
     monitor: 0
-    always_on_bottom: true
+    always_on_bottom: true     # Windows only: keep the watcher Chrome at the bottom of the z-order (covered but visible, never raised); no effect on macOS/Linux
     never_focus: true
     start_minimized: false     # minimize the watcher Chrome after launch (progress watchdogs still verify playback)
     minimize_while_watching: false  # keep it false: a minimized tab reads visibilityState "hidden" and Twitch stops crediting drops (cover the window instead of minimizing it)
@@ -94,7 +94,8 @@ kick:
       height: 400
       # x/y omitted: computed from platform + profile window_slot, offset so
       # the two watcher windows do not stack (window tiling default).
-      always_on_bottom: true
+      # always_on_bottom (Windows only) is inherited from browser.window above
+      # so the settings toggle stays truthful; set it here only to force it on.
       never_focus: true
       start_minimized: false
 

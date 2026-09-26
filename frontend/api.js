@@ -57,7 +57,7 @@ const SAMPLE = {
   config: {
     theme: 'dark', games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'], anyGame: false,
     priorityMode: 'top_down', autoEnqueueNew: true, volume: 0.01, forceLowestQuality: true,
-    neverFocus: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, kickEnabled: true, claimStrategy: 'in_page',
+    neverFocus: true, alwaysOnBottom: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, kickEnabled: true, claimStrategy: 'in_page',
     allowGqlFallback: false, skipAccountLink: true, authMode: 'manual', storedEnabled: false, logLevel: 'info',
     updateEnabled: true, updateAutoInstall: true, updateShowChangelog: true,
     updateFeedURL: 'https://cdn.rake.pro/releases/dropwarden/latest.json', updateIntervalHours: 24,
@@ -65,6 +65,7 @@ const SAMPLE = {
   // Mirrors GET /api/update; a pending update so the dashboard banner and the
   // What's new dialog are designable offline.
   version: '0.1.0',
+  host: { os: 'windows' },
   update: {
     currentVersion: '0.1.0', enabled: true, available: true, dev: false,
     feedURL: 'https://cdn.rake.pro/releases/dropwarden/latest.json', showChangelog: true,

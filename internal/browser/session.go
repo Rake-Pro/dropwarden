@@ -273,6 +273,18 @@ func (t *tab) ShiftWindow(dx, dy int) error {
 	return shiftWindow(t.inst.chrome.pid, dx, dy)
 }
 
+// SendToBottom pushes this tab's Chrome window(s) to the bottom of the OS
+// z-order without activating them (browser.window.always_on_bottom). It is not
+// part of Session: WindowCoordinator and Managed reach it through bottomable.
+func (t *tab) SendToBottom(context.Context) error {
+	n, err := sendToBottom(uint32(t.inst.chrome.pid))
+	if err != nil {
+		return err
+	}
+	t.logger.Debug().Int("windows", n).Msg("window: pushed to bottom of z-order")
+	return nil
+}
+
 func (t *tab) SetMinimized(ctx context.Context, minimized bool) error {
 	p := t.page.Context(ctx)
 	// Called on the page session, getWindowForTarget resolves our own window.

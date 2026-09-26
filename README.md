@@ -101,6 +101,16 @@ published on the GitHub release and on the downloads host
 | `feed_url` | `https://cdn.rake.pro/releases/dropwarden/latest.json` | Release manifest. Empty disables update checks. |
 | `interval_hours` | `24` | Hours between background checks (must be > 0). |
 
+### Watcher window
+
+- A minimized watcher tab reads `visibilityState` "hidden" and stops crediting,
+  so the Chrome window stays visible and gets covered instead.
+- Settings > Browser edits this key (config.yaml `browser.window:` block):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `always_on_bottom` | `true` | Windows only. Keeps the watcher Chrome at the bottom of the z-order (`HWND_BOTTOM`, never activated), re-asserted after every restore/validation and on the player reassert interval while watching. macOS/Linux: no effect, the toggle is disabled; cover the window instead. |
+
 ## Layout
 
 ```

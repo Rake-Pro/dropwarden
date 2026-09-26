@@ -19,12 +19,9 @@ const (
 )
 
 var (
-	user32                       = windows.NewLazySystemDLL("user32.dll")
-	procEnumWindows              = user32.NewProc("EnumWindows")
-	procGetWindowThreadProcessID = user32.NewProc("GetWindowThreadProcessId")
-	procIsWindowVisible          = user32.NewProc("IsWindowVisible")
-	procGetWindowRect            = user32.NewProc("GetWindowRect")
-	procSetWindowPos             = user32.NewProc("SetWindowPos")
+	user32            = windows.NewLazySystemDLL("user32.dll")
+	procGetWindowRect = user32.NewProc("GetWindowRect")
+	procSetWindowPos  = user32.NewProc("SetWindowPos")
 )
 
 // jobObjectExtendedLimitInformation is the JobObjectInformationClass for
@@ -180,25 +177,12 @@ func shiftWindow(pid, dx, dy int) error {
 }
 
 // findTopWindow returns the first visible top-level window owned by pid, or 0
-// if the process has none.
+// if the process has none. It shares the once-created EnumWindows callback in
+// zorder_windows.go instead of minting a new one per call.
 func findTopWindow(pid uint32) (windows.HWND, error) {
-	var found windows.HWND
-	cb := windows.NewCallback(func(hwnd windows.HWND, _ uintptr) uintptr {
-		var owner uint32
-		_, _, _ = procGetWindowThreadProcessID.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&owner)))
-		if owner != pid {
-			return 1 // keep enumerating
-		}
-		if visible, _, _ := procIsWindowVisible.Call(uintptr(hwnd)); visible == 0 {
-			return 1
-		}
-		found = hwnd
-		return 0 // stop
-	})
-
-	// EnumWindows returns FALSE both on genuine failure and when the callback
-	// asked to stop early, so its return value is not a usable error signal.
-	// Whether a window was found is the real answer.
-	_, _, _ = procEnumWindows.Call(cb, 0)
-	return found, nil
+	wins, err := visibleTopWindows(pid)
+	if err != nil || len(wins) == 0 {
+		return 0, err
+	}
+	return wins[0], nil
 }

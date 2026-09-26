@@ -507,6 +507,7 @@ func (a *App) ensureProfileGroup(ctx context.Context, pr *ProfileRuntime, pcfg *
 		return nil, nil, fmt.Errorf("app: launch browser: %w", err)
 	}
 	w = browser.NewWindowCoordinator(pcfg.Browser.Window.StartMinimized, log)
+	w.SetAlwaysOnBottom(pcfg.Browser.Window.AlwaysOnBottom)
 	a.mu.Lock()
 	pr.browser, pr.window = g, w
 	a.mu.Unlock()
@@ -600,6 +601,7 @@ func (a *App) startTwitchRuntime(ctx context.Context, pr *ProfileRuntime, stagge
 		}
 		sess = browser.NewManaged(s0, launch, log)
 		coord = browser.NewWindowCoordinator(pcfg.Browser.Window.StartMinimized, log)
+		coord.SetAlwaysOnBottom(pcfg.Browser.Window.AlwaysOnBottom)
 	}
 
 	// A first run persists the unanswered prompt instead of marking the session
@@ -704,6 +706,7 @@ func (a *App) startKickRuntime(ctx context.Context, pr *ProfileRuntime, stagger 
 		}
 		sess = browser.NewManaged(s0, launch, klog)
 		coord = browser.NewWindowCoordinator(kcfg.Browser.Window.StartMinimized, klog)
+		coord.SetAlwaysOnBottom(kcfg.Browser.Window.AlwaysOnBottom)
 	}
 
 	// Same pending/initialized split as the Twitch path above.

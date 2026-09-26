@@ -53,10 +53,13 @@ type Discoverer interface {
 // WindowHolder is the engine's view of the coordinator that owns its Chrome
 // window. Restore takes a refcounted hold (the window is visible and this
 // engine's tab is in front); Release drops it, and the window only tucks itself
-// away again when no other platform is still holding one.
+// away again when no other platform is still holding one. SendToBottom
+// re-asserts browser.window.always_on_bottom; the coordinator gates it on the
+// WINDOW's config and makes it a no-op where unsupported.
 type WindowHolder interface {
 	Restore(ctx context.Context)
 	Release(ctx context.Context)
+	SendToBottom(ctx context.Context)
 }
 
 type Deps struct {
@@ -155,6 +158,11 @@ type activeWatch struct {
 	// each time a poll actually runs, so the cadence of this network-visible GQL
 	// fetch is not an exact fixed interval.
 	nextPollAt time.Time
+
+	// nextZOrderAt is when the watch loop next re-asserts always_on_bottom; it
+	// rides the player reassert interval, fuzzed the same way. The zero value
+	// fires on the first watching tick.
+	nextZOrderAt time.Time
 
 	// maxSessionAt is this session's rotation target, computed ONCE at session
 	// start (sessionStart + fuzzed(MaxSession)) rather than recomputed on every

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"runtime"
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/config"
@@ -42,6 +43,9 @@ func NewHTTPHandler(b *Backend) http.Handler {
 			"profiles": profileStates(b, queue, history),
 			"version":  version.Version,
 			"update":   b.updateState(),
+			// host.os lets the UI grey out settings this OS cannot back
+			// (always_on_bottom is Windows only).
+			"host": map[string]string{"os": runtime.GOOS},
 		})
 	})
 

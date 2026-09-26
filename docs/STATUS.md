@@ -4,6 +4,13 @@ Snapshot for resuming after a context clear. Repo: Rake-Pro/dropwarden (private)
 branch main. This file is the "where are we" note; deeper design is in README.md,
 NOTES-twitch.md, NOTES-wails.md.
 
+## 2026-09-26 - v0.1.2 always_on_bottom (uncommitted working tree)
+
+- `browser.window.always_on_bottom` now real on Windows (HWND_BOTTOM via
+  `internal/browser/zorder_windows.go`, re-asserted by WindowCoordinator and
+  the watch loop); unsupported elsewhere, toggle disabled. Not yet verified on
+  a real Windows desktop.
+
 ## 2026-09-26 - v0.1.0 release plumbing (uncommitted working tree)
 
 - Added: `internal/version`, `internal/update` (manifest feed at

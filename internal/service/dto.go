@@ -100,6 +100,7 @@ type ConfigDTO struct {
 	Volume             float64  `json:"volume"`
 	ForceLowestQuality bool     `json:"forceLowestQuality"`
 	NeverFocus         bool     `json:"neverFocus"`
+	AlwaysOnBottom     bool     `json:"alwaysOnBottom"` // Windows only; the UI disables it elsewhere
 	StartMinimized     bool     `json:"startMinimized"`
 	DimOpacity         float64  `json:"dimOpacity"`
 	ChromePath         string   `json:"chromePath"`

@@ -606,6 +606,9 @@ const SETTINGS_PANES = [
 // updState/appVersion feed the Updates pane; refreshed on every renderSettings.
 let updState = null;
 let appVersion = '';
+// hostOS is runtime.GOOS of the backend (/api/state host.os); settings the
+// platform cannot back are greyed out rather than accepted and ignored.
+let hostOS = '';
 
 // updResultText summarizes an update state for the Updates pane's inline
 // result: the error, the pending version, or up to date.
@@ -618,7 +621,11 @@ function updResultText(u) {
   return { text: '', color: '' };
 }
 
-const toggleHTML = (id, on) => `<div class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${on}" tabindex="0" data-toggle="${id}"><i></i></div>`;
+// A disabled toggle renders off and ignores clicks: the backend cannot honour
+// it on this OS, so it must not look enabled.
+const toggleHTML = (id, on, disabled = false) => disabled
+  ? `<div class="switch disabled" role="switch" aria-checked="false" aria-disabled="true" tabindex="-1" data-toggle="${id}"><i></i></div>`
+  : `<div class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${on}" tabindex="0" data-toggle="${id}"><i></i></div>`;
 
 async function renderSettings() {
   cfg = await loadCfg();
@@ -628,6 +635,7 @@ async function renderSettings() {
   const state = await api.state();
   updState = state.update || null;
   appVersion = state.version || (updState && updState.currentVersion) || '';
+  hostOS = (state.host && state.host.os) || '';
   const allProfiles = state.profiles || [];
   if (allProfiles.length > 1) {
     const enabled = allProfiles.filter(p => p.enabled);
@@ -669,6 +677,7 @@ function settingsPaneHTML() {
       <div class="group"><div class="caption">Browser</div><div class="card">
         <div class="row stacked"><div class="lab"><div class="l">Chrome path</div><div class="h">Blank = auto-detect. Override for Chrome Beta or an unusual install. Both platforms' watcher instances use this binary with separate profiles.</div></div>
           <div class="ctl"><input class="input mono" data-field="chromePath" value="${esc(cfg.chromePath)}" placeholder="auto-detected" style="width:100%"></div></div>
+        <div class="row"><div class="lab"><div class="l">Keep Chrome behind other windows (Windows only)</div><div class="h">Holds the watcher windows at the bottom of the window stack without focusing them, so they stay covered but visible and keep crediting. macOS/Linux: not available, cover the window instead.</div></div><div class="ctl">${toggleHTML('alwaysOnBottom', cfg.alwaysOnBottom, hostOS !== 'windows')}</div></div>
       </div></div>`;
     case 'app': return `
       <div class="group"><div class="caption">Appearance</div><div class="card">
@@ -724,6 +733,7 @@ function renderSettingsContent() {
 
   host.querySelectorAll('[data-toggle]').forEach(sw => {
     const flip = () => {
+      if (sw.classList.contains('disabled')) return;
       const on = !sw.classList.contains('on');
       sw.classList.toggle('on', on);
       sw.setAttribute('aria-checked', String(on));

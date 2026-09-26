@@ -189,7 +189,7 @@ type WindowConfig struct {
 	X              int  `yaml:"x"`
 	Y              int  `yaml:"y"`
 	Monitor        int  `yaml:"monitor"`
-	AlwaysOnBottom bool `yaml:"always_on_bottom"`
+	AlwaysOnBottom bool `yaml:"always_on_bottom"` // Windows only: HWND_BOTTOM z-order, re-asserted while watching
 	NeverFocus     bool `yaml:"never_focus"`
 	StartMinimized bool `yaml:"start_minimized"` // minimize the watcher Chrome window after launch (CDP)
 

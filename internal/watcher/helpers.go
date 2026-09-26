@@ -210,6 +210,23 @@ func (e *Engine) setWindowMinimized(ctx context.Context, minimized bool) {
 	}
 }
 
+// keepWindowOnBottom re-asserts always_on_bottom while watching, on the player
+// reassert interval (fuzzed by watcher.timing_jitter like the volume reassert).
+// Chrome re-raises its window on some internal events, so setting the z-order
+// once is not enough. The coordinator decides whether the policy is on.
+func (e *Engine) keepWindowOnBottom(ctx context.Context) {
+	w := e.deps.Window
+	if w == nil || e.cur == nil {
+		return
+	}
+	now := e.deps.Now()
+	if now.Before(e.cur.nextZOrderAt) {
+		return
+	}
+	e.cur.nextZOrderAt = now.Add(e.fuzzed(e.deps.Cfg.Browser.Player.ReassertInterval))
+	w.SendToBottom(ctx)
+}
+
 // endSession records the current watch session with an outcome.
 func (e *Engine) endSession(outcome domain.SessionOutcome, note string) {
 	if e.cur == nil {

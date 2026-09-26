@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 )
@@ -173,5 +174,131 @@ func TestWindowCoordinatorActivationErrorIsNotFatal(t *testing.T) {
 	twh.Release(ctx)
 	if len(tw.minimizeCalls) != 2 {
 		t.Fatalf("a failed activation must not stop the window state changes: %v", tw.minimizeCalls)
+	}
+}
+
+// bottomStub is a winStub that also records always_on_bottom pushes.
+type bottomStub struct {
+	*winStub
+	bottoms   atomic.Int32
+	bottomErr error
+}
+
+func newBottomStub(name string) *bottomStub { return &bottomStub{winStub: newWinStub(name)} }
+
+func (b *bottomStub) SendToBottom(context.Context) error {
+	b.bottoms.Add(1)
+	return b.bottomErr
+}
+
+func TestWindowCoordinatorPushesToBottomAfterHoldChanges(t *testing.T) {
+	ctx := context.Background()
+	tw, kk := newBottomStub("twitch"), newBottomStub("kick")
+	c := NewWindowCoordinator(true, zerolog.Nop())
+	c.SetAlwaysOnBottom(true)
+	twh := c.Register("twitch", tw)
+	c.Register("kick", kk)
+
+	// Restore (and the activation it brings in a shared window) may raise the
+	// window; the coordinator must push it straight back.
+	twh.Restore(ctx)
+	if n := tw.bottoms.Load(); n != 1 {
+		t.Fatalf("restore must be followed by a push to bottom, got %d", n)
+	}
+	twh.Release(ctx)
+	if n := tw.bottoms.Load(); n != 2 {
+		t.Fatalf("the last release must be followed by a push to bottom, got %d", n)
+	}
+	// The watch loop's periodic re-assertion goes through the handle.
+	twh.SendToBottom(ctx)
+	if n := tw.bottoms.Load(); n != 3 {
+		t.Fatalf("handle SendToBottom must push, got %d", n)
+	}
+	if n := kk.bottoms.Load(); n != 0 {
+		t.Fatalf("pushes go through the acting tab only, got %d on kick", n)
+	}
+}
+
+func TestWindowCoordinatorBottomOffByDefault(t *testing.T) {
+	ctx := context.Background()
+	tw := newBottomStub("twitch")
+	c := NewWindowCoordinator(true, zerolog.Nop())
+	h := c.Register("twitch", tw)
+
+	h.Restore(ctx)
+	h.Release(ctx)
+	h.SendToBottom(ctx)
+	if n := tw.bottoms.Load(); n != 0 {
+		t.Fatalf("always_on_bottom off must never push, got %d", n)
+	}
+}
+
+func TestWindowCoordinatorBottomUnsupportedIsLatched(t *testing.T) {
+	ctx := context.Background()
+	tw := newBottomStub("twitch")
+	tw.bottomErr = errors.ErrUnsupported
+	c := NewWindowCoordinator(true, zerolog.Nop())
+	c.SetAlwaysOnBottom(true)
+	h := c.Register("twitch", tw)
+
+	h.Restore(ctx)
+	h.Release(ctx)
+	h.SendToBottom(ctx)
+	if n := tw.bottoms.Load(); n != 1 {
+		t.Fatalf("ErrUnsupported must be tried once and never retried, got %d", n)
+	}
+	// The window policy itself is unaffected.
+	if len(tw.minimizeCalls) != 2 {
+		t.Fatalf("unsupported z-order must not disturb window state: %v", tw.minimizeCalls)
+	}
+}
+
+func TestWindowCoordinatorBottomTransientErrorRetries(t *testing.T) {
+	ctx := context.Background()
+	tw := newBottomStub("twitch")
+	tw.bottomErr = errors.New("restarting")
+	c := NewWindowCoordinator(false, zerolog.Nop())
+	c.SetAlwaysOnBottom(true)
+	h := c.Register("twitch", tw)
+
+	h.SendToBottom(ctx)
+	h.SendToBottom(ctx)
+	if n := tw.bottoms.Load(); n != 2 {
+		t.Fatalf("a transient failure must be retried on the next re-assertion, got %d", n)
+	}
+}
+
+func TestManagedSendToBottomFollowsRelaunch(t *testing.T) {
+	first, second := newBottomStub("first"), newBottomStub("second")
+	m := NewManaged(first, func(context.Context) (Session, error) { return second, nil }, zerolog.Nop())
+	defer m.Close()
+
+	if err := m.SendToBottom(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	first.die()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if url, _ := m.CurrentURL(context.Background()); url == "second" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("managed session never swapped to the relaunched browser")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := m.SendToBottom(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if first.bottoms.Load() != 1 || second.bottoms.Load() != 1 {
+		t.Fatalf("push must hit the CURRENT browser: first=%d second=%d", first.bottoms.Load(), second.bottoms.Load())
+	}
+}
+
+func TestManagedSendToBottomUnsupportedSession(t *testing.T) {
+	m := NewManaged(newStubSession("plain"), func(context.Context) (Session, error) { return nil, errors.New("no") }, zerolog.Nop())
+	defer m.Close()
+	if err := m.SendToBottom(context.Background()); !errors.Is(err, errors.ErrUnsupported) {
+		t.Fatalf("a session without z-order support must report ErrUnsupported, got %v", err)
 	}
 }

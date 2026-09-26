@@ -188,6 +188,7 @@ func (e *Engine) watchTick(ctx context.Context, lastTime *float64, lastTimeSet *
 		_ = e.deps.Ctrl.ReassertVolume(ctx, e.playerPolicy())
 		*nextReassertAt = now.Add(e.fuzzed(e.deps.Cfg.Browser.Player.ReassertInterval))
 	}
+	e.keepWindowOnBottom(ctx)
 
 	// Progress + completion: passive capture first (free), then the rate-limited
 	// active poll, which is the only reliable source mid-watch.

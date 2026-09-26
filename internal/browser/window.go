@@ -2,7 +2,9 @@ package browser
 
 import (
 	"context"
+	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -26,6 +28,14 @@ type WindowCoordinator struct {
 	// manage mirrors browser.window.start_minimized: only then does this window
 	// live minimized between watches and need restoring at all.
 	manage bool
+
+	// bottom mirrors browser.window.always_on_bottom: after every hold change
+	// (restore, activation, release) the window is pushed back to the bottom of
+	// the OS z-order, and the watch loop re-asserts it periodically through
+	// WindowHandle.SendToBottom. unsupported latches the first ErrUnsupported
+	// (macOS/Linux) so the push is never retried there.
+	bottom      bool
+	unsupported atomic.Bool
 
 	// opMu serializes whole hold operations (decision AND the CDP calls that
 	// apply it). With the CDP calls outside the state lock alone, a release of
@@ -55,6 +65,17 @@ func NewWindowCoordinator(manageMinimized bool, logger zerolog.Logger) *WindowCo
 		tabs:   map[string]Session{},
 		holds:  map[string]bool{},
 	}
+}
+
+// SetAlwaysOnBottom enables the always_on_bottom policy for this window. Call it
+// once, right after construction, before any tab is registered.
+func (w *WindowCoordinator) SetAlwaysOnBottom(v bool) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.bottom = v
+	w.mu.Unlock()
 }
 
 // Register adds one platform tab to this window and returns its handle. sess is
@@ -97,6 +118,22 @@ func (h *WindowHandle) Release(ctx context.Context) {
 		return
 	}
 	h.w.hold(ctx, h.key, false)
+}
+
+// SendToBottom re-asserts the always_on_bottom policy for this tab's window
+// (a no-op when the policy is off or the platform cannot reorder windows). The
+// watch loop calls it on its reassert cadence because Chrome re-raises its
+// window on some internal events.
+func (h *WindowHandle) SendToBottom(ctx context.Context) {
+	if h == nil || h.w == nil {
+		return
+	}
+	h.w.mu.Lock()
+	sess := h.w.tabs[h.key]
+	h.w.mu.Unlock()
+	if sess != nil {
+		h.w.keepOnBottom(ctx, sess)
+	}
 }
 
 // Close unregisters this tab (dropping its hold), for a platform runtime that is
@@ -165,6 +202,9 @@ func (w *WindowCoordinator) hold(ctx context.Context, key string, take bool) {
 	if minimize {
 		w.setMinimized(ctx, sess, true)
 	}
+	// A restore or activation may have raised the window; put it back behind
+	// everything. Pushing a minimized window is harmless, so no special case.
+	w.keepOnBottom(ctx, sess)
 	w.logger.Debug().Str("tab", key).Bool("hold", take).Int("holds", held).Msg("window: restore holds")
 }
 
@@ -189,6 +229,56 @@ func (w *WindowCoordinator) setMinimized(ctx context.Context, sess Session, mini
 	defer cancel()
 	if err := live(sess).SetMinimized(ctx, minimized); err != nil {
 		w.logger.Warn().Err(err).Bool("minimized", minimized).Msg("set window state failed")
+	}
+}
+
+// bottomable is the z-order capability behind always_on_bottom. Like
+// activatable it is deliberately NOT part of Session: *Managed, the concrete
+// tab and *Instance implement it.
+type bottomable interface {
+	SendToBottom(ctx context.Context) error
+}
+
+// bottomUnsupportedOnce makes the ErrUnsupported debug line appear once per
+// process, however many windows or relaunches hit it.
+var bottomUnsupportedOnce sync.Once
+
+// logBottomErr logs a failed z-order push: ErrUnsupported once at debug, any
+// other error at debug too (it recurs harmlessly during a relaunch and the next
+// re-assertion retries).
+func logBottomErr(logger zerolog.Logger, err error) {
+	if errors.Is(err, errors.ErrUnsupported) {
+		bottomUnsupportedOnce.Do(func() {
+			logger.Debug().Err(err).Msg("window: always_on_bottom is not supported on this platform")
+		})
+		return
+	}
+	logger.Debug().Err(err).Msg("window: push to bottom of z-order failed")
+}
+
+// keepOnBottom applies always_on_bottom to the window behind sess. sess is the
+// platform's stable handle; *Managed resolves the live Chrome (and its current
+// pid) itself, so a relaunch is picked up automatically.
+func (w *WindowCoordinator) keepOnBottom(ctx context.Context, sess Session) {
+	w.mu.Lock()
+	on := w.bottom
+	w.mu.Unlock()
+	if !on || w.unsupported.Load() {
+		return
+	}
+	b, ok := sess.(bottomable)
+	if !ok {
+		w.unsupported.Store(true)
+		logBottomErr(w.logger, errors.ErrUnsupported)
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, windowOpTimeout)
+	defer cancel()
+	if err := b.SendToBottom(ctx); err != nil {
+		if errors.Is(err, errors.ErrUnsupported) {
+			w.unsupported.Store(true)
+		}
+		logBottomErr(w.logger, err)
 	}
 }
 
