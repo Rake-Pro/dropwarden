@@ -390,10 +390,24 @@ func TestReconcileLaunchFailureIsNotFatal(t *testing.T) {
 	if h.binder.isAttached(config.MainProfileName, domain.PlatformKick) {
 		t.Fatal("a failed launch must leave the runtime absent, not attached")
 	}
+	if h.app.LaunchError(config.MainProfileName, domain.PlatformKick) == "" {
+		t.Fatal("the launch failure must be recorded for the dashboard's launchError")
+	}
+	if h.app.LaunchError(config.MainProfileName, domain.PlatformTwitch) != "" {
+		t.Fatal("a successful launch carries no launchError")
+	}
 	// The next pass retries it; still absent, still not fatal.
 	h.app.ReconcileSync()
 	if h.startCount(config.MainProfileName, domain.PlatformKick) != 2 {
 		t.Fatalf("a failed runtime should be retried on the next pass, got %d", h.startCount(config.MainProfileName, domain.PlatformKick))
+	}
+	// A later successful launch clears it.
+	h.mu.Lock()
+	h.fail[pair{config.MainProfileName, domain.PlatformKick}] = false
+	h.mu.Unlock()
+	h.app.ReconcileSync()
+	if msg := h.app.LaunchError(config.MainProfileName, domain.PlatformKick); msg != "" {
+		t.Fatalf("a successful relaunch must clear launchError, got %q", msg)
 	}
 }
 
@@ -588,6 +602,7 @@ func (h *bharness) launchedDirs() []string {
 
 func TestSharedWindowKickStartsAsATabOnTheLiveBrowser(t *testing.T) {
 	cfg := testConfig(t, config.MainProfileName)
+	cfg.Kick.Browser.SharedWindowExperimental = true // kick forces separate_window otherwise
 	h := newBrowserHarness(t, cfg)
 	h.app.ReconcileSync()
 
@@ -622,6 +637,7 @@ func TestSharedWindowKickStartsAsATabOnTheLiveBrowser(t *testing.T) {
 
 func TestSharedWindowKickStopClosesOnlyItsTab(t *testing.T) {
 	cfg := testConfig(t, config.MainProfileName)
+	cfg.Kick.Browser.SharedWindowExperimental = true // kick forces separate_window otherwise
 	cfg.Profile(config.MainProfileName).Kick.Enabled = boolPtr(true)
 	h := newBrowserHarness(t, cfg)
 	h.app.ReconcileSync()
@@ -667,6 +683,7 @@ func TestSharedWindowKickStopClosesOnlyItsTab(t *testing.T) {
 
 func TestSharedWindowStoppingTheProfileClosesTheBrowser(t *testing.T) {
 	cfg := testConfig(t, config.MainProfileName, "second")
+	cfg.Kick.Browser.SharedWindowExperimental = true // kick forces separate_window otherwise
 	cfg.Kick.Enabled = true
 	h := newBrowserHarness(t, cfg)
 	h.app.ReconcileSync()

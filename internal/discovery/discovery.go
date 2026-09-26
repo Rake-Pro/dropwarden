@@ -5,6 +5,8 @@ package discovery
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,11 +39,37 @@ type Diagnostic struct {
 type Discoverer struct {
 	store  *store.Store
 	pages  *twitch.Pages
-	cfg    *config.Config
 	logger zerolog.Logger
+
+	// DebugDir is where capture_gql_bodies dumps land: the profile's own debug
+	// dir (config.ProfilePaths.Debug). Empty falls back to <approot>/debug.
+	DebugDir string
+
+	// cfgMu guards cfg: the settings save path swaps it (SetConfig) while a
+	// pass may be running on the engine goroutine.
+	cfgMu sync.Mutex
+	cfg   *config.Config
 
 	mu   sync.Mutex
 	last Diagnostic
+}
+
+// SetConfig swaps in a newer config (games filter, any_game, capture toggle,
+// details_per_cycle) for the next pass. Called from the settings reload path.
+func (d *Discoverer) SetConfig(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	d.cfgMu.Lock()
+	d.cfg = cfg
+	d.cfgMu.Unlock()
+}
+
+// config returns the current config under the lock.
+func (d *Discoverer) config() *config.Config {
+	d.cfgMu.Lock()
+	defer d.cfgMu.Unlock()
+	return d.cfg
 }
 
 // LastDiagnostic returns a snapshot of the most recent discovery pass.
@@ -68,6 +96,7 @@ type Result struct {
 // inventory page, reconcile into the store, and auto-enqueue matching drops.
 func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 	var res Result
+	cfg := d.config()
 
 	captured, err := d.pages.DiscoverCampaigns(ctx)
 	if err != nil {
@@ -93,7 +122,7 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 		d.logger.Warn().Str("campaigns_body_sample", sample).
 			Msg("discovery: campaigns op captured but parsed 0 - response shape sample follows")
 	}
-	if d.cfg.Logging.CaptureGQLBodies && captured.CampaignsRaw != "" {
+	if cfg.Logging.CaptureGQLBodies && captured.CampaignsRaw != "" {
 		d.dumpDebug("dashboard.json", []byte(captured.CampaignsRaw))
 	}
 
@@ -117,7 +146,10 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 	// The dashboard list has no drops or channel ACL; fetch details for the
 	// campaigns we care about (matching the game filter, active) so they become
 	// watchable. Capped per cycle to stay gentle.
-	dn, pn := d.fetchDetails(ctx, captured.Campaigns)
+	dn, pn, err := d.fetchDetails(ctx, cfg, captured.Campaigns)
+	if err != nil {
+		return res, err
+	}
 	res.Details += dn
 	res.Progress += pn
 
@@ -128,7 +160,7 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 	// page, so its GraphQL actually fires and is captured; ReadInventory below
 	// then reuses the (now cached) page for the progress parse. Only when the
 	// GQL-body capture toggle is on; the file lands with the other debug dumps.
-	if d.cfg.Logging.CaptureGQLBodies {
+	if cfg.Logging.CaptureGQLBodies {
 		if raw, ierr := d.pages.CaptureInventoryRaw(ctx); ierr != nil {
 			d.logger.Warn().Err(ierr).Msg("discovery: inventory GQL capture failed")
 		} else {
@@ -152,6 +184,17 @@ func (d *Discoverer) RunOnce(ctx context.Context) (Result, error) {
 		// minutes and just gains the owned flag.
 		d.markOwnedDrops(owned)
 	}
+
+	// Complete-but-unclaimed queue rows whose campaign already left the
+	// in-progress inventory (Twitch drops a campaign from that list once it is
+	// claimed or finished) never see isClaimed there, and fetchDetails skips
+	// already-detailed campaigns: re-detail them so self{isClaimed} lands.
+	rn, rp, err := d.redetailUnclaimed(ctx, cfg)
+	if err != nil {
+		return res, err
+	}
+	res.Details += rn
+	res.Progress += rp
 
 	enq, err := d.reconcileQueue(ctx)
 	if err != nil {
@@ -208,8 +251,24 @@ func (d *Discoverer) markOwnedDrops(owned map[string]bool) int {
 			// instance's copy, so it must not be flagged owned (it would read
 			// as "Watch anyway" on a row that only needs a manual claim).
 			if earnedHere(p) {
+				changed := false
 				if p.Owned { // heal a flag set by an older build
 					p.Owned = false
+					changed = true
+				}
+				// Complete here AND the account holds the reward: nothing is
+				// left to do either way (claimed by hand, or a copy is already
+				// held), so book it claimed; the engine's reconcile then records
+				// it as detected and clears the needs_action row.
+				if p.Complete() && p.ClaimedAt == nil {
+					now := time.Now()
+					p.ClaimedAt = &now
+					p.Claimable = false
+					changed = true
+					d.logger.Info().Str("drop", drop.Name).Str("campaign", c.Name).
+						Msg("discovery: complete drop's reward is in the inventory - booking it claimed")
+				}
+				if changed {
 					_ = d.store.SaveProgress(*p)
 				}
 				continue
@@ -277,8 +336,8 @@ func (d *Discoverer) claimStateSynced(c *domain.Campaign) bool {
 	return false
 }
 
-func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign) (details, progress int) {
-	limit := d.cfg.Discovery.DetailsPerCycle
+func (d *Discoverer) fetchDetails(ctx context.Context, cfg *config.Config, listed []domain.Campaign) (details, progress int, err error) {
+	limit := cfg.Discovery.DetailsPerCycle
 	if limit <= 0 {
 		limit = 8
 	}
@@ -286,7 +345,7 @@ func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign)
 	var targets []domain.Campaign
 	matched, complete := 0, 0
 	for _, c := range listed {
-		if c.Status == domain.StatusExpired || !d.matchesFilter(c) {
+		if c.Status == domain.StatusExpired || !MatchesGameFilter(cfg, c) {
 			continue
 		}
 		matched++
@@ -316,22 +375,32 @@ func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign)
 			d.logger.Info().Int("matched", matched).Int("already_detailed", complete).
 				Msg("discovery: all filter-matching campaigns already have details; nothing to detail-fetch")
 		} else {
-			d.logger.Info().Bool("any_game", d.cfg.AnyGame).Strs("games", d.cfg.Games).
+			d.logger.Info().Bool("any_game", cfg.AnyGame).Strs("games", cfg.Games).
 				Msg("discovery: no active campaigns matched the game filter; nothing to detail-fetch")
 		}
-		return 0, 0
+		return 0, 0, nil
 	}
+	n, pn, err := d.detailCampaigns(ctx, cfg, targets)
+	return n, pn, err
+}
 
+// detailCampaigns fetches and stores full details (drops, ACL, per-drop
+// progress) for each campaign. A logged-out session is returned as
+// domain.ErrLoggedOut; any other failure skips the campaign.
+func (d *Discoverer) detailCampaigns(ctx context.Context, cfg *config.Config, targets []domain.Campaign) (int, int, error) {
 	login, err := d.pages.FetchLogin(ctx)
 	if err != nil {
+		if errors.Is(err, domain.ErrLoggedOut) {
+			return 0, 0, fmt.Errorf("discovery: %w", err)
+		}
 		d.logger.Warn().Err(err).Msg("discovery: cannot fetch login; skipping campaign details this cycle")
-		return 0, 0
+		return 0, 0, nil
 	}
 
 	n, pn := 0, 0
 	for _, c := range targets {
 		full, prog, raw, err := d.pages.FetchCampaignDetails(ctx, login, c.ID)
-		if d.cfg.Logging.CaptureGQLBodies && raw != "" {
+		if cfg.Logging.CaptureGQLBodies && raw != "" {
 			d.dumpDebug("details-"+safeName(c.ID)+".json", []byte(raw))
 		}
 		if err != nil {
@@ -361,13 +430,73 @@ func (d *Discoverer) fetchDetails(ctx context.Context, listed []domain.Campaign)
 			Int("drops", len(full.Drops)).Int("acl", len(full.AllowedChannels)).Msg("discovery: fetched details")
 		n++
 	}
-	return n, pn
+	return n, pn, nil
+}
+
+// redetailBudget caps the claim-state re-detail fetches per pass, separate
+// from details_per_cycle.
+const redetailBudget = 10
+
+// redetailUnclaimed re-fetches details, oldest observation first and capped
+// at redetailBudget campaigns, for every campaign with a needs_action or
+// active Twitch queue item whose progress row is complete but not claimed.
+// The saved self{isClaimed} then flips the row via the engine's reconcile. A
+// row already booked claimed is not a target, so a second pass is a no-op.
+func (d *Discoverer) redetailUnclaimed(ctx context.Context, cfg *config.Config) (int, int, error) {
+	targets := d.unclaimedTargets()
+	if len(targets) == 0 {
+		return 0, 0, nil
+	}
+	d.logger.Info().Int("campaigns", len(targets)).Msg("discovery: re-detailing campaigns with complete-but-unclaimed drops")
+	return d.detailCampaigns(ctx, cfg, targets)
+}
+
+// unclaimedTargets picks the campaigns redetailUnclaimed fetches.
+func (d *Discoverer) unclaimedTargets() []domain.Campaign {
+	items, err := d.store.GetQueue()
+	if err != nil {
+		return nil
+	}
+	oldest := map[string]time.Time{}
+	for _, it := range items {
+		if it.Platform.OrTwitch() != domain.PlatformTwitch {
+			continue
+		}
+		if it.Status != domain.ItemNeedsAction && it.Status != domain.ItemActive {
+			continue
+		}
+		p, err := d.store.GetProgress(it.DropID)
+		if err != nil || p == nil || !p.Complete() || p.ClaimedAt != nil {
+			continue
+		}
+		if at, ok := oldest[it.CampaignID]; !ok || p.ObservedAt.Before(at) {
+			oldest[it.CampaignID] = p.ObservedAt
+		}
+	}
+	ids := make([]string, 0, len(oldest))
+	for id := range oldest {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		if !oldest[ids[i]].Equal(oldest[ids[j]]) {
+			return oldest[ids[i]].Before(oldest[ids[j]])
+		}
+		return ids[i] < ids[j]
+	})
+	if len(ids) > redetailBudget {
+		ids = ids[:redetailBudget]
+	}
+	out := make([]domain.Campaign, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, domain.Campaign{ID: id})
+	}
+	return out
 }
 
 // reconcileQueue applies the shared platform-scoped reconciliation for Twitch.
 func (d *Discoverer) reconcileQueue(ctx context.Context) (int, error) {
 	_ = ctx
-	return ReconcileQueue(d.store, d.cfg, domain.PlatformTwitch, d.logger)
+	return ReconcileQueue(d.store, d.config(), domain.PlatformTwitch, d.logger)
 }
 
 // ReconcileQueue keeps ONE platform's slice of the shared queue in sync with
@@ -608,15 +737,14 @@ func findDrop(c domain.Campaign, dropID string) (domain.Drop, bool) {
 	return domain.Drop{}, false
 }
 
-// dumpDebug writes a raw GraphQL body to <approot>/debug/<name> when the
+// dumpDebug writes a raw GraphQL body to the profile's debug dir when the
 // capture_gql_bodies flag is on. These files contain campaign JSON only (no auth
 // headers), so they are safe to share for diagnosing response shapes.
 func (d *Discoverer) dumpDebug(name string, body []byte) {
-	dir, err := config.Dir()
-	if err != nil {
+	ddir := DebugDirOr(d.DebugDir)
+	if ddir == "" {
 		return
 	}
-	ddir := filepath.Join(dir, "debug")
 	if err := os.MkdirAll(ddir, 0o700); err != nil {
 		return
 	}
@@ -640,10 +768,17 @@ func safeName(s string) string {
 	}, s)
 }
 
-// matchesFilter reports whether a campaign's game is in the configured set (or
-// any_game is on).
-func (d *Discoverer) matchesFilter(c domain.Campaign) bool {
-	return MatchesGameFilter(d.cfg, c)
+// DebugDirOr returns dir, or <approot>/debug when dir is empty (a runtime
+// built without a profile debug dir). "" when neither resolves.
+func DebugDirOr(dir string) string {
+	if dir != "" {
+		return dir
+	}
+	root, err := config.Dir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(root, "debug")
 }
 
 // MatchesGameFilter reports whether a campaign's game is in the configured set

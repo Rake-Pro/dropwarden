@@ -104,7 +104,7 @@ func ParseCampaignDetails(body []byte) (domain.Campaign, []domain.Progress, erro
 
 	// verify live: whether "name" on the channel ref is login or display
 	// name. Lowercasing assumes it is (or is safe to treat as) login.
-	if dc.Allow != nil {
+	if dc.Allow != nil && (dc.Allow.IsEnabled == nil || *dc.Allow.IsEnabled) {
 		for _, ch := range dc.Allow.Channels {
 			c.AllowedChannels = append(c.AllowedChannels, domain.Channel{
 				ID:    ch.ID,
@@ -155,6 +155,7 @@ func ParseCampaignDetails(body []byte) (domain.Campaign, []domain.Progress, erro
 				t := now
 				p.ClaimedAt = &t
 			}
+			p.PreconditionsUnmet = d.Self.HasPreconditionsMet != nil && !*d.Self.HasPreconditionsMet
 			progress = append(progress, p)
 		}
 	}
@@ -210,6 +211,9 @@ func ParseInventory(body []byte) ([]domain.Progress, error) {
 	if resp.Error != "" {
 		return nil, fmt.Errorf("gql: inventory request failed: %s", resp.Error)
 	}
+	if CurrentUserNull(b) {
+		return nil, fmt.Errorf("gql: inventory: %w", domain.ErrLoggedOut)
+	}
 	if resp.Data.CurrentUser == nil || resp.Data.CurrentUser.Inventory == nil {
 		if len(resp.Errors) > 0 {
 			return nil, fmt.Errorf("gql: inventory: %s", resp.Errors[0].Message)
@@ -240,6 +244,7 @@ func ParseInventory(body []byte) ([]domain.Progress, error) {
 					t := now
 					p.ClaimedAt = &t
 				}
+				p.PreconditionsUnmet = d.Self.HasPreconditionsMet != nil && !*d.Self.HasPreconditionsMet
 			}
 			out = append(out, p)
 		}
@@ -289,12 +294,40 @@ func ParseEarnedRewards(body []byte) (map[string]bool, error) {
 	return owned, nil
 }
 
+// CurrentUserNull reports whether a currentUser query was answered for an
+// anonymous viewer: data.currentUser is present and explicitly null, with no
+// GraphQL errors and no page fetch error. That is Twitch's logged-out answer;
+// a failed or integrity-rejected request carries errors instead and is NOT
+// read as logged out. A batched response is read from its first element.
+func CurrentUserNull(body []byte) bool {
+	b, err := unbatch(body)
+	if err != nil {
+		return false
+	}
+	var resp struct {
+		Data *struct {
+			CurrentUser json.RawMessage `json:"currentUser"`
+		} `json:"data"`
+		gqlEnvelope
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		return false
+	}
+	if resp.Error != "" || len(resp.Errors) > 0 || resp.Data == nil {
+		return false
+	}
+	return string(bytes.TrimSpace(resp.Data.CurrentUser)) == "null"
+}
+
 // ParseCurrentDrop parses a "CurrentDrop" operation response. It returns nil
 // (not an error) when the viewer has no active drop-watching session.
 func ParseCurrentDrop(body []byte) (*domain.Progress, error) {
 	var resp currentDropResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("gql: parse current drop response: %w", err)
+	}
+	if CurrentUserNull(body) {
+		return nil, fmt.Errorf("gql: current drop: %w", domain.ErrLoggedOut)
 	}
 	if resp.Data.CurrentUser == nil || resp.Data.CurrentUser.DropCurrentSession == nil {
 		return nil, nil

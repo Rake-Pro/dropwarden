@@ -13,23 +13,24 @@ const SAMPLE = {
     name: 'main', displayName: 'main', enabled: true,
     platforms: [
       {
-        platform: 'twitch', enabled: true, up: true, needsLogin: false,
-        status: { profile: 'main', platform: 'twitch', state: 'watching', paused: false, channelLogin: 'shroud', dropName: 'Wooden Barricade', current: 42, required: 60, game: 'Rust' },
+        platform: 'twitch', enabled: true, up: true, needsLogin: false, wanted: false, launchError: '', reason: '',
+        status: { profile: 'main', platform: 'twitch', state: 'watching', paused: false, channelLogin: 'shroud', dropName: 'Wooden Barricade', current: 42, required: 60, game: 'Rust', reason: '' },
       },
       {
         // needsLogin sample so the first-run login flow is designable offline
         // (a paused/idle engine parked on a fresh Chrome profile, per the real
         // backend's platformStates in internal/service/httpapi.go).
-        platform: 'kick', enabled: true, up: true, needsLogin: true,
-        status: { profile: 'main', platform: 'kick', state: 'idle', paused: true, channelLogin: '', dropName: '', current: 0, required: 0, game: '' },
+        platform: 'kick', enabled: true, up: true, needsLogin: true, launchError: '', reason: 'paused',
+        status: { profile: 'main', platform: 'kick', state: 'idle', paused: true, channelLogin: '', dropName: '', current: 0, required: 0, game: '', reason: 'paused' },
       },
     ],
     queue: [
-      { dropID: 'd1', platform: 'twitch', dropName: 'Wooden Barricade', game: 'Rust', status: 'active', enabled: true, currentMinutes: 42, requiredMinutes: 60, reason: '@shroud · watching now' },
-      { dropID: 'd2', platform: 'kick', dropName: 'Elite Wooden Door Skin', game: 'Rust', status: 'pending', enabled: true, pin: 1, currentMinutes: 0, requiredMinutes: 120, reason: '@posty +6' },
-      { dropID: 'd3', platform: 'twitch', dropName: 'Rust General Crate', game: 'Rust', status: 'blocked_precondition', enabled: true, alongside: true, currentMinutes: 10, requiredMinutes: 60, reason: 'waiting on prerequisite drop' },
-      { dropID: 'd4', platform: 'twitch', dropName: 'Master Chief Armor Coating', game: 'Halo MCC', status: 'needs_action', enabled: false, currentMinutes: 0, requiredMinutes: 90, reason: 'account link required' },
-      { dropID: 'd6', platform: 'twitch', dropName: 'VOID WINGS SKIN: UNKNOWN', game: 'Once Human', status: 'needs_action', enabled: true, owned: true, forceWatch: false, currentMinutes: 0, requiredMinutes: 60, reason: 'reward already owned - Twitch will not credit it again' },
+      { dropID: 'd1', platform: 'twitch', dropName: 'Wooden Barricade', game: 'Rust', position: 1, status: 'active', enabled: true, currentMinutes: 42, requiredMinutes: 60, reason: '@shroud - watching now', needsUser: false, actionURL: '', actionLabel: '' },
+      { dropID: 'd2', platform: 'kick', dropName: 'Elite Wooden Door Skin', game: 'Rust', position: 2, status: 'pending', enabled: true, pin: 1, currentMinutes: 0, requiredMinutes: 120, reason: '@posty +6', needsUser: false, actionURL: '', actionLabel: '' },
+      { dropID: 'd3', platform: 'twitch', dropName: 'Rust General Crate', game: 'Rust', position: 3, status: 'blocked_precondition', enabled: true, alongside: true, currentMinutes: 10, requiredMinutes: 60, reason: 'waiting on prerequisite drop', needsUser: false, actionURL: '', actionLabel: '' },
+      { dropID: 'd7', platform: 'twitch', dropName: 'Halo Weapon Charm', game: 'Halo Infinite', position: 4, status: 'pending', enabled: true, currentMinutes: 5, requiredMinutes: 60, reason: 'any channel', needsUser: false, actionURL: '', actionLabel: '' },
+      { dropID: 'd4', platform: 'twitch', dropName: 'Master Chief Armor Coating', game: 'Halo MCC', position: 5, status: 'needs_action', enabled: false, currentMinutes: 0, requiredMinutes: 90, reason: 'account link required', needsUser: true, actionURL: 'https://www.twitch.tv/drops/campaigns', actionLabel: 'Link account' },
+      { dropID: 'd6', platform: 'twitch', dropName: 'VOID WINGS SKIN: UNKNOWN', game: 'Once Human', position: 6, status: 'needs_action', enabled: true, owned: true, forceWatch: false, currentMinutes: 0, requiredMinutes: 60, reason: 'reward already owned - Twitch will not credit it again', needsUser: false, actionURL: '', actionLabel: '' },
     ],
     claims: [{ dropName: 'HCS 2026 Weapon Charm', platform: 'twitch', game: 'Halo Infinite', claimedAt: 'sample' }],
     stats: { dropsEarned: 6, dropsClaimed: 5, minutesWatched: 812, successRate: 88, sessions: 14, outcomeCounts: { completed: 12, skipped: 2 }, byPlatform: {
@@ -41,13 +42,13 @@ const SAMPLE = {
     name: 'p2', displayName: 'Profile 2', enabled: true,
     platforms: [
       {
-        platform: 'twitch', enabled: true, up: true, needsLogin: false,
-        status: { profile: 'p2', platform: 'twitch', state: 'opening', paused: false, channelLogin: 'ninja', dropName: '', current: 0, required: 0, game: 'Once Human' },
+        platform: 'twitch', enabled: true, up: true, needsLogin: false, launchError: '', reason: 'nothing eligible to watch',
+        status: { profile: 'p2', platform: 'twitch', state: 'cooldown', paused: false, channelLogin: '', dropName: '', current: 0, required: 0, game: '', reason: 'nothing eligible to watch' },
       },
-      { platform: 'kick', enabled: false, up: false, needsLogin: false, status: null },
+      { platform: 'kick', enabled: false, up: false, needsLogin: false, launchError: '', reason: '', status: null },
     ],
     queue: [
-      { dropID: 'd5', platform: 'twitch', dropName: 'Silver Backpack Skin', game: 'Once Human', status: 'pending', enabled: true, currentMinutes: 0, requiredMinutes: 90, reason: '@ninja · queued' },
+      { dropID: 'd5', platform: 'twitch', dropName: 'Silver Backpack Skin', game: 'Once Human', position: 1, status: 'pending', enabled: true, currentMinutes: 0, requiredMinutes: 90, reason: '@ninja - queued', needsUser: false, actionURL: '', actionLabel: '' },
     ],
     claims: [],
     stats: { dropsEarned: 1, dropsClaimed: 1, minutesWatched: 96, successRate: 100, sessions: 2, outcomeCounts: { completed: 2 }, byPlatform: {
@@ -56,26 +57,28 @@ const SAMPLE = {
     spark: [0, 0, 5, 10, 0, 0, 20, 15, 0, 30, 10, 0, 0, 5],
   }],
   config: {
-    theme: 'dark', games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'], anyGame: false,
+    theme: 'dark', games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'], anyGame: false, fallThrough: true,
     priorityMode: 'top_down', preferChannelSpecific: true, autoEnqueueNew: true, volume: 0.01, forceLowestQuality: true,
     neverFocus: true, alwaysOnBottom: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, kickEnabled: true, claimStrategy: 'in_page',
-    allowGqlFallback: false, skipAccountLink: true, claimButtonSelector: 'button:has([data-a-target="tw-core-button-label-text"])', claimButtonText: 'Claim Now', authMode: 'manual', storedEnabled: false, logLevel: 'info',
+    allowGqlFallback: false, skipAccountLink: true, claimButtonSelector: 'button:has([data-a-target="tw-core-button-label-text"])', claimButtonText: 'Claim Now', authMode: 'manual', storedEnabled: false, logLevel: 'info', captureGqlBodies: false,
     updateEnabled: true, updateAutoInstall: true, updateShowChangelog: true,
     updateFeedURL: 'https://cdn.rake.pro/releases/dropwarden/latest.json', updateIntervalHours: 24,
   },
   // Mirrors GET /api/update; a pending update so the dashboard banner and the
-  // What's new dialog are designable offline.
+  // update dialog are designable offline.
   version: '0.1.0',
-  host: { os: 'windows' },
+  host: { os: 'windows', chromeFound: true, chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' },
   update: {
-    currentVersion: '0.1.0', enabled: true, available: true, dev: false,
-    feedURL: 'https://cdn.rake.pro/releases/dropwarden/latest.json', showChangelog: true,
+    currentVersion: '0.1.0', enabled: true, autoInstall: true, showChangelog: true, intervalHours: 24,
+    feedURL: 'https://cdn.rake.pro/releases/dropwarden/latest.json', devBuild: false,
+    status: 'available', phase: 'idle', percent: -1, bytesDone: 0, bytesTotal: 0,
     pending: { version: '0.2.0', notes: [
       { text: 'v0.2.0  (2026-10-01)', heading: true },
       { text: 'Added', heading: true },
       { text: '- Sample release note line' },
     ] },
-    lastCheck: null, lastError: '', busyDeferred: false, checking: false, installing: false,
+    lastCheck: null, lastError: '', deferredReason: '', failedVersion: '', failMessage: '', skippedVersion: '', promptSeq: 0,
+    installedNotes: [],
   },
 };
 
@@ -86,7 +89,28 @@ const SAMPLE_PROFILE_CONFIGS = [
   { name: 'p2', displayName: 'Profile 2', enabled: true, games: ['Once Human'], inheritGames: false, kickEnabled: false },
 ];
 
+// SAMPLE_CATALOG mirrors GET /api/games/catalog; SAMPLE_SEARCH mirrors
+// GET /api/games/search.
+const SAMPLE_CATALOG = {
+  fetchedAt: '2026-09-26T10:30:00Z', sources: { kick: true, twitchDrops: true },
+  games: [
+    { game: 'Rust', source: 'campaign', platforms: ['twitch', 'kick'], campaigns: 3, endsAt: '2026-10-12T18:00:00Z', live: 412 },
+    { game: 'Marvel Rivals', source: 'twitch_drops', platforms: ['twitch'], campaigns: 0, endsAt: '', live: 96 },
+    { game: 'Escape from Tarkov', source: 'kick', platforms: ['kick'], campaigns: 1, endsAt: '2026-10-05T18:00:00Z', live: 0 },
+  ],
+};
+const SAMPLE_SEARCH = [
+  { game: 'Rust', id: '263490', boxArt: '' },
+  { game: 'Rust Console Edition', id: '1234', boxArt: '' },
+];
+
 let cache = null;
+// lastGood/everOnline: once the backend has answered, a failed poll (the app
+// restarting after an update) keeps showing the last real state instead of
+// swapping in SAMPLE, and reports disconnected rather than preview mode.
+let lastGood = null;
+let everOnline = false;
+let disconnected = false;
 let cacheAt = 0;
 let offline = false;
 // activeProfile is the DEFAULT profile action calls target when the caller
@@ -123,8 +147,12 @@ async function fetchState() {
     cache = flatten(await r.json());
     cacheAt = now;
     offline = false;
+    everOnline = true;
+    disconnected = false;
+    lastGood = cache;
     return cache;
   } catch (e) {
+    if (everOnline && lastGood) { disconnected = true; return lastGood; }
     offline = true;
     return flatten(SAMPLE);
   }
@@ -138,12 +166,25 @@ async function post(path, body) {
   });
   cache = null; // invalidate so the next read reflects the action
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || ('request failed: ' + r.status));
+  if (!r.ok) {
+    // {error, field?}: field names the config field a validation error is about.
+    const err = new Error(j.error || ('request failed: ' + r.status));
+    if (j.field) err.field = j.field;
+    throw err;
+  }
   return j;
+}
+
+async function getText(path) {
+  const r = await fetch(path, { cache: 'no-store' });
+  if (!r.ok) throw new Error('request failed: ' + r.status);
+  return r.text();
 }
 
 export const api = {
   get offline() { return offline; },
+  // True when the backend answered before but not now (e.g. restarting).
+  get disconnected() { return disconnected; },
   // The profile action calls target when none is passed explicitly.
   get profile() { return activeProfile; },
   async state() { return fetchState(); },
@@ -211,18 +252,51 @@ export const api = {
 
   // Self-updater. update() is cheap (no network); checkUpdate() runs a real
   // feed check and returns the resulting state; installUpdate() starts the
-  // install and returns at once (the app quits and restarts when done).
+  // install and returns the new state (the app quits and restarts when done).
+  // update() throws once the backend has been seen (so the progress poll can
+  // tell "restarting" from "no backend"); SAMPLE only before first contact.
   async update() {
     try {
       const r = await fetch('/api/update', { cache: 'no-store' });
       if (!r.ok) throw new Error('update ' + r.status);
       return await r.json();
     } catch (e) {
+      if (everOnline) throw e;
       return SAMPLE.update;
     }
   },
   checkUpdate() { return post('/api/update/check'); },
   installUpdate() { return post('/api/update/install'); },
+
+  // Game picker: the merged "drops right now" catalogue (fetched on demand;
+  // refresh=true asks the server to bypass its ~10 min cache) and Twitch's
+  // category search.
+  async gamesCatalog(refresh = false) {
+    try {
+      const r = await fetch('/api/games/catalog' + (refresh ? '?refresh=1' : ''), { cache: 'no-store' });
+      if (!r.ok) throw new Error('catalog ' + r.status);
+      return await r.json();
+    } catch (e) {
+      if (everOnline) throw e;
+      return SAMPLE_CATALOG;
+    }
+  },
+  async searchGames(q) {
+    try {
+      const r = await fetch('/api/games/search?q=' + encodeURIComponent(q), { cache: 'no-store' });
+      if (!r.ok) throw new Error('search ' + r.status);
+      return (await r.json()) || [];
+    } catch (e) {
+      if (everOnline) throw e;
+      return SAMPLE_SEARCH.filter(x => x.game.toLowerCase().includes(String(q).toLowerCase()));
+    }
+  },
+  // Opens url in that profile's logged-in watcher Chrome (system browser fallback).
+  open(profile, platform, url) { return post('/api/open', { profile, platform, url }); },
+  // Plain-text diagnostics bundle for the clipboard.
+  diagnostics() { return getText('/api/diagnostics'); },
+  // Writes a diagnostics zip to the Desktop; returns { path }.
+  exportDiagnostics() { return post('/api/diagnostics/export'); },
 
   // Events arrive via polling in app.js; this is a no-op placeholder kept for
   // the call sites.

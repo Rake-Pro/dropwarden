@@ -51,6 +51,7 @@ jobs:
     outputs:
       tag: ${{ steps.v.outputs.tag }}
       version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
       - name: Resolve tag
         id: v
@@ -63,12 +64,17 @@ jobs:
           else
             tag="${GITHUB_REF_NAME}"
           fi
-          if ! [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "tag '${tag}' is not vX.Y.Z" >&2
+          # vX.Y.Z publishes everywhere; vX.Y.Z-rc.N is a GitHub-only
+          # pre-release (no cdn upload, so installed apps never see it).
+          if ! [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "tag '${tag}' is not vX.Y.Z or vX.Y.Z-rc.N" >&2
             exit 1
           fi
+          pre=false
+          [[ "${tag}" == *-rc.* ]] && pre=true
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${pre}" >> "$GITHUB_OUTPUT"
 
   windows:
     needs: [version]
@@ -284,6 +290,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.version.outputs.tag }}
       VERSION: ${{ needs.version.outputs.version }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
       DOWNLOADS_BASE_URL: ${{ vars.DOWNLOADS_BASE_URL || 'https://cdn.rake.pro/releases' }}
       DOWNLOADS_UPLOAD_TOKEN: ${{ secrets.DOWNLOADS_UPLOAD_TOKEN }}
     steps:
@@ -307,7 +314,9 @@ jobs:
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" \
+            pre=""
+            [ "${PRERELEASE}" = "true" ] && pre="--prerelease"
+            gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" $pre \
               --title "dropwarden $TAG" --generate-notes --notes "$notes"
           fi
 
@@ -352,7 +361,7 @@ jobs:
       # <base>/dropwarden/<tag>/<asset> plus <base>/dropwarden/latest.json.
       # latest.json goes last so the feed never names files not yet uploaded.
       - name: Publish to downloads host
-        if: env.DOWNLOADS_UPLOAD_TOKEN != ''
+        if: env.DOWNLOADS_UPLOAD_TOKEN != '' && needs.version.outputs.prerelease != 'true'
         run: |
           set -euo pipefail
           base="${DOWNLOADS_BASE_URL%/}"

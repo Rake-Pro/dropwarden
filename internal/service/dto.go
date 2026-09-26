@@ -48,6 +48,16 @@ type QueueItemDTO struct {
 	// same game and platform also credits (ranked after those drops).
 	Pin       int  `json:"pin"`
 	Alongside bool `json:"alongside"`
+	// NeedsUser is true only for a needs_action row a human must act on: an
+	// account link, a claim that has to be made by hand, or an expired session.
+	// Informational needs_action rows (owned-reward skip, not crediting) are
+	// false, so the dashboard banner can ignore them.
+	NeedsUser bool `json:"needsUser"`
+	// ActionURL/ActionLabel are the one-click fix for a needs_action row that
+	// needs the user (account link, manual claim, expired session); "" when
+	// there is none. The UI opens ActionURL through POST /api/open.
+	ActionURL   string `json:"actionURL"`
+	ActionLabel string `json:"actionLabel"`
 }
 
 type ClaimDTO struct {

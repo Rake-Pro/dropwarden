@@ -106,6 +106,15 @@ type Deps struct {
 	// existing independent jitter (cooldown, cooldown_jitter), untouched.
 	DiscoveryStagger time.Duration
 
+	// DebugDir is the profile's debug dir (config.ProfilePaths.Debug) for
+	// capture dumps; empty falls back to <approot>/debug.
+	DebugDir string
+
+	// OnLoggedOut, when set, runs on the engine goroutine after the engine
+	// detected an expired platform session and paused itself: the app wires it
+	// to the pending-login marker and the needs-login flag the UI shows.
+	OnLoggedOut func()
+
 	// Now and Rand are injectable for deterministic tests. Rand returns [0,1).
 	Now  func() time.Time
 	Rand func() float64
@@ -142,6 +151,10 @@ type Status struct {
 	Required     int       `json:"required"`
 	Paused       bool      `json:"paused"`
 	Since        time.Time `json:"since"`
+
+	// Reason is the last state transition's reason (or a live warning such as
+	// a restored minimized window), so the UI can explain idle/cooldown.
+	Reason string `json:"reason"`
 
 	// SessionStartedAt is when the CURRENT session began (zero when none is
 	// active). Stats overlays its wall-clock duration on the lifetime totals so
@@ -181,6 +194,19 @@ type activeWatch struct {
 	// re-entry into runWatching, so a channel rotation does not land at exactly
 	// the same offset every session.
 	maxSessionAt time.Time
+
+	// pollErrors counts failed progress polls in the current no-credit window
+	// (reset whenever lastProgress is): a window with a failed poll proves
+	// nothing about the drop, so it never ends in giveUpNoCredit.
+	pollErrors int
+	// hiddenPolls counts consecutive progress polls that read the tab hidden.
+	hiddenPolls int
+	// loggedOut is set by the progress poll when the platform answered for an
+	// anonymous viewer (domain.ErrLoggedOut).
+	loggedOut bool
+	// softChecked is the lastProgress value the soft-stall live check last
+	// ran for, so it runs once per stall episode rather than every tick.
+	softChecked time.Time
 }
 
 // Engine is the watcher state machine.
@@ -217,6 +243,16 @@ type Engine struct {
 	// wait is the ctx-aware pause between sweep claims and after a DOM claim
 	// click. Replaced in tests.
 	wait func(ctx context.Context, d time.Duration)
+
+	// lastDiscoveryAt is when the last successful discovery pass ran and
+	// discoveryGap the jittered discovery.interval drawn for the next one;
+	// runDiscovering skips the pass until the gap has elapsed.
+	lastDiscoveryAt time.Time
+	discoveryGap    time.Duration
+
+	// cdpTimeout bounds every Reload/Navigate/Eval the engine issues (see
+	// bounded). Replaced in tests.
+	cdpTimeout time.Duration
 }
 
 // LastEligibility returns the most recent selection eligibility tally.
@@ -250,7 +286,7 @@ func New(d Deps) *Engine {
 			return float64(s>>11) / float64(1<<53)
 		}
 	}
-	e := &Engine{deps: d, cmds: make(chan command, 16), state: StateIdle, noCreditDrops: map[string]bool{}, sweepTried: map[string]time.Time{}, wait: waitCtx}
+	e := &Engine{deps: d, cmds: make(chan command, 16), state: StateIdle, noCreditDrops: map[string]bool{}, sweepTried: map[string]time.Time{}, wait: waitCtx, cdpTimeout: cdpTimeout}
 	e.paused = !d.Cfg.Watcher.EnabledOnStart
 	e.status = Status{Profile: d.Profile, Platform: string(d.Platform.OrTwitch()), State: StateIdle, Paused: e.paused}
 	return e
@@ -301,7 +337,7 @@ func (e *Engine) setStatus(mut func(*Status)) {
 func (e *Engine) transition(to State, reason string) {
 	from := e.state
 	e.state = to
-	e.setStatus(func(s *Status) { s.State = to; s.Since = e.deps.Now() })
+	e.setStatus(func(s *Status) { s.State = to; s.Since = e.deps.Now(); s.Reason = reason })
 	e.deps.Emit.Emit(EvState, StatePayload{From: from, To: to, At: e.deps.Now(), Reason: reason})
 	e.deps.Log.Info().Str("from", from.String()).Str("to", to.String()).Str("reason", reason).Msg("state")
 }

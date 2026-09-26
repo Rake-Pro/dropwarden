@@ -1,6 +1,15 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrLoggedOut is returned by a platform's page-context queries when the
+// platform answers for an anonymous viewer (Twitch: currentUser null): the
+// session cookie expired or was revoked, so nothing will credit until the user
+// logs in again.
+var ErrLoggedOut = errors.New("platform session is logged out")
 
 // ProgressSource records where a progress reading came from, in descending
 // order of trustworthiness. Server-confirmed inventory minutes beat a client
@@ -43,6 +52,11 @@ type Progress struct {
 	// on this campaign instance) and from the engine's session-scoped
 	// noCreditDrops (learned reactively only after watching a channel for nothing).
 	Owned bool
+
+	// PreconditionsUnmet mirrors Twitch's self.hasPreconditionsMet == false: an
+	// earlier tier must be earned first, so the drop cannot be claimed yet even
+	// when its minutes read complete. false when met or unknown.
+	PreconditionsUnmet bool
 
 	Source     ProgressSource
 	ObservedAt time.Time

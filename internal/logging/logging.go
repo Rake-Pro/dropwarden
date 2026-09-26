@@ -58,13 +58,14 @@ type Options struct {
 	Level     string // trace|debug|info|warn|error
 	File      bool   // also write to LogPath
 	LogPath   string // file destination when File is true
-	MaxSizeMB int    // truncate LogPath if it exceeds this on startup (0 = 5)
+	MaxSizeMB int    // rotate LogPath to LogPath.1 once it exceeds this (0 = 5)
 	Console   bool   // pretty console writer to stderr (true for CLI/dev)
 }
 
-// Setup configures the global logger and returns it. A file that already
-// exceeds MaxSizeMB is truncated on startup rather than rotated, which keeps
-// the implementation dependency-free while bounding disk use.
+// Setup configures the global logger and returns it. The file is rotated (one
+// generation: LogPath -> LogPath.1) at startup when it already exceeds
+// MaxSizeMB, and again whenever it crosses that size while running, so the
+// log that explains a problem is never simply thrown away.
 func Setup(o Options) (zerolog.Logger, error) {
 	level, err := zerolog.ParseLevel(o.Level)
 	if err != nil || o.Level == "" {
@@ -89,12 +90,9 @@ func Setup(o Options) (zerolog.Logger, error) {
 		if maxBytes <= 0 {
 			maxBytes = 5 * 1024 * 1024
 		}
-		if fi, err := os.Stat(o.LogPath); err == nil && fi.Size() > maxBytes {
-			_ = os.Truncate(o.LogPath, 0)
-		}
-		f, err := os.OpenFile(o.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		f, err := openRotating(o.LogPath, maxBytes)
 		if err != nil {
-			return log.Logger, fmt.Errorf("logging: open %s: %w", o.LogPath, err)
+			return log.Logger, err
 		}
 		writers = append(writers, f)
 	}
@@ -102,4 +100,57 @@ func Setup(o Options) (zerolog.Logger, error) {
 	logger := zerolog.New(io.MultiWriter(writers...)).With().Timestamp().Logger()
 	log.Logger = logger
 	return logger, nil
+}
+
+// rotatingFile is an append-only log file that rotates itself to path.1
+// (overwriting the previous generation) once it grows past max bytes. The size
+// is tracked in memory from the writes, so the check costs nothing per line.
+type rotatingFile struct {
+	mu   sync.Mutex
+	path string
+	max  int64
+	f    *os.File
+	size int64
+}
+
+// openRotating opens path for appending, rotating it first when it already
+// exceeds max.
+func openRotating(path string, max int64) (*rotatingFile, error) {
+	r := &rotatingFile{path: path, max: max}
+	if fi, err := os.Stat(path); err == nil && fi.Size() > max {
+		_ = os.Rename(path, path+".1")
+	}
+	if err := r.open(); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (r *rotatingFile) open() error {
+	f, err := os.OpenFile(r.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("logging: open %s: %w", r.path, err)
+	}
+	r.f = f
+	r.size = 0
+	if fi, err := f.Stat(); err == nil {
+		r.size = fi.Size()
+	}
+	return nil
+}
+
+func (r *rotatingFile) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.size > 0 && r.size+int64(len(p)) > r.max {
+		// Close before renaming: Windows cannot rename an open file.
+		_ = r.f.Close()
+		_ = os.Rename(r.path, r.path+".1")
+		if err := r.open(); err != nil {
+			return 0, err
+		}
+	}
+	n, err := r.f.Write(p)
+	r.size += int64(n)
+	return n, err
 }

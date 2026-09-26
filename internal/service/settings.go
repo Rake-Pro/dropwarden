@@ -23,7 +23,15 @@ func (s *SettingsService) Load() ConfigDTO { return toConfigDTO(s.b.config()) }
 // rejected values keep echoing back into the form and every later save fails.
 func (s *SettingsService) Save(dto ConfigDTO) error {
 	cp := s.copyConfig()
+	prevChrome := cp.Browser.ChromePath
 	applyConfigDTO(cp, dto)
+	// A changed Chrome path must point at a file; an unchanged one is left
+	// alone so a save from another pane never fails over it.
+	if p := strings.TrimSpace(cp.Browser.ChromePath); p != "" && p != prevChrome {
+		if fi, err := os.Stat(p); err != nil || fi.IsDir() {
+			return fmt.Errorf("config: browser.chrome_path %q was not found - enter the full path to chrome(.exe), or leave it blank to find Chrome automatically", p)
+		}
+	}
 
 	if err := config.Save(s.b.ConfigPath, cp); err != nil {
 		return err

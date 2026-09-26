@@ -113,6 +113,10 @@ type App struct {
 	// boot default. A user Start/Stop/Login overwrites it live. Guarded by mu.
 	intents map[intentKey]runIntent
 
+	// launchErrs is the last launch failure per (profile, platform), cleared
+	// by the next successful launch. Guarded by mu.
+	launchErrs map[intentKey]string
+
 	// seedWatchAll makes seedIntent default every enabled platform to watch,
 	// short-circuiting the enabled-on-start + first-run-login policy. It is a
 	// test seam so the reconcile-mechanics tests can exercise launch/stop plumbing
@@ -437,6 +441,40 @@ func (a *App) MarkSessionReady(profile string, plat domain.Platform) {
 	markPlatformStarted(dataDir, plat, a.Log.With().Str("profile", profile).Logger())
 }
 
+// profileDebugDir resolves a profile's debug dir for capture dumps ("" falls
+// back to <approot>/debug in the dumpers).
+func (a *App) profileDebugDir(name string) string {
+	pp, err := a.Config().ProfilePaths(name)
+	if err != nil {
+		return ""
+	}
+	return pp.Debug
+}
+
+// loggedOutHook is what an engine runs after it paused itself on an expired
+// session: the same pending-login state a first run gets (the on-disk marker
+// survives a restart, the run intent parks the runtime in login mode, and the
+// service layer's needs-login flag makes the dashboard offer Log in). Logging
+// in and pressing Start (or a positive login check) clears all three through
+// the existing first-run path. The watcher tab is pointed at the login page,
+// as on a first run.
+func (a *App) loggedOutHook(profile string, plat domain.Platform, dataDir string, sess browser.Session, loginURL string, log zerolog.Logger) func() {
+	return func() {
+		markLoginPending(dataDir, plat, log)
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		openLoginPage(ctx, sess, loginURL, log)
+		cancel()
+		a.setIntent(profile, plat, intentLogin)
+		if _, binder := a.live(); binder != nil {
+			if b, ok := binder.(interface {
+				SetNeedsLogin(profile string, plat domain.Platform)
+			}); ok {
+				b.SetNeedsLogin(profile, plat)
+			}
+		}
+	}
+}
+
 // launchWindow opens one shared Chrome window, through the injectable seam when
 // one is installed.
 func (a *App) launchWindow(ctx context.Context, bcfg config.BrowserConfig, profileDir string, dimOpacity float64, log zerolog.Logger) (browser.WindowHost, error) {
@@ -615,6 +653,7 @@ func (a *App) startTwitchRuntime(ctx context.Context, pr *ProfileRuntime, stagge
 	ctrl := twitch.NewController(sess)
 	pages := twitch.NewPages(ctrl)
 	disco := discovery.New(pr.Store, pages, pcfg, log)
+	disco.DebugDir = a.profileDebugDir(pr.Name)
 	ecfg := pcfg
 	if needsLogin {
 		ecfg = pausedConfig(pcfg)
@@ -632,7 +671,8 @@ func (a *App) startTwitchRuntime(ctx context.Context, pr *ProfileRuntime, stagge
 			Store: pr.Store, Ctrl: ctrl, Pages: pages, Disco: disco,
 			Cfg: ecfg, Emit: a.emitter(), Log: log, Window: win,
 			Platform: domain.PlatformTwitch, ChannelHost: "twitch.tv", Profile: pr.Name,
-			DiscoveryStagger: stagger,
+			DiscoveryStagger: stagger, DebugDir: disco.DebugDir,
+			OnLoggedOut: a.loggedOutHook(pr.Name, domain.PlatformTwitch, dataDir, sess, twitch.URLBase+"/login", log),
 		}),
 	}, nil
 }
@@ -719,6 +759,7 @@ func (a *App) startKickRuntime(ctx context.Context, pr *ProfileRuntime, stagger 
 	ctrl := kick.NewController(sess)
 	pages := kick.NewPages(ctrl)
 	disco := kick.NewDiscoverer(pr.Store, pages, kcfg, klog)
+	disco.DebugDir = a.profileDebugDir(pr.Name)
 	ecfg := kcfg
 	if needsLogin {
 		ecfg = pausedConfig(kcfg)
@@ -737,7 +778,8 @@ func (a *App) startKickRuntime(ctx context.Context, pr *ProfileRuntime, stagger 
 			Store: pr.Store, Ctrl: ctrl, Pages: pages, Disco: disco,
 			Cfg: ecfg, Emit: a.emitter(), Log: klog, Window: win,
 			Platform: domain.PlatformKick, ChannelHost: "kick.com", Profile: pr.Name,
-			DiscoveryStagger: stagger,
+			DiscoveryStagger: stagger, DebugDir: disco.DebugDir,
+			OnLoggedOut: a.loggedOutHook(pr.Name, domain.PlatformKick, dataDir, sess, kick.URLBase, klog),
 		}),
 	}, nil
 }

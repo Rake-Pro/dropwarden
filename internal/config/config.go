@@ -212,6 +212,11 @@ type BrowserConfig struct {
 	// (kick.browser.separate_window); see KickSeparateWindow. It is declared
 	// here because the kick block reuses this whole struct.
 	SeparateWindow bool `yaml:"separate_window,omitempty"`
+
+	// SharedWindowExperimental (kick block only) opts back into the shared
+	// window while Kick is enabled. Owner-only/experimental: see
+	// KickSeparateWindow.
+	SharedWindowExperimental bool `yaml:"shared_window_experimental,omitempty"`
 }
 
 // KickSeparateWindow reports whether Kick gets its OWN Chrome instance (its own
@@ -222,9 +227,20 @@ type BrowserConfig struct {
 // kick.browser.separate_window: true restores the legacy two-instance layout,
 // kept as the fallback if background-tab playback proves unreliable live.
 //
+// While Kick is enabled (root or any profile) the separate window is FORCED:
+// in the shared window a Kick tab and a Twitch tab compete for the one
+// foreground slot, and a backgrounded player reads "hidden" and stops
+// crediting. The shared layout stays available only behind
+// kick.browser.shared_window_experimental (owner testing).
+//
 // It is a LAUNCH setting: a change reaches a runtime on its next launch
 // (runtime toggle, crash relaunch, or app restart).
-func (c *Config) KickSeparateWindow() bool { return c.Kick.Browser.SeparateWindow }
+func (c *Config) KickSeparateWindow() bool {
+	if c.Kick.Browser.SeparateWindow {
+		return true
+	}
+	return c.anyKickEnabled() && !c.Kick.Browser.SharedWindowExperimental
+}
 
 type WindowConfig struct {
 	Width          int  `yaml:"width"`

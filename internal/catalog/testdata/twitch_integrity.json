@@ -1,0 +1,16 @@
+{
+ "errors": [
+  {
+   "message": "failed integrity check",
+   "path": [
+    "streams"
+   ],
+   "extensions": {
+    "code": "IntegrityCheckFailed"
+   }
+  }
+ ],
+ "data": {
+  "streams": null
+ }
+}

@@ -8,10 +8,28 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/rake-pro/dropwarden/internal/config"
+	"github.com/rake-pro/dropwarden/internal/discovery"
 	"github.com/rake-pro/dropwarden/internal/domain"
 	"github.com/rake-pro/dropwarden/internal/platform"
 )
+
+// cdpTimeout bounds one Reload/Navigate/Eval the engine issues. The engine is
+// a single goroutine: a CDP call that never answers (a reload whose
+// FrameNavigated is lost, a page fetch that hangs) would otherwise freeze
+// every watchdog and command with it.
+const cdpTimeout = 45 * time.Second
+
+// bounded runs one browser call under the engine's CDP timeout.
+func (e *Engine) bounded(ctx context.Context, f func(context.Context) error) error {
+	cctx, cancel := context.WithTimeout(ctx, e.cdpTimeout)
+	defer cancel()
+	return f(cctx)
+}
+
+// reload hard-refreshes the tab under the CDP timeout.
+func (e *Engine) reload(ctx context.Context) {
+	_ = e.bounded(ctx, func(c context.Context) error { return e.deps.Ctrl.Session().Reload(c, true) })
+}
 
 // probeTimeout bounds a health probe. A timeout here is the hang signal: the
 // renderer is not answering, distinct from a crash event.
@@ -39,7 +57,8 @@ func (e *Engine) updateProgressFromCapture(ctx context.Context) (minutes int, in
 	if e.cur == nil {
 		return 0, false
 	}
-	ps, err := e.deps.Pages.DrainProgress(ctx)
+	var ps []domain.Progress
+	err := e.bounded(ctx, func(c context.Context) (err error) { ps, err = e.deps.Pages.DrainProgress(c); return })
 	if err != nil {
 		return e.cur.lastMinutes, false
 	}
@@ -74,7 +93,12 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 	sessionFound := false
 	sessionChannel := ""
 	sessionMinutes := -1
-	if p, err := e.deps.Pages.FetchCurrentDrop(ctx); err != nil {
+	var p *domain.Progress
+	if err := e.bounded(ctx, func(c context.Context) (err error) { p, err = e.deps.Pages.FetchCurrentDrop(c); return }); err != nil {
+		e.cur.pollErrors++
+		if errors.Is(err, domain.ErrLoggedOut) {
+			e.cur.loggedOut = true
+		}
 		e.deps.Log.Warn().Err(err).Msg("current-drop poll failed")
 	} else if p != nil {
 		sessionFound = true
@@ -86,8 +110,13 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 		ps = append(ps, *p)
 	}
 	invRows := 0
-	if inv, err := e.deps.Pages.FetchInventoryProgress(ctx); err != nil {
+	var inv []domain.Progress
+	if err := e.bounded(ctx, func(c context.Context) (err error) { inv, err = e.deps.Pages.FetchInventoryProgress(c); return }); err != nil {
 		if !errors.Is(err, errors.ErrUnsupported) {
+			e.cur.pollErrors++
+			if errors.Is(err, domain.ErrLoggedOut) {
+				e.cur.loggedOut = true
+			}
 			e.deps.Log.Warn().Err(err).Msg("inventory poll failed")
 		}
 	} else {
@@ -113,7 +142,8 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 	// prove the client is reporting the watch; a drop-progress push proves the
 	// server is crediting it. Zero beacons with healthy playback is a CLIENT
 	// problem; beacons with no credit is Twitch's verdict on the drop/channel.
-	hb, err := e.deps.Pages.DrainHeartbeat(ctx)
+	var hb domain.Heartbeat
+	err := e.bounded(ctx, func(c context.Context) (err error) { hb, err = e.deps.Pages.DrainHeartbeat(c); return })
 	if err != nil {
 		e.deps.Log.Warn().Err(err).Msg("heartbeat drain failed")
 	} else {
@@ -135,6 +165,7 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 	if h, err := e.probe(ctx); err == nil {
 		visibility = h.Visibility
 	}
+	e.checkHidden(ctx, visibility)
 	minutes, increased = e.cur.lastMinutes, false
 	if len(ps) > 0 {
 		minutes, increased = e.applyProgress(ps)
@@ -182,6 +213,7 @@ func (e *Engine) applyProgress(ps []domain.Progress) (minutes int, increased boo
 	if best > e.cur.lastMinutes {
 		e.cur.lastMinutes = best
 		e.cur.lastProgress = e.deps.Now()
+		e.cur.pollErrors = 0 // a new no-credit window starts
 		e.deps.Emit.Emit(EvProgress, ProgressPayload{
 			DropID: e.cur.drop.ID, Current: best, Required: e.cur.drop.RequiredMinutes,
 			Source: string(src), At: e.deps.Now(),
@@ -190,6 +222,37 @@ func (e *Engine) applyProgress(ps []domain.Progress) (minutes int, increased boo
 		return best, true
 	}
 	return best, false
+}
+
+// hiddenWindowReason is the Status.Reason while a minimized/hidden watch tab
+// is being restored.
+const hiddenWindowReason = "window is minimized - restoring"
+
+// checkHidden restores the window when two consecutive progress polls read
+// the watching tab "hidden": Twitch stops minute-watched heartbeats for a
+// hidden tab, so a user-minimized window silently stops crediting. Skipped
+// when the user opted into minimize_while_watching and accepted that.
+func (e *Engine) checkHidden(ctx context.Context, visibility string) {
+	if visibility != "hidden" {
+		e.cur.hiddenPolls = 0
+		return
+	}
+	e.cur.hiddenPolls++
+	if e.cur.hiddenPolls < 2 || e.deps.Cfg.Browser.Window.MinimizeWhileWatching {
+		return
+	}
+	e.cur.hiddenPolls = 0
+	e.deps.Log.Warn().Str("login", e.cur.login).Msg("watching: tab hidden for two polls (window minimized?); restoring it")
+	e.setStatus(func(s *Status) { s.Reason = hiddenWindowReason })
+	e.deps.Emit.Emit(EvState, StatePayload{From: e.state, To: e.state, At: e.deps.Now(), Reason: hiddenWindowReason})
+	if w := e.deps.Window; w != nil {
+		w.Restore(ctx) // brings this tab to the front of a shared window
+	}
+	// The coordinator only restores what it minimized itself; un-minimize a
+	// window the user minimized by hand too.
+	if err := e.bounded(ctx, func(c context.Context) error { return e.deps.Ctrl.Session().SetMinimized(c, false) }); err != nil {
+		e.deps.Log.Warn().Err(err).Msg("watching: restore hidden window failed")
+	}
 }
 
 // setWindowMinimized asks this engine's window coordinator for a visible,
@@ -214,7 +277,7 @@ func (e *Engine) setWindowMinimized(ctx context.Context, minimized bool) {
 	if !e.deps.Cfg.Browser.Window.StartMinimized {
 		return
 	}
-	if err := e.deps.Ctrl.Session().SetMinimized(ctx, minimized); err != nil {
+	if err := e.bounded(ctx, func(c context.Context) error { return e.deps.Ctrl.Session().SetMinimized(c, minimized) }); err != nil {
 		e.deps.Log.Warn().Err(err).Bool("minimized", minimized).Msg("set window state failed")
 	}
 }
@@ -261,15 +324,14 @@ func (e *Engine) endSession(outcome domain.SessionOutcome, note string) {
 	e.setStatus(func(s *Status) { s.SessionStartedAt = time.Time{} })
 }
 
-// dumpDebug writes a raw capture to <approot>/debug/<name> (debug only; the
+// dumpDebug writes a raw capture to the profile's debug dir (debug only; the
 // heartbeat buffer carries player state and drop ids, never auth material) and
 // returns the file path ("" when the write failed).
 func (e *Engine) dumpDebug(name string, body []byte) string {
-	dir, err := config.Dir()
-	if err != nil {
+	ddir := discovery.DebugDirOr(e.deps.DebugDir)
+	if ddir == "" {
 		return ""
 	}
-	ddir := filepath.Join(dir, "debug")
 	if err := os.MkdirAll(ddir, 0o700); err != nil {
 		return ""
 	}

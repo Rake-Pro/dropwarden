@@ -4,6 +4,38 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.2.0 - 2026-09-26
+
+### Added
+- Reworked dashboard: one card per platform with plain-language state, a "Get started" checklist (Chrome found, sign in to Twitch, choose games, Start) that returns when a step regresses, and a needs-you banner that names the actions (link an account, claim a finished drop, sign in again).
+- Game picker (Settings > Games and per profile): "Drops right now" from `GET /api/games/catalog` (own campaigns + Kick's public list + Twitch drops-enabled streams, anonymous, cached 10 min, `refresh=1` at most once a minute), Twitch category search via `GET /api/games/search`, and add-by-exact-name. `GET /api/games?profile=` (cached campaigns only) stays for scripts.
+- Queue grouped by game in games-list order (Pinned first), drag or Alt+Up/Down within a game, per-game move arrows, and a one-click fix button on needs-you rows (`actionURL`/`actionLabel`: Link account, Claim on Twitch, Claim on Kick, Log in) opened through `POST /api/open` as a background tab in the watcher Chrome.
+- Debugging view: Copy diagnostics (`GET /api/diagnostics`, redacted plain text) and Export diagnostics (`POST /api/diagnostics/export`, a zip on the Desktop; never Chrome profiles or cookies).
+- Update flow: dashboard banner, update dialog with release notes, in-place progress (download percent, verify, install, restart), deferral copy while a watch runs, retry after a failed install, an "Updated to vX" notice with its notes (`installedNotes`), and a page reload once the restarted app answers on the new version.
+- `/api/update` reports `status`, `phase`, `percent` (0-100, -1 unknown), `bytesDone`/`bytesTotal`, `devBuild`, `deferredReason`, `failedVersion`/`failMessage`, `skippedVersion`, `promptSeq` and `installedNotes`; check and install return the same object, and a feed 404 reads `none_published`.
+- `/api/state` carries per-platform `reason`, `launchError` and `wanted`, `host.chromeFound`/`host.chromePath`, and queue `needsUser`.
+- `POST /api/config` errors carry `field` (the ConfigDTO name) and the Settings form jumps to and marks that field; a changed Chrome path must exist.
+- Microsoft Edge is a last-resort browser on Windows when Chrome is missing.
+
+### Changed
+- The starter config ships `games: []`; the checklist and picker lead the first run.
+- The tray update item never installs: it opens the update dialog, or runs a check. Dev builds refuse checks and installs.
+- A paused engine's tray line reads "paused - choose Resume in the dashboard"; the dashboard's Resume button starts it again.
+- A failed automatic install skips that version until it is installed by hand; a failed manual install can be retried at once.
+- Enabling Kick forces `separate_window`; the shared window is behind `kick.browser.shared_window_experimental`.
+- The update controller moved into internal/service (UpdateController) with unit tests.
+
+### Fixed
+- Settings changes reach the Twitch and Kick discoverers live, and discovery honors `discovery.interval`/`jitter` (cooldowns and retries no longer force a full pass).
+- Live-status checks batch allowlists over 100 channels; a streamer who switches games is dropped; an offline channel fails the soft stall fast.
+- An expired Twitch session pauses the engine and asks for a login instead of misfiling drops; a hidden watch tab restores the window.
+- Every engine reload, navigate, eval and page fetch is time-bounded; the log rotates to `dropwarden.log.1` instead of being truncated.
+- Login check waits up to 10 s and confirms "logged out" with a `currentUser` query.
+- Zero-minute drops are not selected; the claim sweep skips drops with unmet preconditions; needs-action rows clear once a drop is claimed elsewhere.
+- A Kick drop that could not be claimed says "claim it in the Kick inventory" and links there, not to Twitch.
+- Reserved Twitch paths are never read as raid targets; the raid-cancel click is scoped to the raid banner; Kick tabs open in the background.
+- Debug dumps land in the profile's own debug dir.
+
 ## v0.1.4 - 2026-09-26
 
 ### Fixed

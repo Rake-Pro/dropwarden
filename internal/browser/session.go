@@ -171,8 +171,10 @@ func (t *tab) Reload(ctx context.Context, ignoreCache bool) error {
 	// rod's own Reload runs location.reload(), which cannot express a
 	// cache-busting hard refresh, so drive Page.reload directly and wait for the
 	// top frame to renavigate ourselves. Subscribing before issuing the reload
-	// avoids missing the event.
-	waiter, cancel := p.WithCancel()
+	// avoids missing the event. The wait is bounded by loadTimeout: a reload
+	// whose FrameNavigated never arrives (renderer wedged, event lost) must not
+	// park the engine goroutine forever.
+	waiter, cancel := p.Timeout(loadTimeout).WithCancel()
 	defer cancel()
 	topFrame := t.frame
 	wait := waiter.EachEvent(func(e *proto.PageFrameNavigated) bool {

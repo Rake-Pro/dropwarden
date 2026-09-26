@@ -1,0 +1,97 @@
+[
+ {
+  "data": {
+   "streams": {
+    "edges": [
+     {
+      "cursor": "eyJzIjoyOTQxMC45NDQwMTU0MDI1NjUsImQiOmZhbHNlLCJ0Ijp0cnVlfQ==",
+      "node": {
+       "game": {
+        "id": "32982",
+        "displayName": "Grand Theft Auto V"
+       },
+       "viewersCount": 29410
+      }
+     },
+     {
+      "cursor": "eyJzIjoxNjM5My44Njg1MTMwMDgzMTgsImQiOmZhbHNlLCJ0Ijp0cnVlfQ==",
+      "node": {
+       "game": {
+        "id": "509658",
+        "displayName": "Just Chatting"
+       },
+       "viewersCount": 16393
+      }
+     },
+     {
+      "cursor": "eyJzIjoxMzg2Mi4zMjM4NjczNTQ4NSwiZCI6ZmFsc2UsInQiOnRydWV9",
+      "node": {
+       "game": {
+        "id": "511224",
+        "displayName": "Apex Legends"
+       },
+       "viewersCount": 13862
+      }
+     },
+     {
+      "cursor": "eyJzIjoxMTk2Ny43OTc2NjYzNzI0NTEsImQiOmZhbHNlLCJ0Ijp0cnVlfQ==",
+      "node": {
+       "game": {
+        "id": "898206463",
+        "displayName": "Baby Steps"
+       },
+       "viewersCount": 11967
+      }
+     },
+     {
+      "cursor": "eyJzIjoxMTQyNS40Mzk0ODk5MDg2MTgsImQiOmZhbHNlLCJ0Ijp0cnVlfQ==",
+      "node": {
+       "game": {
+        "id": "29595",
+        "displayName": "Dota 2"
+       },
+       "viewersCount": 11425
+      }
+     },
+     {
+      "cursor": "eyJzIjo3OTkzLjIxMDAzNjE4NDkyMSwiZCI6ZmFsc2UsInQiOnRydWV9",
+      "node": {
+       "game": {
+        "id": "499973",
+        "displayName": "Always On"
+       },
+       "viewersCount": 7993
+      }
+     },
+     {
+      "cursor": "eyJzIjo3ODI1LjE2NzEyOTUwODk1NywiZCI6ZmFsc2UsInQiOnRydWV9",
+      "node": {
+       "game": {
+        "id": "29595",
+        "displayName": "Dota 2"
+       },
+       "viewersCount": 7825
+      }
+     },
+     {
+      "cursor": "eyJzIjo3NzM0LjQ3OTkzOTY1MDg1NiwiZCI6ZmFsc2UsInQiOnRydWV9",
+      "node": {
+       "game": {
+        "id": "29595",
+        "displayName": "Dota 2"
+       },
+       "viewersCount": 7734
+      }
+     }
+    ],
+    "pageInfo": {
+     "hasNextPage": true
+    }
+   }
+  },
+  "extensions": {
+   "durationMilliseconds": 53,
+   "requestID": "01M3E9A9WHQRV4QNR76KY13BZX"
+  }
+ }
+]

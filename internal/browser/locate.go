@@ -38,6 +38,14 @@ func FindChrome(override string) (string, error) {
 			return p, nil
 		}
 	}
+	// Last resort: Microsoft Edge is Chromium and ships with every Windows
+	// install, so a machine without Chrome can still run (the caller logs it).
+	for _, p := range edgePaths() {
+		tried = append(tried, p)
+		if executableAt(p) == nil {
+			return p, nil
+		}
+	}
 	return "", fmt.Errorf("browser: no Chrome or Chromium found; looked in: %s (set browser.chrome_path)",
 		strings.Join(tried, ", "))
 }
@@ -96,6 +104,28 @@ func wellKnownPaths() []string {
 			"/usr/local/bin/chromium",
 		}
 	}
+}
+
+// edgePaths lists Microsoft Edge's standard install locations, probed only
+// after every Chrome/Chromium candidate. Windows only; empty elsewhere.
+func edgePaths() []string {
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	rel := filepath.Join("Microsoft", "Edge", "Application", "msedge.exe")
+	var out []string
+	for _, env := range []string{"ProgramFiles(x86)", "ProgramFiles"} {
+		if root := os.Getenv(env); root != "" {
+			out = append(out, filepath.Join(root, rel))
+		}
+	}
+	return out
+}
+
+// IsEdge reports whether a resolved browser path is the Microsoft Edge
+// fallback rather than Chrome/Chromium.
+func IsEdge(path string) bool {
+	return strings.EqualFold(filepath.Base(path), "msedge.exe")
 }
 
 // pathNames lists the binary names to look for on PATH once the well-known

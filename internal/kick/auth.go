@@ -63,7 +63,7 @@ const jsLoggedIn = `(async () => {
       try {
         const headers = { 'Accept': 'application/json' };
         if (tok) headers['Authorization'] = 'Bearer ' + tok.replace(/^"|"$/g, '');
-        const r = await fetch(url, { credentials: 'include', headers: headers });
+        const r = await fetch(url, { credentials: 'include', headers: headers, signal: AbortSignal.timeout(20000) });
         const ct = (r.headers.get('content-type') || '').split(';')[0];
         if (r.ok && ct.includes('json')) {
           const b = await r.json().catch(() => null);

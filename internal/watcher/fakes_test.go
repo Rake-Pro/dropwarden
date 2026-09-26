@@ -70,6 +70,7 @@ type fakePager struct {
 	heartbeat   domain.Heartbeat
 	progress    []domain.Progress
 	currentDrop *domain.Progress
+	currentErr  error // FetchCurrentDrop error (e.g. domain.ErrLoggedOut)
 	inventory   []domain.Progress
 	pollCalls   int
 
@@ -114,6 +115,9 @@ func (f *fakePager) LiveChannels(_ context.Context, logins []string) ([]domain.C
 }
 func (f *fakePager) FetchCurrentDrop(context.Context) (*domain.Progress, error) {
 	f.pollCalls++
+	if f.currentErr != nil {
+		return nil, f.currentErr
+	}
 	return f.currentDrop, nil
 }
 func (f *fakePager) FetchInventoryProgress(context.Context) ([]domain.Progress, error) {
@@ -126,12 +130,17 @@ func (f *fakePager) FetchInventoryProgress(context.Context) ([]domain.Progress, 
 // fakeDisco implements Discoverer.
 type fakeDisco struct {
 	res   discovery.Result
+	err   error
 	calls int
+	run   func() // side effect of a pass (e.g. saving re-detailed progress)
 }
 
 func (f *fakeDisco) RunOnce(context.Context) (discovery.Result, error) {
 	f.calls++
-	return f.res, nil
+	if f.run != nil {
+		f.run()
+	}
+	return f.res, f.err
 }
 
 // recordingEmitter captures emitted events for assertions.

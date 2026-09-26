@@ -100,6 +100,9 @@ func LaunchInstance(ctx context.Context, bcfg config.BrowserConfig, profileDir s
 		return nil, err
 	}
 
+	if bcfg.ChromePath == "" && IsEdge(chromePath) {
+		logger.Warn().Str("path", chromePath).Msg("browser: Chrome not found; falling back to Microsoft Edge (install Chrome or set browser.chrome_path)")
+	}
 	flags := chromeFlags(bcfg, profileDir, bcfg.Window)
 	logger.Info().Str("chrome", chromePath).Str("profile", profileDir).Msg("launching chrome")
 
@@ -284,7 +287,10 @@ func (in *Instance) NewTab(ctx context.Context) (Session, error) {
 	if !in.alive.Load() {
 		return nil, fmt.Errorf("browser: cannot open a tab: chrome instance is not running")
 	}
-	p, err := in.browser.Context(ctx).Page(proto.TargetCreateTarget{URL: "about:blank"})
+	// Background: a tab opened while another platform's tab is mid-watch must
+	// never steal the foreground (a backgrounded player reads "hidden" and stops
+	// crediting); the window coordinator activates tabs explicitly when needed.
+	p, err := in.browser.Context(ctx).Page(proto.TargetCreateTarget{URL: "about:blank", Background: true})
 	if err != nil {
 		return nil, fmt.Errorf("browser: create tab: %w", err)
 	}
@@ -448,4 +454,30 @@ func (in *Instance) Close() error {
 		}
 	})
 	return err
+}
+
+// OpenBackgroundTab opens url as a new tab in the Chrome window that s drives,
+// in the BACKGROUND (Target.createTarget Background: true): the session's own
+// tab keeps the foreground and keeps playing. The new tab is not adopted -
+// nothing drives it; the user reads it and closes it. It errors when s is not
+// backed by a live rod tab (a fake, or a Managed handle mid-relaunch).
+func OpenBackgroundTab(ctx context.Context, s Session, url string) error {
+	for {
+		switch v := s.(type) {
+		case *Managed:
+			s = v.session()
+			continue
+		case *tab:
+			if !v.inst.alive.Load() {
+				return fmt.Errorf("browser: cannot open a tab: chrome instance is not running")
+			}
+			_, err := proto.TargetCreateTarget{URL: url, Background: true}.Call(v.inst.browser.Context(ctx))
+			if err != nil {
+				return fmt.Errorf("browser: open background tab: %w", err)
+			}
+			return nil
+		default:
+			return fmt.Errorf("browser: session has no chrome window to open a tab in")
+		}
+	}
 }

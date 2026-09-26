@@ -3,11 +3,15 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
+	"github.com/rake-pro/dropwarden/internal/browser"
+	"github.com/rake-pro/dropwarden/internal/catalog"
 	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rake-pro/dropwarden/internal/discovery"
 	"github.com/rake-pro/dropwarden/internal/domain"
@@ -31,6 +35,12 @@ func NewHTTPHandler(b *Backend) http.Handler {
 	settings := NewSettingsService(b)
 	watch := NewWatcherService(b)
 
+	// Anonymous public catalogue sources for the Games picker, fetched only
+	// from the two routes below and cached per process.
+	anon := catalog.NewClient()
+	gameCatalog := catalog.New(anon)
+	gameSearch := catalog.NewSearcher(anon)
+
 	mux := http.NewServeMux()
 
 	// Aggregate state for the dashboard/queue/history views in one round trip:
@@ -44,8 +54,9 @@ func NewHTTPHandler(b *Backend) http.Handler {
 			"version":  version.Version,
 			"update":   b.updateState(),
 			// host.os lets the UI grey out settings this OS cannot back
-			// (always_on_bottom is Windows only).
-			"host": map[string]string{"os": runtime.GOOS},
+			// (always_on_bottom is Windows only). chromeFound/chromePath say
+			// whether a browser to launch exists (a stat per state call).
+			"host": hostState(b),
 		})
 	})
 
@@ -61,7 +72,12 @@ func NewHTTPHandler(b *Backend) http.Handler {
 			writeErr(w, fmt.Errorf("the updater is not running in this process"))
 			return
 		}
-		writeJSON(w, u.CheckNow(r.Context()))
+		st, err := u.CheckNow(r.Context())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, st)
 	})
 	mux.HandleFunc("POST /api/update/install", func(w http.ResponseWriter, r *http.Request) {
 		u := b.updater()
@@ -73,7 +89,7 @@ func NewHTTPHandler(b *Backend) http.Handler {
 			writeErr(w, err)
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true})
+		writeJSON(w, u.UpdateState())
 	})
 
 	mux.HandleFunc("GET /api/debug", func(w http.ResponseWriter, r *http.Request) {
@@ -89,10 +105,84 @@ func NewHTTPHandler(b *Backend) http.Handler {
 			return
 		}
 		if err := settings.Save(dto); err != nil {
-			writeErr(w, err)
+			writeFieldErr(w, err, configErrorField(err))
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true})
+	})
+
+	// Distinct games of a profile's cached campaigns, for the Games picker.
+	mux.HandleFunc("GET /api/games", func(w http.ResponseWriter, r *http.Request) {
+		games, err := b.Games(r.URL.Query().Get("profile"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, games)
+	})
+
+	// Games with drops beyond the profile's own campaigns: Kick's public
+	// campaign list and Twitch's drops-enabled live streams, both anonymous,
+	// merged with the profile's cached campaigns. Cached 10 min; refresh=1
+	// bypasses the cache at most once a minute.
+	mux.HandleFunc("GET /api/games/catalog", func(w http.ResponseWriter, r *http.Request) {
+		own, err := b.Games(r.URL.Query().Get("profile"))
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, gameCatalog.Get(r.Context(), catalogEntries(own), r.URL.Query().Get("refresh") == "1"))
+	})
+
+	// Twitch category search (anonymous), for adding a game by name.
+	mux.HandleFunc("GET /api/games/search", func(w http.ResponseWriter, r *http.Request) {
+		res, err := gameSearch.Search(r.Context(), r.URL.Query().Get("q"))
+		switch {
+		case errors.Is(err, catalog.ErrRateLimited):
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		case errors.Is(err, catalog.ErrInvalidQuery):
+			writeErr(w, err)
+		case err != nil:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "twitch search failed: " + err.Error()})
+		default:
+			writeJSON(w, res)
+		}
+	})
+
+	// Open a twitch.tv / kick.com link: a background tab in that profile and
+	// platform's watcher Chrome when it is up, else the system browser.
+	mux.HandleFunc("POST /api/open", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Profile  string `json:"profile"`
+			Platform string `json:"platform"`
+			URL      string `json:"url"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if err := b.OpenURL(r.Context(), body.Profile, body.Platform, body.URL); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{})
+	})
+
+	// Support bundle: plain text for copy/paste, or a zip on the Desktop.
+	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(b.Diagnostics()))
+	})
+	mux.HandleFunc("POST /api/diagnostics/export", func(w http.ResponseWriter, r *http.Request) {
+		path, err := b.ExportDiagnostics()
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"path": path})
 	})
 
 	// Engine actions, uniform across profiles and platforms:
@@ -403,6 +493,16 @@ func minutesSpark(h *HistoryService, profile string) []int {
 	return out
 }
 
+// hostState is /api/state's host object: the OS plus whether the configured
+// or auto-detected Chrome (Edge as a last resort on Windows) exists.
+func hostState(b *Backend) map[string]any {
+	path, err := browser.FindChrome(b.config().Browser.ChromePath)
+	if err != nil {
+		path = ""
+	}
+	return map[string]any{"os": runtime.GOOS, "chromeFound": err == nil, "chromePath": path}
+}
+
 // profileStates builds the per-profile state array for /api/state, in config
 // order. A profile this process did not open (disabled at start, or added
 // since) still appears, reporting no engines and empty data instead of
@@ -447,13 +547,16 @@ func profileStates(b *Backend, queue *QueueService, history *HistoryService) []m
 // against a fresh Chrome profile and is paused until the user logs in.
 func platformStates(b *Backend, eff *config.ProfileEffective, pb *ProfileBackend) []map[string]any {
 	entry := func(p domain.Platform, enabled bool) map[string]any {
-		m := map[string]any{"platform": string(p), "enabled": enabled, "up": false, "needsLogin": false, "wanted": false, "status": nil}
+		m := map[string]any{"platform": string(p), "enabled": enabled, "up": false, "needsLogin": false, "wanted": false, "status": nil,
+			"reason": "", "launchError": b.launchError(eff.Name, p)}
 		if pb != nil {
 			up := false
 			if e := pb.Engine(p); e != nil {
 				up = true
 				m["up"] = true
-				m["status"] = e.Status()
+				st := e.Status()
+				m["status"] = st
+				m["reason"] = st.Reason
 			}
 			// While up the attached flag is authoritative (login mode vs
 			// watching); while down it is always false, so read the on-disk
@@ -587,6 +690,54 @@ func writeErr(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}
+
+// writeFieldErr is writeErr plus the ConfigDTO field the error is about,
+// omitted when field is "".
+func writeFieldErr(w http.ResponseWriter, err error, field string) {
+	if field == "" {
+		writeErr(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error(), "field": field})
+}
+
+// configFieldByKey maps the config keys the validator names to the ConfigDTO
+// JSON field the settings form edits.
+var configFieldByKey = []struct{ key, field string }{
+	{"kick.browser.player.volume", "volume"},
+	{"kick.browser.burnin.dim_opacity", "dimOpacity"},
+	{"browser.player.volume", "volume"},
+	{"browser.burnin.dim_opacity", "dimOpacity"},
+	{"queue.priority_mode", "priorityMode"},
+	{"claim.strategy", "claimStrategy"},
+	{"auth.stored.enabled", "storedEnabled"},
+	{"auth.mode", "authMode"},
+	{"logging.level", "logLevel"},
+	{"update.interval_hours", "updateIntervalHours"},
+	{"update.feed_url", "updateFeedURL"},
+	{"browser.chrome_path", "chromePath"},
+	{"theme", "theme"},
+	{"games", "games"},
+	{"any_game", "anyGame"},
+}
+
+// configErrorField derives the ConfigDTO field from a config validation
+// error ("config: <key> ..."), or "" when it names no form field.
+func configErrorField(err error) string {
+	msg := err.Error()
+	// Save wraps re-validation failures ("config: validate temp: config: ...").
+	if i := strings.LastIndex(msg, "config: "); i >= 0 {
+		msg = msg[i+len("config: "):]
+	}
+	for _, m := range configFieldByKey {
+		if strings.HasPrefix(msg, m.key+" ") {
+			return m.field
+		}
+	}
+	return ""
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {

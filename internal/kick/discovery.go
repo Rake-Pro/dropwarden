@@ -24,11 +24,34 @@ import (
 type Discoverer struct {
 	store  *store.Store
 	pages  *Pages
-	cfg    *config.Config
 	logger zerolog.Logger
+
+	// DebugDir is the profile's debug dir for capture dumps; empty falls back
+	// to <approot>/debug.
+	DebugDir string
+
+	// cfgMu guards cfg, swapped by SetConfig from the settings reload path.
+	cfgMu sync.Mutex
+	cfg   *config.Config
 
 	mu   sync.Mutex
 	last Diagnostic
+}
+
+// SetConfig swaps in a newer config for the next pass.
+func (d *Discoverer) SetConfig(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	d.cfgMu.Lock()
+	d.cfg = cfg
+	d.cfgMu.Unlock()
+}
+
+func (d *Discoverer) config() *config.Config {
+	d.cfgMu.Lock()
+	defer d.cfgMu.Unlock()
+	return d.cfg
 }
 
 // Diagnostic is a snapshot of the last Kick discovery pass, for the debug UI.
@@ -75,13 +98,14 @@ func (d *Discoverer) RunOnce(ctx context.Context) (discovery.Result, error) {
 
 func (d *Discoverer) runOnce(ctx context.Context, diag *Diagnostic) (discovery.Result, error) {
 	var res discovery.Result
+	cfg := d.config()
 
 	// Debug: seed the passive network-capture shim BEFORE any navigation so the
 	// drops/inventory pages loaded below record their drops-related fetch/XHR
 	// bodies. This is how a real Kick drop's progress endpoint gets captured
 	// (dumped to kick-drops-network.json after the inventory read) so the parser
 	// can be built from real data. Only when the capture toggle is on.
-	if d.cfg.Logging.CaptureGQLBodies {
+	if cfg.Logging.CaptureGQLBodies {
 		if err := d.pages.SeedDropsCapture(ctx); err != nil {
 			d.logger.Warn().Err(err).Msg("kick discovery: seed drops capture failed")
 		}
@@ -105,7 +129,7 @@ func (d *Discoverer) runOnce(ctx context.Context, diag *Diagnostic) (discovery.R
 	if err := json.Unmarshal([]byte(raw), &wrapped); err != nil {
 		return res, fmt.Errorf("kick: decode campaigns wrapper (%.120s): %w", raw, err)
 	}
-	if d.cfg.Logging.CaptureGQLBodies {
+	if cfg.Logging.CaptureGQLBodies {
 		d.dumpDebug("kick-campaigns.json", []byte(wrapped.Body))
 	}
 	diag.APIStatus = wrapped.Status
@@ -136,7 +160,7 @@ func (d *Discoverer) runOnce(ctx context.Context, diag *Diagnostic) (discovery.R
 	// in their own files so the two platforms' dumps never collide.
 	if _, err := d.pages.ReadInventory(ctx); err != nil {
 		d.logger.Warn().Err(err).Msg("kick discovery: inventory read failed")
-	} else if d.cfg.Logging.CaptureGQLBodies {
+	} else if cfg.Logging.CaptureGQLBodies {
 		d.dumpDebug("kick-inventory.txt", []byte(d.pages.InventoryText(ctx)))
 		d.dumpDebug("kick-inventory-raw.html", []byte(d.pages.InventoryRawHTML(ctx)))
 		if raw, err := d.pages.DrainDropsCapture(ctx); err != nil {
@@ -147,7 +171,7 @@ func (d *Discoverer) runOnce(ctx context.Context, diag *Diagnostic) (discovery.R
 		}
 	}
 
-	enq, err := discovery.ReconcileQueue(d.store, d.cfg, domain.PlatformKick, d.logger)
+	enq, err := discovery.ReconcileQueue(d.store, cfg, domain.PlatformKick, d.logger)
 	if err != nil {
 		return res, err
 	}
@@ -157,13 +181,12 @@ func (d *Discoverer) runOnce(ctx context.Context, diag *Diagnostic) (discovery.R
 	return res, nil
 }
 
-// dumpDebug writes a raw body under <approot>/debug for shape discovery.
+// dumpDebug writes a raw body under the profile's debug dir for shape discovery.
 func (d *Discoverer) dumpDebug(name string, body []byte) {
-	dir, err := config.Dir()
-	if err != nil {
+	ddir := discovery.DebugDirOr(d.DebugDir)
+	if ddir == "" {
 		return
 	}
-	ddir := filepath.Join(dir, "debug")
 	if err := os.MkdirAll(ddir, 0o700); err != nil {
 		return
 	}

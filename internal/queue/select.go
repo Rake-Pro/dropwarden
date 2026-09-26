@@ -124,6 +124,11 @@ func eligibleNow(item domain.QueueItem, campaigns map[string]domain.Campaign, pr
 	if claimed[item.DropID] {
 		return domain.Campaign{}, domain.Drop{}, false
 	}
+	// A zero-minute drop is event-based (subs, gifts, chat), not earned by
+	// watching: selecting it would watch a channel for nothing.
+	if drop.RequiredMinutes <= 0 {
+		return domain.Campaign{}, domain.Drop{}, false
+	}
 	// Exclude an already-claimed drop even when Twitch reports its minutes as 0
 	// (a claimed drop from a fully-earned campaign can come back with
 	// currentMinutesWatched 0, so Complete() alone would let it back in). Owned
@@ -325,6 +330,9 @@ func NextDrop(items []domain.QueueItem, campaigns map[string]domain.Campaign, pr
 	return &cands[0], nil
 }
 
+// ReasonNotWatchTime is the queue reason for a zero-minute (event-based) drop.
+const ReasonNotWatchTime = "not a watch-time drop"
+
 // EligibilityReason classifies why item is or is not currently selectable,
 // returning the status the engine should record on the queue item along with
 // a human-readable reason. eligible=true, status=domain.ItemPending means the
@@ -356,6 +364,9 @@ func EligibilityReason(item domain.QueueItem, campaigns map[string]domain.Campai
 	if claimed[item.DropID] {
 		return false, domain.ItemClaimed, "already claimed"
 	}
+	if drop.RequiredMinutes <= 0 {
+		return false, domain.ItemUnavailable, ReasonNotWatchTime
+	}
 	// Reward already owned (matched at discovery against the earned inventory):
 	// Twitch reports isClaimed=false but will never credit a reward the account
 	// already holds, so surface it instead of watching a channel for nothing -
@@ -367,6 +378,9 @@ func EligibilityReason(item domain.QueueItem, campaigns map[string]domain.Campai
 	// Twitch (a failed auto-claim, or a tier that finished in the background of
 	// a simultaneous multi-drop campaign). Surface it instead of lying "claimed".
 	if p, ok := progress[item.DropID]; ok && p.Complete() {
+		if item.Platform.OrTwitch() == domain.PlatformKick {
+			return false, domain.ItemNeedsAction, "watch complete - claim it in the Kick inventory"
+		}
 		return false, domain.ItemNeedsAction, "watch complete - claim it in the Twitch inventory"
 	}
 

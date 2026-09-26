@@ -441,6 +441,7 @@ func (p *probeSession) Navigate(context.Context, string) error { return nil }
 func (p *probeSession) Eval(_ context.Context, _ string, out any) error {
 	if st, ok := out.(*twitch.LoginState); ok {
 		st.LoggedIn = p.loggedIn
+		st.HasLoginButton = !p.loggedIn // a logged-out page renders the Log In button
 	}
 	if lp, ok := out.(*kick.LoginProbe); ok {
 		lp.State = p.kickState

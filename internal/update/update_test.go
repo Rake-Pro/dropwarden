@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -181,8 +182,8 @@ func TestCheckFeedMissing(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
 	u, _ := New(Config{FeedURL: srv.URL + "/latest.json", Current: "1.0.0"})
-	if _, err := u.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "404") {
-		t.Fatalf("err = %v, want a 404 feed error", err)
+	if _, err := u.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "404") || !errors.Is(err, ErrNoRelease) {
+		t.Fatalf("err = %v, want a 404 feed error wrapping ErrNoRelease", err)
 	}
 }
 

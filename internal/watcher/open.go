@@ -22,7 +22,7 @@ func (e *Engine) runOpening(ctx context.Context) (State, string) {
 		return StateSelectingChannel, "no active watch"
 	}
 	e.setWindowMinimized(ctx, false)
-	if err := e.deps.Pages.OpenChannel(ctx, e.cur.login, e.playerPolicy()); err != nil {
+	if err := e.bounded(ctx, func(c context.Context) error { return e.deps.Pages.OpenChannel(c, e.cur.login, e.playerPolicy()) }); err != nil {
 		return e.enterBackoff("open channel: " + err.Error())
 	}
 	return StateValidating, "opened " + e.cur.login
@@ -56,11 +56,10 @@ func (e *Engine) runValidating(ctx context.Context) (State, string) {
 	// Server-side liveness first: an offline channel with "autoplay recent
 	// broadcast" plays a VOD that passes every playback gate below and never
 	// credits, which the stall ladder then misreads as an un-earnable drop.
-	// Skipped when the platform has no status query or the call fails.
-	if liveNow, err := e.deps.Pages.LiveChannels(ctx, []string{e.cur.login}); err == nil && len(liveNow) == 0 {
-		return e.failChannel(domain.OutcomeAbortedOffline, "channel offline (no live stream)", e.deps.Cfg.Watcher.OfflineBlacklistTTL)
-	} else if err != nil && !errors.Is(err, errors.ErrUnsupported) {
-		e.deps.Log.Warn().Err(err).Str("login", e.cur.login).Msg("validating: live status read failed; relying on playback gates")
+	// A streamer who switched games mid-watch is caught here too. Skipped
+	// when the platform has no status query or the call fails.
+	if problem := e.streamProblem(ctx); problem != "" {
+		return e.failChannel(domain.OutcomeAbortedOffline, problem, e.deps.Cfg.Watcher.OfflineBlacklistTTL)
 	}
 	deadline := e.deps.Now().Add(e.deps.Cfg.Watcher.ValidateTimeout)
 	var prevTime float64
@@ -98,17 +97,17 @@ func (e *Engine) runValidating(ctx context.Context) (State, string) {
 		}
 		if h.PlayerError {
 			// One reload attempt, then keep validating.
-			_ = e.deps.Ctrl.Session().Reload(ctx, true)
+			e.reload(ctx)
 			continue
 		}
 		pathOK := strings.Contains(strings.ToLower(h.Pathname), strings.ToLower(e.cur.login))
 		playing := h.Playing()
 		volOK := h.Volume > 0 && h.Volume <= 0.05 && !h.Muted
 		if !playing {
-			_ = e.deps.Ctrl.ClickPlay(ctx)
+			_ = e.bounded(ctx, e.deps.Ctrl.ClickPlay)
 		}
 		if !volOK {
-			_ = e.deps.Ctrl.ReassertVolume(ctx, e.playerPolicy())
+			e.reassertVolume(ctx)
 		}
 		advancing := prevSet && h.CurrentTime > prevTime+1.0
 		prevTime, prevSet = h.CurrentTime, true
@@ -158,6 +157,47 @@ func (e *Engine) runValidating(ctx context.Context) (State, string) {
 	}
 	ev.Msg("validating: timed out - gate breakdown")
 	return e.failChannel(domain.OutcomeAbortedStall, "playback validation timed out", e.deps.Cfg.Watcher.OfflineBlacklistTTL)
+}
+
+// Stream problems streamProblem reports.
+const (
+	reasonOffline   = "channel offline (no live stream)"
+	reasonOtherGame = "streaming a different game"
+)
+
+// streamProblem asks the platform whether the current login is live on the
+// campaign's game. It returns reasonOffline, reasonOtherGame, or "" when the
+// stream is fine or its status is unknown (no status query, or a failed
+// call - playback gates and the stall ladder remain the check then). The game
+// is only compared for an ACL campaign or one with a game id: an any-channel
+// campaign matched by display name alone is left to the drops indicator.
+func (e *Engine) streamProblem(ctx context.Context) string {
+	var liveNow []domain.Channel
+	err := e.bounded(ctx, func(c context.Context) (err error) {
+		liveNow, err = e.deps.Pages.LiveChannels(c, []string{e.cur.login})
+		return
+	})
+	if err != nil {
+		if !errors.Is(err, errors.ErrUnsupported) {
+			e.deps.Log.Warn().Err(err).Str("login", e.cur.login).Msg("live status read failed; relying on playback gates")
+		}
+		return ""
+	}
+	if len(liveNow) == 0 {
+		return reasonOffline
+	}
+	c := e.cur.campaign
+	if (!c.AnyChannel() || c.GameID != "") && !sameGame(c, liveNow[0]) {
+		e.deps.Log.Warn().Str("login", e.cur.login).Str("campaign_game", c.GameName).Str("stream_game", liveNow[0].GameName).
+			Msg("channel is streaming a different game")
+		return reasonOtherGame
+	}
+	return ""
+}
+
+// reassertVolume re-applies the player volume policy under the CDP timeout.
+func (e *Engine) reassertVolume(ctx context.Context) {
+	_ = e.bounded(ctx, func(c context.Context) error { return e.deps.Ctrl.ReassertVolume(c, e.playerPolicy()) })
 }
 
 // beginWatching records the session baseline and enters Watching. Re-entry

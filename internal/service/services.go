@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -101,6 +102,14 @@ func (p *ProfileBackend) NeedsLogin(plat domain.Platform) bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.needsLogin[plat.OrTwitch()]
+}
+
+// SetNeedsLogin raises the needs-login flag on a live runtime whose session
+// expired mid-run (the engine paused itself).
+func (p *ProfileBackend) SetNeedsLogin(plat domain.Platform) {
+	p.mu.Lock()
+	p.needsLogin[plat.OrTwitch()] = true
+	p.mu.Unlock()
 }
 
 // ClearNeedsLogin drops the needs-login flag: the login probe came back
@@ -274,6 +283,25 @@ func (b *Backend) Attach(profile string, plat domain.Platform, e *watcher.Engine
 	}
 }
 
+// SetNeedsLogin flags a (profile, platform) whose session expired while its
+// runtime is up (the app's logged-out hook calls it).
+func (b *Backend) SetNeedsLogin(profile string, plat domain.Platform) {
+	if p := b.Profile(profile); p != nil {
+		p.SetNeedsLogin(plat)
+	}
+}
+
+// launchError returns the reconciler's last launch failure for a (profile,
+// platform), "" when none (or no reconciler is wired).
+func (b *Backend) launchError(profile string, plat domain.Platform) string {
+	if q, ok := b.reconciler().(interface {
+		LaunchError(string, domain.Platform) string
+	}); ok {
+		return q.LaunchError(profile, plat)
+	}
+	return ""
+}
+
 // Detach drops one (profile, platform) runtime that has stopped (app.Binder).
 func (b *Backend) Detach(profile string, plat domain.Platform) {
 	if p := b.Profile(profile); p != nil {
@@ -369,13 +397,24 @@ func (b *Backend) ReloadEngines() {
 		if e := p.Engine(domain.PlatformTwitch); e != nil {
 			if pc, err := cfg.ProfileRuntimeConfig(name); err == nil {
 				e.ReloadConfig(pc)
+				setDiscoConfig(p.Discoverer(domain.PlatformTwitch), pc)
 			}
 		}
 		if e := p.Engine(domain.PlatformKick); e != nil {
 			if kc, err := cfg.ProfileKickRuntimeConfig(name); err == nil {
 				e.ReloadConfig(kc)
+				setDiscoConfig(p.Discoverer(domain.PlatformKick), kc)
 			}
 		}
+	}
+}
+
+// setDiscoConfig pushes a reloaded config into a discoverer: it holds its own
+// copy (games filter, any_game, capture toggle, details_per_cycle), so without
+// this a settings change would only reach discovery on the next launch.
+func setDiscoConfig(d watcher.Discoverer, cfg *config.Config) {
+	if s, ok := d.(interface{ SetConfig(*config.Config) }); ok {
+		s.SetConfig(cfg)
 	}
 }
 
@@ -507,7 +546,9 @@ func (s *QueueService) Get(profile string) ([]QueueItemDTO, error) {
 			Game:     cmap[it.CampaignID].GameName, Position: it.Position, Enabled: it.Enabled,
 			Status: string(it.Status), Reason: it.Reason, RequiredMinutes: d.RequiredMinutes,
 			ForceWatch: it.ForceWatch, Pin: it.Pin, Alongside: alongside[it.DropID],
+			NeedsUser: needsUser(it),
 		}
+		dto.ActionURL, dto.ActionLabel = queueAction(it, cmap[it.CampaignID])
 		if p, ok := progress[it.DropID]; ok {
 			dto.CurrentMinutes, _ = p.Effective()
 			dto.Owned = p.Owned
@@ -515,6 +556,48 @@ func (s *QueueService) Get(profile string) ([]QueueItemDTO, error) {
 		out = append(out, dto)
 	}
 	return out, nil
+}
+
+// needsUser reports whether a queue row needs a human: needs_action with an
+// account-link, manual-claim, or expired-session reason.
+func needsUser(it domain.QueueItem) bool {
+	if it.Status != domain.ItemNeedsAction {
+		return false
+	}
+	r := strings.ToLower(it.Reason)
+	for _, k := range []string{"account link", "claim it", "session expired"} {
+		if strings.Contains(r, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// queueAction returns the link and button label that resolve a needs_action
+// row: the campaign's account-link page, the Twitch inventory for a manual
+// claim, or the login page for an expired session. Empty otherwise.
+func queueAction(it domain.QueueItem, c domain.Campaign) (string, string) {
+	if it.Status != domain.ItemNeedsAction {
+		return "", ""
+	}
+	r := strings.ToLower(it.Reason)
+	switch {
+	case strings.Contains(r, "account link"):
+		if c.AccountLinkURL != "" {
+			return c.AccountLinkURL, "Link account"
+		}
+	case strings.Contains(r, "claim it"):
+		if it.Platform.OrTwitch() == domain.PlatformKick {
+			return kick.URLInventory, "Claim on Kick"
+		}
+		return watcher.URLInventoryClaim, "Claim on Twitch"
+	case strings.Contains(r, "session expired"):
+		if it.Platform.OrTwitch() == domain.PlatformKick {
+			return "https://kick.com/", "Log in"
+		}
+		return "https://www.twitch.tv/login", "Log in"
+	}
+	return "", ""
 }
 
 // SetPin stars (pinned=true) or unstars one drop. Starring appends it to the

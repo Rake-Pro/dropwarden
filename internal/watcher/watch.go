@@ -150,7 +150,7 @@ func (e *Engine) watchTick(ctx context.Context, lastTime *float64, lastTimeSet *
 		return s, r, true
 	}
 	if h.PlayerError {
-		_ = e.deps.Ctrl.Session().Reload(ctx, true)
+		e.reload(ctx)
 		e.cur.hardRefreshes++
 		return StateValidating, "player error; refreshed", true
 	}
@@ -160,7 +160,9 @@ func (e *Engine) watchTick(ctx context.Context, lastTime *float64, lastTimeSet *
 	}
 	// Preemptive raid: cancel the banner to keep our credited channel.
 	if h.RaidBanner {
-		if ok, _ := e.deps.Ctrl.CancelRaid(ctx); ok {
+		var ok bool
+		_ = e.bounded(ctx, func(c context.Context) (err error) { ok, err = e.deps.Ctrl.CancelRaid(c); return })
+		if ok {
 			e.deps.Log.Info().Str("login", e.cur.login).Msg("cancelled raid to stay on channel")
 		}
 	}
@@ -169,8 +171,8 @@ func (e *Engine) watchTick(ctx context.Context, lastTime *float64, lastTimeSet *
 	if *lastTimeSet && h.CurrentTime <= *lastTime+0.5 {
 		*frozenTicks++
 		if *frozenTicks >= 3 {
-			_ = e.deps.Ctrl.ClickPlay(ctx)
-			_ = e.deps.Ctrl.Session().Reload(ctx, true)
+			_ = e.bounded(ctx, e.deps.Ctrl.ClickPlay)
+			e.reload(ctx)
 			e.cur.hardRefreshes++
 			*frozenTicks = 0
 			return StateValidating, "video frozen; refreshed", true
@@ -183,9 +185,9 @@ func (e *Engine) watchTick(ctx context.Context, lastTime *float64, lastTimeSet *
 	// Volume drift. The out-of-band/muted case reasserts immediately (untouched);
 	// the routine periodic reassert's cadence is fuzzed one interval at a time.
 	if h.Volume <= 0 || h.Volume > 0.05 || h.Muted {
-		_ = e.deps.Ctrl.ReassertVolume(ctx, e.playerPolicy())
+		e.reassertVolume(ctx)
 	} else if now.After(*nextReassertAt) {
-		_ = e.deps.Ctrl.ReassertVolume(ctx, e.playerPolicy())
+		e.reassertVolume(ctx)
 		*nextReassertAt = now.Add(e.fuzzed(e.deps.Cfg.Browser.Player.ReassertInterval))
 	}
 	e.keepWindowOnBottom(ctx)
@@ -195,6 +197,11 @@ func (e *Engine) watchTick(ctx context.Context, lastTime *float64, lastTimeSet *
 	minutes, _ := e.updateProgressFromCapture(ctx)
 	if m, _ := e.pollProgress(ctx); m > minutes {
 		minutes = m
+	}
+	if e.cur.loggedOut {
+		e.endSession(domain.OutcomeError, "platform session logged out")
+		s, r := e.handleLoggedOut()
+		return s, r, true
 	}
 	if e.cur.drop.RequiredMinutes > 0 && minutes >= e.cur.drop.RequiredMinutes {
 		e.endSession(domain.OutcomeCompleted, "required minutes met")
@@ -230,22 +237,34 @@ func (e *Engine) noCredit() (State, string, bool) {
 		s, r := e.failChannel(domain.OutcomeAbortedStall, "no credit on this channel", e.deps.Cfg.Watcher.OfflineBlacklistTTL)
 		return s, r, true
 	}
+	// A window in which a progress poll failed proves nothing: the zero may
+	// be ours (poll errors), not Twitch's. Start a fresh window instead of
+	// filing the drop as un-earnable.
+	if e.cur.pollErrors > 0 {
+		e.deps.Log.Warn().Str("drop", e.cur.drop.Name).Str("login", e.cur.login).Int("poll_errors", e.cur.pollErrors).
+			Msg("no credit, but progress polls failed in this window; not judging the drop un-earnable")
+		e.cur.pollErrors = 0
+		e.cur.lastProgress = e.deps.Now()
+		return "", "", false
+	}
 	return e.giveUpNoCredit()
 }
+
+// reasonNoCredit is the queue/needs-action reason for a drop given up after
+// the no-first-credit window.
+const reasonNoCredit = "not crediting after 5 min (already-owned reward, logged out, hidden window, or region lock)"
 
 // giveUpNoCredit abandons a drop that watched a participating channel but
 // earned no credit: flag it (session-scoped) so selection skips it and falls
 // through to the next eligible drop, mark it needs_action, and surface it.
 func (e *Engine) giveUpNoCredit() (State, string, bool) {
 	e.noCreditDrops[e.cur.drop.ID] = true
-	_ = e.deps.Store.SetItemStatus(e.cur.drop.ID, domain.ItemNeedsAction,
-		"watched a participating channel but earned no credit - you may already own this reward")
-	e.deps.Emit.Emit(EvNeedsAction, NeedsActionPayload{DropID: e.cur.drop.ID,
-		Reason: "watched but not crediting - you may already own this reward"})
+	_ = e.deps.Store.SetItemStatus(e.cur.drop.ID, domain.ItemNeedsAction, reasonNoCredit)
+	e.deps.Emit.Emit(EvNeedsAction, NeedsActionPayload{DropID: e.cur.drop.ID, Reason: reasonNoCredit})
 	e.deps.Log.Warn().Str("drop", e.cur.drop.Name).Str("login", e.cur.login).
-		Msg("drop earned no credit on a participating channel; skipping it this session (likely already owned)")
-	e.endSession(domain.OutcomeAbortedStall, "no credit - likely already owned")
-	s, r := e.abandon(domain.OutcomeAbortedStall, "watched but not crediting")
+		Msg("drop earned no credit on a participating channel; skipping it this session")
+	e.endSession(domain.OutcomeAbortedStall, "no credit after 5 min")
+	s, r := e.abandon(domain.OutcomeAbortedStall, reasonNoCredit)
 	return s, r, true
 }
 
@@ -265,7 +284,7 @@ func (e *Engine) stallCheck(ctx context.Context, now, proactiveAt time.Time) (St
 
 	// Proactive refresh even when healthy, to beat the +15m client estimate cap.
 	if now.After(proactiveAt) {
-		_ = e.deps.Ctrl.Session().Reload(ctx, true)
+		e.reload(ctx)
 		e.cur.hardRefreshes++
 		return StateValidating, "proactive refresh", true
 	}
@@ -295,13 +314,25 @@ func (e *Engine) stallCheck(ctx context.Context, now, proactiveAt time.Time) (St
 			s, r := e.failChannel(domain.OutcomeAbortedStall, "progress would not advance", w.ChannelBlacklistTTL)
 			return s, r, true
 		}
-		_ = e.deps.Ctrl.Session().Reload(ctx, true)
+		e.reload(ctx)
 		e.cur.lastProgress = now // give the refresh a chance before counting another stall
+		e.cur.pollErrors = 0
 		return StateValidating, "hard stall; refreshed", true
 	}
 	if sinceProgress >= w.SoftStall {
 		e.cur.stallEvents++
-		_ = e.deps.Ctrl.ToggleDropsPanel(ctx)
+		// Once per stall episode, ask the platform whether the channel is
+		// still live on the campaign's game: an offline or off-game stream
+		// fails fast here instead of waiting out the hard stall.
+		if !e.cur.softChecked.Equal(e.cur.lastProgress) {
+			e.cur.softChecked = e.cur.lastProgress
+			if problem := e.streamProblem(ctx); problem != "" {
+				e.endSession(domain.OutcomeAbortedOffline, problem)
+				s, r := e.failChannel(domain.OutcomeAbortedOffline, problem, w.OfflineBlacklistTTL)
+				return s, r, true
+			}
+		}
+		_ = e.bounded(ctx, e.deps.Ctrl.ToggleDropsPanel)
 	}
 	return "", "", false
 }
@@ -323,7 +354,7 @@ func (e *Engine) handleNavigation(ctx context.Context, urlOrPath string) (State,
 		e.deps.Log.Info().Str("from", e.cur.login).Str("to", newLogin).Msg("adopting eligible raid target")
 		e.cur.login = newLogin
 		e.cur.session.Note = "adopted raid to " + newLogin
-		_ = e.deps.Ctrl.Session().Reload(ctx, true)
+		e.reload(ctx)
 		e.cur.hardRefreshes++
 		return StateValidating, "adopted raid target", true
 	}
@@ -393,7 +424,8 @@ func loginFromPath(host, p string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	// Reserved first-segment paths are not channels.
 	switch s {
-	case "", "directory", "drops", "settings", "videos", "downloads", "store", "subscriptions":
+	case "", "directory", "drops", "settings", "videos", "downloads", "store", "subscriptions",
+		"login", "search", "popout", "moderator", "embed", "u", "p", "team", "event", "inventory":
 		return ""
 	}
 	// Shape check last: "about:blank" (single colon, no ://) and every other

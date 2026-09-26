@@ -101,10 +101,10 @@ type fakeUpdater struct {
 }
 
 func (f *fakeUpdater) UpdateState() UpdateStateDTO { return f.state }
-func (f *fakeUpdater) CheckNow(ctx context.Context) UpdateStateDTO {
+func (f *fakeUpdater) CheckNow(ctx context.Context) (UpdateStateDTO, error) {
 	f.checks++
 	f.state.Pending = &PendingUpdateDTO{Version: "9.9.9"}
-	return f.state
+	return f.state, nil
 }
 func (f *fakeUpdater) InstallNow() error { f.installs++; return f.installErr }
 
@@ -116,7 +116,7 @@ func TestHTTPUpdateWithoutUpdater(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &st); err != nil || rr.Code != 200 {
 		t.Fatalf("code=%d err=%v body=%s", rr.Code, err, rr.Body.String())
 	}
-	if st.Available || st.CurrentVersion != version.Version || st.Pending != nil {
+	if st.Enabled || st.CurrentVersion != version.Version || st.Pending != nil || st.Status != UpdateStatusIdle || st.Percent != -1 {
 		t.Errorf("state = %+v", st)
 	}
 	for _, path := range []string{"/api/update/check", "/api/update/install"} {
@@ -130,7 +130,7 @@ func TestHTTPUpdateWithoutUpdater(t *testing.T) {
 
 func TestHTTPUpdateRoutes(t *testing.T) {
 	b := testBackend(t)
-	f := &fakeUpdater{state: UpdateStateDTO{CurrentVersion: "1.0.0", Available: true, Enabled: true}}
+	f := &fakeUpdater{state: UpdateStateDTO{CurrentVersion: "1.0.0", Enabled: true, Status: UpdateStatusIdle}}
 	b.SetUpdater(f)
 	h := NewHTTPHandler(b)
 
@@ -144,8 +144,10 @@ func TestHTTPUpdateRoutes(t *testing.T) {
 
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/update/install", nil))
-	if rr.Code != 200 || f.installs != 1 {
-		t.Fatalf("install: code=%d installs=%d", rr.Code, f.installs)
+	st = UpdateStateDTO{}
+	json.Unmarshal(rr.Body.Bytes(), &st)
+	if rr.Code != 200 || f.installs != 1 || st.CurrentVersion != "1.0.0" {
+		t.Fatalf("install: code=%d installs=%d body=%s", rr.Code, f.installs, rr.Body.String())
 	}
 	f.installErr = errors.New("no update pending")
 	rr = httptest.NewRecorder()

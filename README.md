@@ -42,7 +42,7 @@ v3. Development happens directly from GoLand.
   element matching `claim.inventory_button_selector` whose label is
   `claim.inventory_button_text` (defaults
   `button:has([data-a-target="tw-core-button-label-text"])` / "Claim Now";
-  Settings > Player > Claim). An empty selector only writes the capture.
+  Settings > Platforms > Twitch > Advanced). An empty selector only writes the capture.
 - One bounded attempt (60 s) per completed drop; if both paths fail the
   queue item goes to needs_action for a manual claim.
 - Claim sweep (`claim.sweep`, default true): after each discovery pass and
@@ -138,10 +138,19 @@ published on the GitHub release and on the downloads host
 - The app checks a release manifest (`latest.json`) ~30 s after start and then
   every `update.interval_hours`; dev builds (`0.0.0-dev`) never auto-check.
 - A found update shows a dashboard banner ("What's new", "Install now") and
-  retitles the tray item to "Install Update vX.Y.Z".
+  retitles the tray item to "Update vX.Y.Z Available...". Clicking the tray
+  item opens the dashboard's update dialog (or runs a check); it never
+  installs by itself.
 - Auto-install never cuts a watch short: while any profile is opening,
-  validating, watching or claiming, the install waits (re-checked every
-  5 minutes) and runs between watches. "Install now" installs immediately.
+  validating, watching or claiming, the install waits (re-evaluated the moment
+  a watch ends, 5-minute fallback) and runs between watches; the banner says
+  which watch it waits for. "Install now" installs immediately.
+- Progress (download percent, verifying, installing, restarting) shows in the
+  banner, the dialog and Settings > Updates. After the restart the page
+  reloads itself once and shows "Updated to vX.Y.Z" with its release notes.
+- A failed install shows "Couldn't install vX.Y.Z" with the reason and a
+  Retry button. A failed automatic install is not retried automatically for
+  that version; a manual install always runs.
 - Install flow: the app downloads the platform archive, verifies its sha256
   against the manifest (fails closed), hands it to `dropwarden-cli
   update-apply`, and quits; the helper swaps the files, restarts dropwarden,
@@ -224,6 +233,32 @@ wails3 dev
 The dashboard, queue, history, and settings screens follow the same visual
 language as the sibling GoShareIt app.
 
+### Using the app
+
+- First run: the dashboard shows a "Get started" checklist until every step
+  passes, and brings it back if one regresses:
+
+| Step | Done when | Button |
+| --- | --- | --- |
+| Chrome found | Chrome (or Edge on Windows) is found, or `chromePath` points at it | Browser settings |
+| Sign in to Twitch | the Twitch runtime no longer needs a login | Log in |
+| Choose your games | the games list is not empty, or Any game is on | Choose games |
+| Start | the watcher has run once | Start |
+
+- Game picker (Settings > Games, and per profile under Profiles): "Drops right
+  now" lists games with active drops (loaded when the picker opens, Refresh
+  forces a fresh list), the search box searches all Twitch categories, and
+  "Not listed?" adds an exact name. Press Save to apply.
+- Queue: grouped by game in your games-list order, pinned drops first. Rows
+  that need you carry one button (Link account, Claim on Twitch, Claim on
+  Kick, Log in) that opens the page as a background tab in that profile's
+  watcher Chrome.
+- Debugging: "Copy diagnostics" copies a redacted text bundle (version, host,
+  Chrome, update state, config without secrets, per-profile state, last 400
+  log lines); "Export diagnostics" writes a zip to the Desktop. Neither
+  includes Chrome profiles, cookies or tokens.
+- Pause from the tray, Resume from the dashboard card.
+
 > Linux builds the GUI via Wails' GTK3 backend (`go build -tags gtk3
 > ./cmd/dropwarden`, GTK3 + webkit2gtk-4.1) since 2026-08-30 - Wails v3's
 > default backend there needs GTK4 + WebKitGTK, which most distros (and this
@@ -240,6 +275,21 @@ The frontend is live out of the box: it calls a small JSON API
 no Wails binding generation is required. `go run ./cmd/dropwarden` and
 `wails3 dev` both work identically. If you open `frontend/index.html` with no
 backend behind it, it falls back to sample data for design review.
+
+### Game picker API (anonymous, on demand)
+
+| Route | Returns |
+|---|---|
+| `GET /api/games?profile=<name>` | `[{game, platforms, campaigns, endsAt, tracked}]` from the profile's cached campaigns (no network) |
+| `GET /api/games/catalog?profile=<name>[&refresh=1]` | `{fetchedAt, sources: {kick, twitchDrops}, games: [{game, source, platforms, campaigns, endsAt, live}]}` |
+| `GET /api/games/search?q=<text>` | `[{game, id, boxArt}]` (Twitch category search, box art 52x72) |
+
+- `catalog` merges three sources by trimmed, case-insensitive game name: the profile's own cached campaigns (`source: "campaign"`), Kick's public drops-campaign list (`"kick"`, game = `category.name`, expired campaigns skipped) and Twitch's drops-enabled live streams (`"twitch_drops"`, `live` = stream count, up to 5 pages of 30).
+- `sources.kick` / `sources.twitchDrops` are false when that source failed; the other rows still return. A failure is logged once per outage.
+- `catalog` is cached per process for 10 minutes; `refresh=1` bypasses the cache at most once per 60 s (otherwise the cached copy is returned).
+- `search` needs 2-60 characters after trimming (400 otherwise), caches each query 10 minutes, and allows 2 upstream searches per second process-wide (429 `{error}` beyond; cache hits are never limited). Upstream failure is 502.
+- All three upstream calls are anonymous (no cookies, no login, no browser), 10 s timeout each, and run only when these routes are called; nothing polls them.
+- Twitch refuses anonymous stream pages past the first with "failed integrity check" (seen 2026-09-26); the walk keeps page 1 and stops, so `live` counts cover the top 30 drops-enabled streams in practice.
 
 ## GoLand
 

@@ -32,7 +32,7 @@ func (t *trayEngine) items() []*application.MenuItem {
 // buildTray creates the system tray, its menu, and a background goroutine that
 // keeps the status lines current. Menu actions drive the engines through the
 // backend (which may not have engines attached yet while Chrome starts).
-func buildTray(wapp *application.App, win *application.WebviewWindow, backend *service.Backend, updates *updateController) {
+func buildTray(wapp *application.App, win *application.WebviewWindow, backend *service.Backend, updates *updateTray) {
 	tray := wapp.SystemTray.New()
 	tray.SetLabel("dropwarden")
 	tray.SetTooltip("dropwarden")
@@ -103,7 +103,8 @@ func buildTray(wapp *application.App, win *application.WebviewWindow, backend *s
 	menu.AddSeparator()
 	menu.Add("Open dashboard").OnClick(func(*application.Context) { win.Show() })
 	menu.AddSeparator()
-	// Retitles itself: "Install Update vX.Y.Z" once an update is pending.
+	// Retitles itself: "Update vX.Y.Z Available..." once an update is pending;
+	// a click opens the dashboard's update dialog, never a silent install.
 	updates.attach(menu.Add("Check for Updates"))
 	menu.AddSeparator()
 	menu.Add("Quit dropwarden").OnClick(func(*application.Context) { wapp.Quit() })
@@ -121,7 +122,7 @@ func trayLine(st watcher.Status) string {
 		return fmt.Sprintf("watching %s - %d/%d min", st.ChannelLogin, st.Current, st.Required)
 	}
 	if st.Paused {
-		return "paused"
+		return "paused - choose Resume in the dashboard"
 	}
 	return st.State.String()
 }

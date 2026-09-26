@@ -168,4 +168,9 @@ var migrations = []string{
 	// source records how a claim was booked: '' = claimed by dropwarden,
 	// 'detected' = found already claimed in the Twitch inventory. Append-only.
 	`ALTER TABLE claims ADD COLUMN source TEXT NOT NULL DEFAULT '';`,
+
+	// preconditions_unmet mirrors self.hasPreconditionsMet == false: the drop
+	// cannot be claimed until an earlier tier is earned, so the claim sweep
+	// skips it. NULL/0 = met or unknown. Append-only.
+	`ALTER TABLE progress ADD COLUMN preconditions_unmet INTEGER;`,
 }

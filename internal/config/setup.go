@@ -18,13 +18,9 @@ theme: dark            # dark | light | system  (dashboard UI)
 
 # Campaigns for games outside this list are cached but never queued. The list
 # order is the game priority: earlier games are watched first.
-games:
-  - Rust
-  - Halo Infinite
-  - Halo Campaign Evolved
-  - "Halo: The Master Chief Collection"
-  - Once Human
-any_game: false        # future: queue every drops-enabled campaign
+# pick games in Settings > Games after the first campaign scan
+games: []
+any_game: false        # true = queue every drops-enabled campaign and ignore the list (Settings > Games > Advanced)
 
 queue:
   priority_mode: top_down   # top_down | ending_soonest | closest_to_complete | shortest_first
@@ -105,13 +101,16 @@ browser:
 kick:
   enabled: false               # parallel Kick drops runtime (its own engine)
   browser:
-    # separate_window false (default) = SHARED WINDOW: Kick runs as a TAB in
-    # this profile's Twitch Chrome window, so one profile costs ONE Chrome
-    # instead of two. The profile_dir and window settings below are then
-    # UNUSED (the shared window is the Twitch one), and Kick must be logged in
-    # once in that window - an existing chrome-profile-kick login does NOT
-    # carry over. true restores the legacy layout: a second Chrome instance
-    # with its own profile dir and window.
+    # While kick is enabled Kick always gets its OWN Chrome window (profile_dir
+    # and window below): a Kick tab and a Twitch tab cannot both be in the
+    # foreground, and a background player stops crediting. separate_window is
+    # therefore forced on whenever kick.enabled is true.
+    # shared_window_experimental: true (owner testing only) opts back into the
+    # shared layout, where Kick runs as a TAB in this profile's Twitch window
+    # (one Chrome per profile; profile_dir/window unused; Kick must be logged
+    # in once in that window - a chrome-profile-kick login does not carry
+    # over). Both are launch settings (next launch to apply).
+    # shared_window_experimental: false
     separate_window: false
     profile_dir: ""            # separate_window only; blank = <approot>/chrome-profile-kick
     mute_audio: false

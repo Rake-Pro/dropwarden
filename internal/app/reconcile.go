@@ -425,8 +425,10 @@ func (a *App) startLive(ctx context.Context, binder Binder, pr *ProfileRuntime, 
 	rt, err := a.startPlatformRuntime(ctx, pr, plat, stagger)
 	if err != nil {
 		log.Error().Err(err).Msg("app: runtime failed to start")
+		a.setLaunchErr(pr.Name, plat, err.Error())
 		return
 	}
+	a.setLaunchErr(pr.Name, plat, "")
 	rctx, cancel := context.WithCancel(ctx)
 	rt.cancel = cancel
 	rt.done = make(chan struct{})
@@ -538,6 +540,30 @@ func (a *App) emitter() watcher.Emitter {
 	a.cfgMu.RLock()
 	defer a.cfgMu.RUnlock()
 	return a.emit
+}
+
+// setLaunchErr records (msg != "") or clears the last launch failure of a
+// (profile, platform), for the dashboard's launchError.
+func (a *App) setLaunchErr(profile string, plat domain.Platform, msg string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.launchErrs == nil {
+		a.launchErrs = map[intentKey]string{}
+	}
+	k := intentKey{profile, plat.OrTwitch()}
+	if msg == "" {
+		delete(a.launchErrs, k)
+		return
+	}
+	a.launchErrs[k] = msg
+}
+
+// LaunchError returns the last launch failure of a (profile, platform), or ""
+// once a launch succeeded. The service layer exposes it as launchError.
+func (a *App) LaunchError(profile string, plat domain.Platform) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.launchErrs[intentKey{profile, plat.OrTwitch()}]
 }
 
 func hasPlatform(list []domain.Platform, p domain.Platform) bool {

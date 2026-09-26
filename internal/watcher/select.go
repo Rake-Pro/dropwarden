@@ -213,7 +213,11 @@ func (e *Engine) pickChannel(ctx context.Context, c domain.Campaign, cands []que
 	now := e.deps.Now()
 	var live []domain.Channel
 	if c.AnyChannel() {
-		logins, err := e.deps.Pages.DirectoryChannels(ctx, c.GameSlug)
+		var logins []string
+		err := e.bounded(ctx, func(cc context.Context) (err error) {
+			logins, err = e.deps.Pages.DirectoryChannels(cc, c.GameSlug)
+			return
+		})
 		if err != nil {
 			e.deps.Log.Warn().Err(err).Str("game", c.GameName).Msg("select: directory read failed")
 			return "", false
@@ -233,7 +237,8 @@ func (e *Engine) pickChannel(ctx context.Context, c domain.Campaign, cands []que
 		for _, ch := range c.AllowedChannels {
 			logins = append(logins, ch.Login)
 		}
-		liveNow, err := e.deps.Pages.LiveChannels(ctx, logins)
+		var liveNow []domain.Channel
+		err := e.bounded(ctx, func(cc context.Context) (err error) { liveNow, err = e.deps.Pages.LiveChannels(cc, logins); return })
 		switch {
 		case errors.Is(err, errors.ErrUnsupported):
 			for _, ch := range c.AllowedChannels {

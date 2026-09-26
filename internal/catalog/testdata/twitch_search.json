@@ -1,0 +1,82 @@
+{
+ "data": {
+  "searchCategories": {
+   "edges": [
+    {
+     "node": {
+      "id": "263490",
+      "displayName": "Rust",
+      "boxArtURL": "https://static-cdn.jtvnw.net/ttv-boxart/263490_IGDB-{width}x{height}.jpg"
+     }
+    },
+    {
+     "node": {
+      "id": "161006884",
+      "displayName": "Rusty's Retirement",
+      "boxArtURL": "https://static-cdn.jtvnw.net/ttv-boxart/161006884_IGDB-{width}x{height}.jpg"
+     }
+    },
+    {
+     "node": {
+      "id": "494041",
+      "displayName": "Rusty Lake: Roots",
+      "boxArtURL": "https://static-cdn.jtvnw.net/ttv-boxart/494041_IGDB-{width}x{height}.jpg"
+     }
+    },
+    {
+     "node": {
+      "id": "587268350",
+      "displayName": "Rust Mobile",
+      "boxArtURL": "https://static-cdn.jtvnw.net/ttv-boxart/587268350_IGDB-{width}x{height}.jpg"
+     }
+    },
+    {
+     "node": {
+      "id": "498327",
+      "displayName": "Rusty Lake Paradise",
+      "boxArtURL": "https://static-cdn.jtvnw.net/ttv-boxart/498327_IGDB-{width}x{height}.jpg"
+     }
+    },
+    {
+     "node": {
+      "id": "491377",
+      "displayName": "Rusty Lake Hotel",
+      "boxArtURL": "https://static-cdn.jtvnw.net/ttv-boxart/491377_IGDB-{width}x{height}.jpg"
+     }
+    },
+    {
+     "node": {
+      "id": "512258",
+      "displayName": "Rustler",
+      "boxArtURL": "https://static-cdn.jtvnw.net/ttv-boxart/512258_IGDB-{width}x{height}.jpg"
+     }
+    },
+    {
+     "node": {
+      "id": "585129618",
+      "displayName": "Rusted Moss",
+      "boxArtURL": "https://static-cdn.jtvnw.net/ttv-boxart/585129618_IGDB-{width}x{height}.jpg"
+     }
+    },
+    {
+     "node": {
+      "id": "917743709",
+      "displayName": "Rustil: Eternal Labyrinth Castle",
+      "boxArtURL": "https://static-cdn.jtvnw.net/ttv-boxart/917743709_IGDB-{width}x{height}.jpg"
+     }
+    },
+    {
+     "node": {
+      "id": "971498216",
+      "displayName": "Rusted Awakening",
+      "boxArtURL": "https://static-cdn.jtvnw.net/ttv-boxart/971498216_IGDB-{width}x{height}.jpg"
+     }
+    }
+   ]
+  }
+ },
+ "extensions": {
+  "durationMilliseconds": 41,
+  "requestID": "01M3E9AA33RE8SNMS3QT73GF6K"
+ }
+}

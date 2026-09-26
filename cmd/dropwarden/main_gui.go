@@ -66,7 +66,7 @@ func main() {
 		},
 		// Runs after the single-instance lock is released, so an in-process
 		// update can start the new binary without it being turned away.
-		PostShutdown: updates.postShutdown,
+		PostShutdown: updates.PostShutdown,
 	})
 	a.Log.Info().Str("version", version.Version).Msg("dropwarden starting")
 
@@ -75,19 +75,19 @@ func main() {
 	// here on this is the only instance: drop what a previous self-update
 	// left behind (*.old binaries, stage dirs) and pick up its failure marker.
 	update.CleanupOld()
-	updates.loadFailure()
-
 	win := newDashboardWindow(wapp, a.Cfg.UI.StartMinimized)
-	updates.quit = wapp.Quit
-	updates.show = func() { win.Show() }
+	updates.SetWindowHooks(wapp.Quit, func() { win.Show() })
+	updates.LoadFailure()
 	buildTray(wapp, win, backend, updates)
-	updates.start()
+	updates.Start()
 
 	// Launch the browsers + engines in the background so the window is
 	// responsive immediately. If Chrome cannot start (not installed, profile
 	// locked), the UI stays up in a disconnected state and surfaces the error
 	// via the log. StartLive keeps following the config from here on.
-	emit := newWailsEmitter(wapp)
+	// Engine state events also wake a deferred auto-install the moment a
+	// watch ends.
+	emit := updates.WrapEmitter(newWailsEmitter(wapp))
 	go a.StartLive(wapp.Context(), emit, backend)
 
 	if err := wapp.Run(); err != nil {

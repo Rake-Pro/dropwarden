@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/rake-pro/dropwarden/internal/domain"
 	"github.com/rake-pro/dropwarden/internal/twitch/gql"
 )
@@ -38,6 +40,7 @@ func gqlFetchIIFE(bodyJSON []byte) string {
       method: 'POST',
       headers: headers,
       body: ` + string(lit) + `,
+      signal: AbortSignal.timeout(20000),
     });
     return await r.text();
   } catch (e) { return JSON.stringify({ error: String(e) }); }
@@ -65,6 +68,9 @@ func (p *Pages) FetchLogin(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("twitch: parse login (%.120s): %w", raw, err)
 	}
 	if resp.Data.CurrentUser == nil {
+		if gql.CurrentUserNull([]byte(raw)) {
+			return "", fmt.Errorf("twitch: login query: %w", domain.ErrLoggedOut)
+		}
 		return "", fmt.Errorf("twitch: login query returned no user (response: %.200s)", raw)
 	}
 	p.login = resp.Data.CurrentUser.Login
@@ -74,7 +80,7 @@ func (p *Pages) FetchLogin(ctx context.Context) (string, error) {
 // detailsQuery is a full DropCampaignDetails query (not a persisted hash, so it
 // is immune to hash rotation). It returns data.user.dropCampaign, matching
 // gql.ParseCampaignDetails.
-const detailsQuery = `query($login:String!,$id:ID!){user(login:$login){dropCampaign(id:$id){id name status startAt endAt accountLinkURL self{isAccountConnected} game{id displayName slug} allow{channels{id name displayName}} timeBasedDrops{id name requiredMinutesWatched startAt endAt benefitEdges{benefit{id name imageAssetURL}} preconditionDrops{id} self{currentMinutesWatched isClaimed dropInstanceID hasPreconditionsMet}}}}}`
+const detailsQuery = `query($login:String!,$id:ID!){user(login:$login){dropCampaign(id:$id){id name status startAt endAt accountLinkURL self{isAccountConnected} game{id displayName slug} allow{isEnabled channels{id name displayName}} timeBasedDrops{id name requiredMinutesWatched startAt endAt benefitEdges{benefit{id name imageAssetURL}} preconditionDrops{id} self{currentMinutesWatched isClaimed dropInstanceID hasPreconditionsMet}}}}}`
 
 // FetchCampaignDetails fetches and parses one campaign's full details (drops +
 // channel ACL) via a page-context GraphQL call. It also returns per-drop viewer
@@ -161,18 +167,50 @@ const liveChannelsQuery = `query($logins:[String!]!){users(logins:$logins){id lo
 // validation, because an offline channel with "autoplay recent broadcast"
 // plays a VOD that passes every playback gate without ever crediting a drop.
 func (p *Pages) LiveChannels(ctx context.Context, logins []string) ([]domain.Channel, error) {
+	return liveChannelsChunked(logins, func(chunk []string) ([]domain.Channel, error) {
+		body, _ := json.Marshal(map[string]any{
+			"query":     liveChannelsQuery,
+			"variables": map[string]any{"logins": chunk},
+		})
+		var raw string
+		if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
+			return nil, fmt.Errorf("twitch: fetch live channels: %w", err)
+		}
+		return gql.ParseLiveChannels([]byte(raw))
+	})
+}
+
+// liveChannelsBatch is Twitch's users(logins:) cap per call.
+const liveChannelsBatch = 100
+
+// liveChannelsChunked runs fetch over logins in batches of liveChannelsBatch
+// and merges the live results. A failed batch is logged and skipped - its
+// logins read as offline - so one bad batch never degrades a large allowlist
+// to "assume everyone is live". Only when EVERY batch fails is the last error
+// returned (the caller's own fallback applies then).
+func liveChannelsChunked(logins []string, fetch func([]string) ([]domain.Channel, error)) ([]domain.Channel, error) {
 	if len(logins) == 0 {
 		return nil, nil
 	}
-	body, _ := json.Marshal(map[string]any{
-		"query":     liveChannelsQuery,
-		"variables": map[string]any{"logins": logins},
-	})
-	var raw string
-	if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
-		return nil, fmt.Errorf("twitch: fetch live channels: %w", err)
+	var out []domain.Channel
+	var lastErr error
+	ok := 0
+	for start := 0; start < len(logins); start += liveChannelsBatch {
+		end := min(start+liveChannelsBatch, len(logins))
+		chs, err := fetch(logins[start:end])
+		if err != nil {
+			lastErr = err
+			log.Warn().Err(err).Int("from", start).Int("to", end).Int("total", len(logins)).
+				Msg("twitch: live channels batch failed; treating its logins as offline")
+			continue
+		}
+		ok++
+		out = append(out, chs...)
 	}
-	return gql.ParseLiveChannels([]byte(raw))
+	if ok == 0 {
+		return nil, lastErr
+	}
+	return out, nil
 }
 
 // claimMutation is the web client's DropsPage_ClaimDropRewards mutation as full

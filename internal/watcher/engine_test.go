@@ -318,6 +318,7 @@ func TestRunDiscoveringAppliesStaggerOnceOnly(t *testing.T) {
 	}
 
 	start = time.Now()
+	e.refreshReq = true // force the pass: discovery.interval would skip it otherwise
 	e.runDiscovering(context.Background())
 	if elapsed := time.Since(start); elapsed >= stagger {
 		t.Fatalf("second discovery must not re-apply the stagger, took %s", elapsed)

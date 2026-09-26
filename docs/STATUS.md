@@ -4,6 +4,23 @@ Snapshot for resuming after a context clear. Repo: Rake-Pro/dropwarden (private)
 branch main. This file is the "where are we" note; deeper design is in README.md,
 NOTES-twitch.md, NOTES-wails.md.
 
+## 2026-09-26 - v0.2.0 UI rework + contract fit (uncommitted working tree)
+
+- Frontend rework (checklist, game picker, grouped queue, diagnostics, update
+  dialog/progress/"Updated to") fitted to the backend API wave: added
+  `installedNotes` to the update DTO (`update.CheckLatest`), `POST /api/open`
+  also accepts a stored campaign's exact AccountLinkURL, `Claim on Kick`
+  action + Kick-worded manual-claim reason, changed `chromePath` must exist
+  (`field: chromePath`), failed auto-install sets `skippedVersion`, page
+  reload on a new backend version guarded to once per version.
+- `TestStateCarriesFrontendFields` pins /api/state and /api/update to the
+  fields app.js reads. gofmt/vet/race tests, windows + gtk3 builds and
+  `task forbidden` green.
+- Not yet verified live: any of the new UI in a real webview (no browser in
+  the container), tray promptSeq dialog while the window is hidden, an
+  end-to-end update with the reload, catalog/search against live upstreams
+  from a user machine, Kick manual-claim inventory URL.
+
 ## 2026-09-26 - v0.1.4 claim mutation + sweep (uncommitted working tree)
 
 - Claiming via `DropsPage_ClaimDropRewards` (inventory-verified), DOM fallback on the inventory page with configurable selector/text + `debug/inventory-buttons.json`, `claim.sweep` (fresh inventory read, in-memory backoff), already-claimed reconcile (History source "detected"); mutation acceptance with replayed integrity headers not yet verified live.
@@ -589,18 +606,18 @@ footer row instead of silently vanishing. Stats gained byPlatform totals
 (dashboard Totals card splits min/claims when multi). Settings restructured:
 new Platforms pane (Twitch group = skip-account-link + GQL fallback moved
 from Browser; Kick group = enable toggle + first-run copy), new App pane
-(theme picker — previously config-only — + auth), Browser pane is chrome-path
+(theme picker - previously config-only - + auth), Browser pane is chrome-path
 only. Debugging view is per-platform (kick card shows api status/parsed/
 enqueued/lastError from the new kick.Discoverer.LastDiagnostic) and Force
 discovery hits every running engine. Tray: per-platform status lines +
-pause/skip (kick items hidden until its runtime attaches — SetHidden is
+pause/skip (kick items hidden until its runtime attaches - SetHidden is
 verify-live on both OSes), refresh drives all engines. BUGS FIXED on the way:
 settings Save / priority-mode change never hot-reloaded the KICK engine (now
 ReloadEngines pushes cfg.KickRuntimeConfig()); kick config was never
 validated (volume/dim now checked when enabled); the Debugging dump toggle
 saved the shared cfg object and could commit unsaved Settings edits (config
 is now cloned via loadCfg); watchdog chips lied ("Playback healthy"/"Volume
-1%" were hardcoded — now "Playback validated" + real volume %); paused idle
+1%" were hardcoded - now "Playback validated" + real volume %); paused idle
 shows Resume instead of Start; preview mode disables action buttons; queue
 poll no longer re-renders under an open priority dropdown; config.example.yaml
 gained the kick block it was missing.

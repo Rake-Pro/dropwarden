@@ -97,7 +97,7 @@ const jsDirectoryChannels = `(() => {
 // cookies + Cloudflare clearance ride along, returning the raw response text.
 const jsFetchCampaigns = `(async () => {
   try {
-    const r = await fetch('` + campaignsAPI + `', { credentials: 'include', headers: { 'Accept': 'application/json' } });
+    const r = await fetch('` + campaignsAPI + `', { credentials: 'include', headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(20000) });
     return JSON.stringify({ status: r.status, body: await r.text() });
   } catch (e) { return JSON.stringify({ status: 0, body: String(e) }); }
 })()`

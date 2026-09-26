@@ -1,6 +1,7 @@
 package gql
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -549,5 +550,51 @@ func TestParseInventoryNoUserIsError(t *testing.T) {
 		if ps, err := ParseInventory([]byte(body)); err != nil || len(ps) != 0 {
 			t.Errorf("%s: want empty success, got %+v, %v", name, ps, err)
 		}
+	}
+}
+
+func TestLoggedOutIsTyped(t *testing.T) {
+	anon := []byte(`{"data":{"currentUser":null}}`)
+	if !CurrentUserNull(anon) {
+		t.Fatal("explicit null currentUser is the logged-out answer")
+	}
+	for name, body := range map[string]string{
+		"graphql error": `{"errors":[{"message":"failed integrity check"}],"data":{"currentUser":null}}`,
+		"fetch wrapper": `{"error":"TypeError: Failed to fetch"}`,
+		"no data":       `{}`,
+		"user present":  `{"data":{"currentUser":{"login":"me"}}}`,
+	} {
+		if CurrentUserNull([]byte(body)) {
+			t.Errorf("%s: must not read as logged out", name)
+		}
+	}
+	if _, err := ParseCurrentDrop(anon); !errors.Is(err, domain.ErrLoggedOut) {
+		t.Fatalf("ParseCurrentDrop: want ErrLoggedOut, got %v", err)
+	}
+	if _, err := ParseInventory(anon); !errors.Is(err, domain.ErrLoggedOut) {
+		t.Fatalf("ParseInventory: want ErrLoggedOut, got %v", err)
+	}
+}
+
+func TestPreconditionsAndDisabledACL(t *testing.T) {
+	body := []byte(`{"data":{"user":{"dropCampaign":{"id":"c1","name":"C","status":"ACTIVE",
+		"allow":{"isEnabled":false,"channels":[{"id":"1","name":"Someone"}]},
+		"timeBasedDrops":[
+			{"id":"d1","requiredMinutesWatched":60,"self":{"currentMinutesWatched":60,"isClaimed":false,"hasPreconditionsMet":false}},
+			{"id":"d2","requiredMinutesWatched":60,"self":{"currentMinutesWatched":10,"isClaimed":false,"hasPreconditionsMet":true}}]}}}}`)
+	c, prog, err := ParseCampaignDetails(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.AnyChannel() {
+		t.Fatalf("allow.isEnabled=false means any channel, got ACL %+v", c.AllowedChannels)
+	}
+	if len(prog) != 2 || !prog[0].PreconditionsUnmet || prog[1].PreconditionsUnmet {
+		t.Fatalf("hasPreconditionsMet must carry into Progress: %+v", prog)
+	}
+	inv := []byte(`{"data":{"currentUser":{"inventory":{"dropCampaignsInProgress":[{"id":"c1","timeBasedDrops":[{"id":"d1","requiredMinutesWatched":60,"self":{"currentMinutesWatched":60,"hasPreconditionsMet":false}}]}]}}}}`)
+	ps, err := ParseInventory(inv)
+	if err != nil || len(ps) != 1 || !ps[0].PreconditionsUnmet {
+		t.Fatalf("inventory preconditions: %+v %v", ps, err)
 	}
 }

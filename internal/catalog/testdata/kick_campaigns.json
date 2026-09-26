@@ -1,0 +1,227 @@
+{
+ "data": [
+  {
+   "channels": [],
+   "connect_url": "",
+   "created_at": "2026-04-28T00:18:34.058846Z",
+   "ends_at": "2026-05-06T00:00:00Z",
+   "id": "01KQ8Q7CY3HF58ZQAF7EMG208E",
+   "name": "ED'S DROP",
+   "organization": {
+    "email_notification": false,
+    "id": "01KMEZECC7J84MM299GH89Y8W4",
+    "logo_url": "https://ext.kick.com/drops/organization/kickdrops.png",
+    "name": "KICK",
+    "restricted": false,
+    "url": "https://about.kick.com/"
+   },
+   "rewards": [
+    {
+     "category_id": 0,
+     "id": "01KQ8PJRYMCV37T6R06PNMKCH0",
+     "image_url": "drops/reward-image/01kq8pjrymcv37t6r06pnmkch0-01kq8pjrymcv37t6r06ss5xb3s.png",
+     "name": "x1 entry",
+     "organization_id": "01KMEZECC7J84MM299GH89Y8W4",
+     "required_units": 60
+    }
+   ],
+   "rule": {
+    "id": 1,
+    "name": "Watch to redeem"
+   },
+   "starts_at": "2026-04-29T00:00:00Z",
+   "status": "expired",
+   "updated_at": "2026-04-28T02:15:28.368488Z",
+   "url": "https://about.kick.com/news-and-press/7-kicks-drop-is-here-watch-earn-entries-and-win-kicks"
+  },
+  {
+   "category": {
+    "banner_image_url": "",
+    "id": 13,
+    "image_url": "https://files.kick.com/images/subcategories/13/banner/77786fd4-4f33-4221-b8ee-2bf3cb4d041e",
+    "name": "Rust",
+    "slug": "rust"
+   },
+   "channels": [],
+   "connect_url": "https://kick.facepunch.com",
+   "created_at": "2026-06-02T18:36:58.194603Z",
+   "ends_at": "2026-06-21T23:00:00Z",
+   "id": "01KT4SZSEBG99SDNCD0FF6K1ZQ",
+   "name": "Kick Off 2 - General Drops",
+   "organization": {
+    "email_notification": false,
+    "id": "01K6WKP5BBMPZJ89G5Y7QK1E9P",
+    "logo_url": "https://ext.cdn.kick.com/drops/organization/facepunchdrops.png",
+    "name": "Facepunch Studios",
+    "restricted": false,
+    "url": "https://kick.facepunch.com"
+   },
+   "rewards": [
+    {
+     "category_id": 13,
+     "id": "01KT4V5GDZ2R34KV1Y1KWNF1PQ",
+     "image_url": "drops/reward-image/01kt4v5gdz2r34kv1y1kwnf1pq-01kt4v5gdz2r34kv1y1mwqq48e.png",
+     "name": "Kick Large Box",
+     "organization_id": "01K6WKP5BBMPZJ89G5Y7QK1E9P",
+     "required_units": 120
+    }
+   ],
+   "rule": {
+    "id": 1,
+    "name": "Watch to redeem"
+   },
+   "starts_at": "2026-06-11T20:00:00Z",
+   "status": "expired",
+   "updated_at": "2026-06-03T16:23:52.871873Z",
+   "url": "https://kick.facepunch.com/"
+  },
+  {
+   "category": {
+    "banner_image_url": "",
+    "id": 64,
+    "image_url": "https://files.kick.com/images/subcategories/64/banner/11503974-52c2-4a54-9dea-ecbc3b0ffcce",
+    "name": "VALORANT",
+    "slug": "valorant"
+   },
+   "channels": [
+    {
+     "banner_picture_url": "",
+     "description": "",
+     "id": 110848661,
+     "slug": "valorant",
+     "user": {
+      "id": 112091414,
+      "profile_picture": "https://files.kick.com/images/user/112091414/profile_image/conversion/79d1997e-3e7b-48ea-a3c1-2240e3b5575b-medium.webp",
+      "username": "Valorant"
+     }
+    }
+   ],
+   "connect_url": "https://account.riotgames.com/#connected-accounts",
+   "created_at": "2026-09-08T21:29:01.5904Z",
+   "ends_at": "2026-10-18T11:00:00Z",
+   "id": "01M21ES8WDJJ586X9V3V7JCDZC",
+   "name": "VCT 26 Champs Shanghai - \"Prepared\"",
+   "organization": {
+    "email_notification": false,
+    "id": "01KVA56XW7QPQWV3092RVRQ35Z",
+    "logo_url": "https://ext.cdn.kick.com/drops/organization/riotdrops-1.png",
+    "name": "Riot Games",
+    "restricted": false,
+    "url": "https://www.riotgames.com/"
+   },
+   "rewards": [
+    {
+     "category_id": 64,
+     "id": "01M21E3E8FN4ZGQRG97XF8BABG",
+     "image_url": "drops/reward-image/01m21e3e8fn4zgqrg97xf8babg-01m380q0t6f4870gawb9hf04et.png",
+     "name": "\"Prepared\" Title",
+     "organization_id": "01KVA56XW7QPQWV3092RVRQ35Z",
+     "required_units": 30
+    }
+   ],
+   "rule": {
+    "id": 1,
+    "name": "Watch to redeem"
+   },
+   "starts_at": "2026-09-24T09:00:00Z",
+   "status": "active",
+   "updated_at": "2026-09-25T13:15:56.885153Z",
+   "url": "https://valorantesports.com/en-US/valorantesports/news/champions-shanghai-everything-you-need-to-know"
+  },
+  {
+   "category": {
+    "banner_image_url": "",
+    "id": 10,
+    "image_url": "https://files.kick.com/images/subcategories/10/banner/0ca345bb-59db-48b2-bd2f-df88f55e4cc6",
+    "name": "Minecraft",
+    "slug": "minecraft"
+   },
+   "channels": [
+    {
+     "banner_picture_url": "https://files.kick.com/images/channel/52932/banner_image/4770a238-b195-4921-af05-4ca20985944b",
+     "description": "Twitch.tv/KingSolracc \n\nLet's see where this goes..",
+     "id": 52932,
+     "slug": "solrac",
+     "user": {
+      "id": 53361,
+      "profile_picture": "https://files.kick.com/images/user/53361/profile_image/conversion/7ebaedf1-dd9f-424c-9048-52f968c58669-medium.webp",
+      "username": "solrac"
+     }
+    }
+   ],
+   "connect_url": "",
+   "created_at": "2026-09-22T06:32:12.346342Z",
+   "ends_at": "2026-10-23T00:00:00Z",
+   "id": "01M33X16REN5T9AG051EFYM047",
+   "name": "DEDsafio 4 Minecraft",
+   "organization": {
+    "email_notification": false,
+    "id": "01KMEZECC7J84MM299GH89Y8W4",
+    "logo_url": "https://ext.kick.com/drops/organization/kickdrops.png",
+    "name": "KICK",
+    "restricted": false,
+    "url": "https://about.kick.com/"
+   },
+   "rewards": [
+    {
+     "category_id": 10,
+     "id": "01M33WWVP3DDBQAMWJTWZ2G6P1",
+     "image_url": "drops/reward-image/01m33wwvp3ddbqamwjtwz2g6p1-01m365fr3pyss04q2q4fmd72ak.png",
+     "name": "DEDsafio Nutria Badge",
+     "organization_id": "01KMEZECC7J84MM299GH89Y8W4",
+     "required_units": 1500
+    }
+   ],
+   "rule": {
+    "id": 1,
+    "name": "Watch to redeem"
+   },
+   "starts_at": "2026-09-23T23:15:00Z",
+   "status": "active",
+   "updated_at": "2026-09-26T06:56:46.660437Z",
+   "url": "https://kick.com/events/01a0a3d9-602d-7db9-84f4-f740827ec04f"
+  },
+  {
+   "category": {
+    "banner_image_url": "",
+    "id": 14374,
+    "image_url": "https://files.kick.com/images/subcategories/14374/banner/994ef44e-ab6d-4891-93b5-1d8b4519f020",
+    "name": "World of Warcraft: Forever",
+    "slug": "world-of-warcraft-forever"
+   },
+   "channels": [],
+   "connect_url": "",
+   "created_at": "2026-09-23T06:48:30.503677Z",
+   "ends_at": "2026-10-31T00:00:00Z",
+   "id": "01M36GBS0Q3QC5ADXN873A171H",
+   "name": "World of Warcraft: Forever",
+   "organization": {
+    "email_notification": false,
+    "id": "01KMEZECC7J84MM299GH89Y8W4",
+    "logo_url": "https://ext.kick.com/drops/organization/kickdrops.png",
+    "name": "KICK",
+    "restricted": false,
+    "url": "https://about.kick.com/"
+   },
+   "rewards": [
+    {
+     "category_id": 14374,
+     "id": "01M36G858KYQDCH6AV59PRZGT1",
+     "image_url": "drops/reward-image/01m36g858kyqdch6av59przgt1-01m36g85920hxktj3zvrm170k9.png",
+     "name": "MurlocJam Emote",
+     "organization_id": "01KMEZECC7J84MM299GH89Y8W4",
+     "required_units": 1500
+    }
+   ],
+   "rule": {
+    "id": 1,
+    "name": "Watch to redeem"
+   },
+   "starts_at": "2026-09-23T07:15:00Z",
+   "status": "active",
+   "updated_at": "2026-09-23T07:09:46.816532Z",
+   "url": "https://docs.kick.com/drops/drops-faqs"
+  }
+ ],
+ "message": "Success"
+}

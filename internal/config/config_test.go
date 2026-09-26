@@ -21,8 +21,8 @@ func TestStarterDefaultsValid(t *testing.T) {
 	if cfg.Auth.Mode != "manual" {
 		t.Fatalf("auth mode must default to manual, got %q", cfg.Auth.Mode)
 	}
-	if len(cfg.Games) != 5 {
-		t.Fatalf("expected 5 default games, got %d", len(cfg.Games))
+	if cfg.Games == nil || len(cfg.Games) != 0 {
+		t.Fatalf("starter config ships games: [] (picked after the first scan), got %v", cfg.Games)
 	}
 }
 
@@ -363,6 +363,7 @@ func TestWindowTileDefaultSharedWindowUsesTheProfileSlot(t *testing.T) {
 	if cfg.KickSeparateWindow() {
 		t.Fatal("shared window must be the default")
 	}
+	cfg.Kick.Browser.SharedWindowExperimental = true // kick forces separate_window otherwise
 	slot1 := 1
 	cfg.Profiles = append(cfg.Profiles, ProfileConfig{
 		Name: "second", Enabled: true, AnyGame: boolPtr(true), WindowSlot: &slot1,
@@ -632,5 +633,25 @@ func TestClaimDefaultsAndExplicitEmptySelector(t *testing.T) {
 	starter, _ := StarterDefaults()
 	if !starter.ClaimSweep() || starter.ClaimInventorySelector() != DefaultClaimButtonSelector {
 		t.Fatal("starter config must keep the claim sweep on and the default selector")
+	}
+}
+
+func TestKickEnabledForcesSeparateWindow(t *testing.T) {
+	cfg, _ := StarterDefaults()
+	if cfg.KickSeparateWindow() {
+		t.Fatal("kick off: shared layout is the (irrelevant) default")
+	}
+	cfg.Kick.Enabled = true
+	if !cfg.KickSeparateWindow() {
+		t.Fatal("root kick.enabled must force separate_window")
+	}
+	cfg.Kick.Enabled = false
+	cfg.Profiles[0].Kick.Enabled = boolPtr(true)
+	if !cfg.KickSeparateWindow() {
+		t.Fatal("a profile enabling kick must force separate_window")
+	}
+	cfg.Kick.Browser.SharedWindowExperimental = true
+	if cfg.KickSeparateWindow() {
+		t.Fatal("shared_window_experimental must keep the shared layout")
 	}
 }

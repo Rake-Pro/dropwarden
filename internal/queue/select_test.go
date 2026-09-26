@@ -471,3 +471,23 @@ func TestNextDrop_ClaimedZeroMinutesSkipped(t *testing.T) {
 		t.Fatalf("a claimed drop with 0 reported minutes must be skipped, got %+v", got)
 	}
 }
+
+func TestZeroMinuteDropNotEligible(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	camp := baseCampaign("c1", now.Add(24*time.Hour),
+		domain.Drop{ID: "sub", CampaignID: "c1", RequiredMinutes: 0},
+		domain.Drop{ID: "watch", CampaignID: "c1", RequiredMinutes: 30},
+	)
+	campaigns := map[string]domain.Campaign{"c1": camp}
+	sub := domain.QueueItem{DropID: "sub", CampaignID: "c1", Position: 1, Enabled: true, Status: domain.ItemPending}
+	watch := domain.QueueItem{DropID: "watch", CampaignID: "c1", Position: 2, Enabled: true, Status: domain.ItemPending}
+
+	elig, status, reason := EligibilityReason(sub, campaigns, nil, nil, true, now)
+	if elig || status != domain.ItemUnavailable || reason != ReasonNotWatchTime {
+		t.Fatalf("zero-minute drop: elig=%v status=%s reason=%q", elig, status, reason)
+	}
+	got, err := NextDrop([]domain.QueueItem{sub, watch}, campaigns, nil, nil, Ordering{Mode: domain.PriorityTopDown}, true, now)
+	if err != nil || got == nil || got.Drop.ID != "watch" {
+		t.Fatalf("selection must skip the event-based drop, got %+v err=%v", got, err)
+	}
+}

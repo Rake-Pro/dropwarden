@@ -23,7 +23,7 @@ const (
 	selOfflineGate   = "[data-a-target='player-overlay-content-gate'], .content-overlay-gate"
 	selPlayerError   = "[data-a-target='player-error-content'], .player-error"
 	selRaidBanner    = "[data-test-selector='raid-banner'], .raid-banner"
-	selRaidCancel    = "[data-test-selector='raid-cancel-button'], button[aria-label*='Cancel']"
+	selRaidCancel    = "[data-test-selector='raid-banner'] [data-test-selector='raid-cancel-button'], .raid-banner [data-test-selector='raid-cancel-button'], [data-test-selector='raid-banner'] button[aria-label*='Cancel'], .raid-banner button[aria-label*='Cancel']" // scoped to the raid banner: an unscoped Cancel matched any dialog
 	selDropsCallout  = "[data-test-selector='drops-campaign-details'], .drops-campaign-callout"
 	selDropsChatIcon = "button[aria-label*='Drops'], [data-a-target='drops-in-chat']"
 	selInventoryCard = "[data-test-selector='DropsCampaignInProgressDescription'], .inventory-drop-card" // verify live

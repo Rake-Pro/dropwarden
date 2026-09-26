@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,6 +34,11 @@ const maxManifestBytes = 1 << 20
 
 // tempPrefix names every temp file and stage directory the updater creates.
 const tempPrefix = "dropwarden-update-"
+
+// ErrNoRelease is returned (wrapped) by Check when the feed answers 404: no
+// release has been published at that URL yet. The host reports it as a
+// status, not as an error.
+var ErrNoRelease = errors.New("update: no release published yet")
 
 // Manifest is the feed document (latest.json). The release workflow writes it
 // next to the assets; see README "Releasing" for the published layout.
@@ -97,47 +103,56 @@ func IsDev(version string) bool { return strings.Contains(version, "-dev") }
 // Check fetches the manifest and reports whether it names a release newer
 // than the running version. A nil Release with nil error means "up to date".
 func (u *Updater) Check(ctx context.Context) (*Release, error) {
+	rel, _, err := u.CheckLatest(ctx)
+	return rel, err
+}
+
+// CheckLatest is Check that also returns the release the manifest names
+// (latest), newer or not, so the caller can show the notes of the version it
+// is already running. latest is nil only on error.
+func (u *Updater) CheckLatest(ctx context.Context) (newer, latest *Release, err error) {
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.cfg.FeedURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("update: feed request: %w", err)
+		return nil, nil, fmt.Errorf("update: feed request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	resp, err := u.cfg.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("update: check: %w", err)
+		return nil, nil, fmt.Errorf("update: check: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("update: no release feed at %s (404): nothing published yet", u.cfg.FeedURL)
+		return nil, nil, fmt.Errorf("%w: no release feed at %s (404)", ErrNoRelease, u.cfg.FeedURL)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("update: check: unexpected status %s from %s", resp.Status, u.cfg.FeedURL)
+		return nil, nil, fmt.Errorf("update: check: unexpected status %s from %s", resp.Status, u.cfg.FeedURL)
 	}
 	var m Manifest
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxManifestBytes)).Decode(&m); err != nil {
-		return nil, fmt.Errorf("update: decode manifest: %w", err)
+		return nil, nil, fmt.Errorf("update: decode manifest: %w", err)
 	}
 	ver := strings.TrimPrefix(m.Version, "v")
 	if ver == "" {
 		ver = strings.TrimPrefix(m.Tag, "v")
 	}
 	if ver == "" {
-		return nil, fmt.Errorf("update: manifest at %s has no version", u.cfg.FeedURL)
+		return nil, nil, fmt.Errorf("update: manifest at %s has no version", u.cfg.FeedURL)
 	}
-	newer, err := semverGreater(ver, strings.TrimPrefix(u.cfg.Current, "v"))
+	isNewer, err := semverGreater(ver, strings.TrimPrefix(u.cfg.Current, "v"))
 	if err != nil {
-		return nil, fmt.Errorf("update: compare %q vs %q: %w", ver, u.cfg.Current, err)
-	}
-	if !newer {
-		return nil, nil
+		return nil, nil, fmt.Errorf("update: compare %q vs %q: %w", ver, u.cfg.Current, err)
 	}
 	tag := m.Tag
 	if tag == "" {
 		tag = "v" + ver
 	}
-	return &Release{Version: ver, TagName: tag, PublishedAt: m.PublishedAt, Body: m.Notes, assets: m.Assets}, nil
+	latest = &Release{Version: ver, TagName: tag, PublishedAt: m.PublishedAt, Body: m.Notes, assets: m.Assets}
+	if !isNewer {
+		return nil, latest, nil
+	}
+	return latest, latest, nil
 }
 
 // Download fetches this platform's asset for rel into a temp file and verifies

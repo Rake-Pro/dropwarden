@@ -114,7 +114,10 @@ type dropCampaignDetails struct {
 	Game           *campaignGame `json:"game"`
 	Self           *campaignSelf `json:"self"`
 	Allow          *struct {
-		Channels []channelRef `json:"channels"`
+		// IsEnabled false means the ACL is not enforced: any channel streaming
+		// the game credits, whatever the channel list says.
+		IsEnabled *bool        `json:"isEnabled"`
+		Channels  []channelRef `json:"channels"`
 	} `json:"allow"`
 	TimeBasedDrops []timeBasedDrop `json:"timeBasedDrops"`
 }

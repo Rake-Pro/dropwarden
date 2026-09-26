@@ -2,7 +2,11 @@ package watcher
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
+
+	"github.com/rake-pro/dropwarden/internal/domain"
 )
 
 // processCommand applies one command to engine flags. It returns true if the
@@ -133,11 +137,25 @@ func (e *Engine) runDiscovering(ctx context.Context) (State, string) {
 			}
 		}
 	}
+	// discovery.interval/jitter gate the pass: cooldowns, idle nudges and
+	// backoff retries re-enter Discovering far more often than the campaign
+	// list changes. A dashboard refresh (refreshReq) always forces one.
+	if !e.refreshReq && !e.discoveryDue() {
+		if e.paused {
+			return StateIdle, "paused"
+		}
+		return StateSelectingChannel, "campaigns fresh (discovery not due)"
+	}
 	e.refreshReq = false
 	res, err := e.deps.Disco.RunOnce(ctx)
 	if err != nil {
+		if errors.Is(err, domain.ErrLoggedOut) {
+			return e.handleLoggedOut()
+		}
 		return e.enterBackoff("discovery: " + err.Error())
 	}
+	e.lastDiscoveryAt = e.deps.Now()
+	e.discoveryGap = e.jittered(e.deps.Cfg.Discovery.Interval, e.deps.Cfg.Discovery.Jitter)
 	e.deps.Emit.Emit(EvCampaigns, map[string]any{"count": res.Campaigns + res.Details, "at": e.deps.Now()})
 	e.backoff = 0
 	// Discovery just saved fresh inventory progress: book drops Twitch already
@@ -151,6 +169,49 @@ func (e *Engine) runDiscovering(ctx context.Context) (State, string) {
 	}
 	return StateSelectingChannel, "discovered"
 }
+
+// discoveryDue reports whether a discovery pass should run: none has run yet,
+// discovery.interval is off (<= 0), or the jittered gap drawn after the last
+// pass has elapsed.
+func (e *Engine) discoveryDue() bool {
+	if e.lastDiscoveryAt.IsZero() || e.deps.Cfg.Discovery.Interval <= 0 {
+		return true
+	}
+	return e.deps.Now().Sub(e.lastDiscoveryAt) >= e.discoveryGap
+}
+
+// handleLoggedOut stops the engine on an expired platform session: nothing
+// credits while logged out, and every watchdog downstream would misread it
+// (live: a five-minute "not crediting" give-up per drop). The engine pauses
+// until the user logs in and starts it again; the app's OnLoggedOut hook sets
+// the needs-login flag and pending-login marker the first-run flow uses.
+func (e *Engine) handleLoggedOut() (State, string) {
+	if e.cur != nil {
+		_ = e.deps.Store.SetItemStatus(e.cur.drop.ID, domain.ItemPending, "")
+		e.cur = nil
+	}
+	e.paused = true
+	e.setStatus(func(s *Status) { s.Paused = true })
+	name := string(e.deps.Platform.OrTwitch())
+	name = strings.ToUpper(name[:1]) + name[1:]
+	reason := name + " session expired - log in again"
+	url := URLTwitchLogin
+	if e.deps.Platform.OrTwitch() == domain.PlatformKick {
+		url = URLKickLogin
+	}
+	e.deps.Emit.Emit(EvNeedsAction, NeedsActionPayload{Reason: reason, URL: url})
+	e.deps.Log.Warn().Msg("platform session is logged out; pausing until the user logs in again")
+	if e.deps.OnLoggedOut != nil {
+		e.deps.OnLoggedOut()
+	}
+	return StateIdle, reason
+}
+
+// Login pages the needs-action event for an expired session points at.
+const (
+	URLTwitchLogin = "https://www.twitch.tv/login"
+	URLKickLogin   = "https://kick.com/login"
+)
 
 func (e *Engine) runNeedsAction(ctx context.Context) (State, string) {
 	// Surface handled at the point of detection; here we simply idle until the
@@ -217,7 +278,7 @@ func (e *Engine) runCooldown(ctx context.Context) (State, string) {
 	// Reset the watch fields but keep the engine identity/flags: this wholesale
 	// reset must never wipe Profile or Platform (stats attribution) or Paused.
 	e.setStatus(func(s *Status) {
-		*s = Status{Profile: s.Profile, Platform: s.Platform, Paused: s.Paused, State: StateCooldown, Since: e.deps.Now()}
+		*s = Status{Profile: s.Profile, Platform: s.Platform, Paused: s.Paused, State: StateCooldown, Since: e.deps.Now(), Reason: s.Reason}
 	})
 	d := e.jittered(e.deps.Cfg.Watcher.Cooldown, e.deps.Cfg.Watcher.CooldownJitter)
 	e.sleepInterruptible(ctx, d)

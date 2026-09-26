@@ -18,6 +18,10 @@ const claimTimeout = 60 * time.Second
 // URLInventoryClaim is where the user can claim manually when we could not.
 const URLInventoryClaim = "https://www.twitch.tv/drops/inventory"
 
+// URLKickInventory is Kick's drops inventory, where a Kick reward the engine
+// could not confirm is claimed by hand.
+const URLKickInventory = "https://kick.com/drops/inventory"
+
 // sweepMax caps how many drops one claim sweep pass claims.
 const sweepMax = 10
 
@@ -64,9 +68,12 @@ func (e *Engine) runClaiming(parent context.Context) (State, string) {
 	if path == "" {
 		// The reward remains claimable server-side; surface it to the user and
 		// move on to the next drop instead of retrying.
-		reason := "completed - claim it manually in the Twitch inventory"
+		reason, url := "completed - claim it manually in the Twitch inventory", URLInventoryClaim
+		if e.deps.Platform == domain.PlatformKick {
+			reason, url = "completed - claim it manually in the Kick inventory", URLKickInventory
+		}
 		_ = e.deps.Store.SetItemStatus(drop.ID, domain.ItemNeedsAction, reason)
-		e.deps.Emit.Emit(EvNeedsAction, NeedsActionPayload{DropID: drop.ID, Reason: reason, URL: URLInventoryClaim})
+		e.deps.Emit.Emit(EvNeedsAction, NeedsActionPayload{DropID: drop.ID, Reason: reason, URL: url})
 		e.deps.Log.Warn().Str("drop", drop.ID).Msg("claim: could not confirm; flagged for manual reconcile")
 		return StateCooldown, "claim needs manual reconcile"
 	}
@@ -350,7 +357,8 @@ func (e *Engine) claimSweep(ctx context.Context, trigger string) {
 	if !e.deps.Cfg.ClaimSweep() {
 		return
 	}
-	rows, err := e.deps.Pages.FetchInventoryProgress(ctx)
+	var rows []domain.Progress
+	err := e.bounded(ctx, func(c context.Context) (err error) { rows, err = e.deps.Pages.FetchInventoryProgress(c); return })
 	if err != nil {
 		if !errors.Is(err, errors.ErrUnsupported) {
 			e.deps.Log.Warn().Err(err).Str("trigger", trigger).Msg("claim sweep: inventory read failed")
@@ -397,7 +405,7 @@ type sweepCandidate struct {
 // sweepCandidates picks up to sweepMax claimable drops from rows, one fresh
 // inventory read: server minutes >= required, not isClaimed, claim id known,
 // a stored campaign of this platform, no claim on record, not parked by
-// claim.retry_backoff, and not the drop currently being watched.
+// claim.retry_backoff, preconditions met, and not the drop currently watched.
 func (e *Engine) sweepCandidates(rows []domain.Progress) []sweepCandidate {
 	byDrop := e.dropsByID()
 	now := e.deps.Now()
@@ -411,6 +419,11 @@ func (e *Engine) sweepCandidates(rows []domain.Progress) []sweepCandidate {
 			continue
 		}
 		if r.ClaimID == "" || r.ClaimedAt != nil || r.RequiredMinutes <= 0 || r.RealMinutes < r.RequiredMinutes {
+			continue
+		}
+		// An earlier tier gates this one (hasPreconditionsMet false): the claim
+		// would be refused, so do not spend a mutation on it.
+		if r.PreconditionsUnmet {
 			continue
 		}
 		x, ok := byDrop[r.DropID]

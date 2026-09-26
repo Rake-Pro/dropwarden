@@ -114,6 +114,13 @@ func TestProgressRoundTrip(t *testing.T) {
 	if none, _ := s.GetProgress("nope"); none != nil {
 		t.Fatal("expected nil for missing progress")
 	}
+	p.PreconditionsUnmet = true
+	if err := s.SaveProgress(p); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if rows, _ := s.ListProgress(); len(rows) != 1 || !rows[0].PreconditionsUnmet {
+		t.Fatalf("preconditions_unmet must round-trip: %+v", rows)
+	}
 }
 
 func TestQueueOrderAndStatus(t *testing.T) {

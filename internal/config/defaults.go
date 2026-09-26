@@ -25,7 +25,9 @@ var DefaultGames = []string{
 // on a fully or partially populated Config.
 func (c *Config) applyDefaults() {
 	setString(&c.Theme, "dark")
-	if len(c.Games) == 0 {
+	// Only an ABSENT games key gets the defaults: an explicit "games: []" (the
+	// starter config) means "none picked yet" and must stay empty.
+	if c.Games == nil {
 		c.Games = append([]string(nil), DefaultGames...)
 	}
 
@@ -123,9 +125,8 @@ func (c *Config) validate() error {
 	if !domain.ValidPriorityMode(domain.PriorityMode(c.Queue.PriorityMode)) {
 		return fmt.Errorf("config: queue.priority_mode %q invalid", c.Queue.PriorityMode)
 	}
-	if !c.AnyGame && len(c.Games) == 0 {
-		return fmt.Errorf("config: games must be non-empty unless any_game is true")
-	}
+	// An empty games list is valid: the starter config ships "games: []" and
+	// nothing is queued until the user picks games after the first scan.
 	if err := c.validateProfiles(); err != nil {
 		return err
 	}
@@ -189,9 +190,8 @@ func (c *Config) validate() error {
 }
 
 // validateProfiles walks every profile the same way the root config is
-// validated: name shape and uniqueness for all profiles, and the games
-// overlay invariant for enabled ones (disabled profiles never run, so their
-// overlay does not need to resolve to anything runnable).
+// validated: name shape and uniqueness for all profiles. An empty games
+// overlay is valid (nothing is queued until games are picked).
 func (c *Config) validateProfiles() error {
 	seen := make(map[string]bool, len(c.Profiles))
 	for i := range c.Profiles {
@@ -203,13 +203,6 @@ func (c *Config) validateProfiles() error {
 			return fmt.Errorf("config: profile name %q is not unique", p.Name)
 		}
 		seen[p.Name] = true
-		if !p.Enabled {
-			continue
-		}
-		games, anyGame := c.effectiveGames(p)
-		if !anyGame && len(games) == 0 {
-			return fmt.Errorf("config: profile %q: games must be non-empty unless any_game is true", p.Name)
-		}
 	}
 	return nil
 }
