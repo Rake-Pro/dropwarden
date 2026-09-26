@@ -4,6 +4,16 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.2.4 - 2026-09-26
+
+### Added
+- `power.keep_awake` (Settings > App > Power): dropwarden holds the OS idle-sleep
+  inhibitor while a drop is being watched (`while_watching`, the default),
+  for its whole lifetime (`always`), or never. Display sleep is never
+  blocked, so monitors still turn off. Windows uses
+  `SetThreadExecutionState`, macOS `caffeinate -i`, Linux `systemd-inhibit`.
+  The sidebar shows "Keeping PC awake" while the hold is active.
+
 ## v0.2.3 - 2026-09-26
 
 ### Fixed

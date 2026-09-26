@@ -152,6 +152,9 @@ update:
   show_changelog: true         # offer "What's new" release notes on the dashboard banner
   feed_url: "https://cdn.rake.pro/releases/dropwarden/latest.json"   # release manifest; "" disables update checks
   interval_hours: 24
+
+power:
+  keep_awake: while_watching   # while_watching = stop the PC idle-sleeping only while a drop is being watched; always; never. Monitors may still turn off.
 `
 
 // dirName is the app root folder name: dotted on unix/macOS, undotted on

@@ -42,6 +42,7 @@ func TestValidateRejectsBadPriorityAndStall(t *testing.T) {
 		{"bad priority", func(c *Config) { c.Queue.PriorityMode = "nonsense" }},
 		{"soft>=hard", func(c *Config) { c.Watcher.SoftStall = c.Watcher.HardStall }},
 		{"bad theme", func(c *Config) { c.Theme = "neon" }},
+		{"bad keep_awake", func(c *Config) { c.Power.KeepAwake = "sometimes" }},
 		{"bad claim strategy", func(c *Config) { c.Claim.Strategy = "spam" }},
 		{"stored without enable", func(c *Config) { c.Auth.Mode = "stored"; c.Auth.Stored.Enabled = false }},
 	}

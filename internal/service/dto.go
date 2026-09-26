@@ -145,6 +145,10 @@ type ConfigDTO struct {
 	UpdateShowChangelog *bool   `json:"updateShowChangelog,omitempty"`
 	UpdateFeedURL       *string `json:"updateFeedURL,omitempty"`
 	UpdateIntervalHours *int    `json:"updateIntervalHours,omitempty"`
+
+	// KeepAwake is power.keep_awake (while_watching|always|never); "" in a
+	// POST leaves it alone.
+	KeepAwake string `json:"keepAwake,omitempty"`
 }
 
 type LoginDTO struct {

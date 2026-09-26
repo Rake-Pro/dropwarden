@@ -153,6 +153,7 @@ type Backend struct {
 	cfg      *config.Config
 	rec      Reconciler
 	upd      Updater
+	pwr      Power
 	profiles map[string]*ProfileBackend
 	order    []string
 }

@@ -225,6 +225,7 @@ async function renderFoot() {
   for (const prof of profiles) {
     for (const p of visiblePlatforms(prof.platforms)) rows += footRow(row, prof.displayName, multiProfile, p);
   }
+  if (state.host && state.host.keepAwake) rows += row('', 'Keeping PC awake');
   foot.innerHTML = rows || row('warn', 'No profiles configured');
 }
 
@@ -1205,7 +1206,7 @@ const PANE_FIELDS = {
   platforms: ['kickEnabled', 'skipAccountLink', 'claimButtonSelector', 'claimButtonText'],
   player: ['volume', 'forceLowestQuality', 'muteAudio', 'startMinimized'],
   browser: ['chromePath', 'alwaysOnBottom'],
-  app: ['theme'],
+  app: ['theme', 'keepAwake'],
   updates: ['updateEnabled', 'updateAutoInstall', 'updateShowChangelog', 'updateIntervalHours', 'updateFeedURL'],
 };
 // Fields that only apply once the watcher Chrome restarts.
@@ -1331,7 +1332,9 @@ function browserPaneHTML() {
 
 function appPaneHTML() {
   return group('Appearance',
-    row('Theme', 'System follows your OS light or dark setting.', '<select class="popup" data-field="theme" aria-label="Theme"><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select>'));
+    row('Theme', 'System follows your OS light or dark setting.', '<select class="popup" data-field="theme" aria-label="Theme"><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select>')) +
+  group('Power',
+    row('Keep the computer awake', 'Stops the PC from idle-sleeping. Monitors still turn off on your normal schedule. With nothing to watch the PC sleeps as usual; nothing here wakes it back up.', '<select class="popup" data-field="keepAwake" aria-label="Keep the computer awake"><option value="while_watching">While watching a drop</option><option value="always">Always, while dropwarden runs</option><option value="never">Never</option></select>'));
 }
 
 function updStatusHTML(u) {
@@ -1412,6 +1415,8 @@ function renderSettingsContent() {
   wireSettingsFields(host);
   const themeSel = host.querySelector('select[data-field="theme"]');
   if (themeSel) themeSel.value = cfg.theme || 'dark';
+  const awakeSel = host.querySelector('select[data-field="keepAwake"]');
+  if (awakeSel) awakeSel.value = cfg.keepAwake || 'while_watching';
   if (settingsPane === 'games') { renderGamesCtl(); mountSharedPicker(); }
   if (settingsPane === 'updates') wireUpdatesPane(host);
   const rb = host.querySelector('[data-restart]');

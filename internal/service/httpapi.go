@@ -500,7 +500,7 @@ func hostState(b *Backend) map[string]any {
 	if err != nil {
 		path = ""
 	}
-	return map[string]any{"os": runtime.GOOS, "chromeFound": err == nil, "chromePath": path}
+	return map[string]any{"os": runtime.GOOS, "chromeFound": err == nil, "chromePath": path, "keepAwake": b.KeepingAwake()}
 }
 
 // profileStates builds the per-profile state array for /api/state, in config
@@ -718,6 +718,7 @@ var configFieldByKey = []struct{ key, field string }{
 	{"logging.level", "logLevel"},
 	{"update.interval_hours", "updateIntervalHours"},
 	{"update.feed_url", "updateFeedURL"},
+	{"power.keep_awake", "keepAwake"},
 	{"browser.chrome_path", "chromePath"},
 	{"theme", "theme"},
 	{"games", "games"},

@@ -14,6 +14,7 @@ import (
 
 	webui "github.com/rake-pro/dropwarden/frontend"
 	"github.com/rake-pro/dropwarden/internal/app"
+	"github.com/rake-pro/dropwarden/internal/power"
 	"github.com/rake-pro/dropwarden/internal/service"
 	"github.com/rake-pro/dropwarden/internal/update"
 	"github.com/rake-pro/dropwarden/internal/version"
@@ -52,6 +53,11 @@ func main() {
 	updCtx, updCancel := context.WithCancel(context.Background())
 	updates := newUpdateController(updCtx, a.Config, backend)
 	backend.SetUpdater(updates)
+	// The sleep inhibitor follows the live config too; engine state events
+	// and settings saves refresh it, and shutdown releases it.
+	pwr := power.New(a.Config, backend.WatchInProgress, a.Log.With().Str("component", "power").Logger())
+	backend.SetPower(pwr)
+	pwr.Refresh()
 
 	wapp := application.New(application.Options{
 		Name:        "dropwarden",
@@ -62,6 +68,7 @@ func main() {
 		},
 		OnShutdown: func() {
 			updCancel()
+			pwr.Close()
 			a.Close()
 		},
 		// Runs after the single-instance lock is released, so an in-process
@@ -87,7 +94,7 @@ func main() {
 	// via the log. StartLive keeps following the config from here on.
 	// Engine state events also wake a deferred auto-install the moment a
 	// watch ends.
-	emit := updates.WrapEmitter(newWailsEmitter(wapp))
+	emit := backend.WrapEmitterForPower(updates.WrapEmitter(newWailsEmitter(wapp)))
 	go a.StartLive(wapp.Context(), emit, backend)
 
 	if err := wapp.Run(); err != nil {

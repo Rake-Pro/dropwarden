@@ -197,6 +197,9 @@ func (s *SettingsService) commit(cp *config.Config) {
 	if rec != nil {
 		rec.Reconcile(cp)
 	}
+	if p := s.b.power(); p != nil {
+		p.Refresh()
+	}
 }
 
 // ResetDefaults restores factory defaults and returns them (not yet persisted;
@@ -244,6 +247,8 @@ func toConfigDTO(c *config.Config) ConfigDTO {
 		UpdateShowChangelog: ptr(c.UpdateShowChangelog()),
 		UpdateFeedURL:       ptr(c.UpdateFeedURL()),
 		UpdateIntervalHours: ptr(c.Update.IntervalHours),
+
+		KeepAwake: c.KeepAwakeMode(),
 	}
 }
 
@@ -298,6 +303,9 @@ func applyConfigDTO(c *config.Config, d ConfigDTO) {
 	}
 	if d.UpdateIntervalHours != nil {
 		c.Update.IntervalHours = *d.UpdateIntervalHours
+	}
+	if d.KeepAwake != "" {
+		c.Power.KeepAwake = d.KeepAwake
 	}
 }
 

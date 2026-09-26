@@ -32,6 +32,7 @@ func (c *Config) applyDefaults() {
 	}
 
 	setString(&c.Queue.PriorityMode, string(domain.PriorityTopDown))
+	setString(&c.Power.KeepAwake, KeepAwakeWhileWatching)
 	// AutoEnqueueNew defaults true; represented explicitly so a false in YAML sticks.
 	// A freshly-parsed zero Config gets true here via the starter template.
 
@@ -124,6 +125,11 @@ func (c *Config) validate() error {
 	}
 	if !domain.ValidPriorityMode(domain.PriorityMode(c.Queue.PriorityMode)) {
 		return fmt.Errorf("config: queue.priority_mode %q invalid", c.Queue.PriorityMode)
+	}
+	switch c.Power.KeepAwake {
+	case KeepAwakeWhileWatching, KeepAwakeAlways, KeepAwakeNever:
+	default:
+		return fmt.Errorf("config: power.keep_awake %q must be while_watching|always|never", c.Power.KeepAwake)
 	}
 	// An empty games list is valid: the starter config ships "games: []" and
 	// nothing is queued until the user picks games after the first scan.

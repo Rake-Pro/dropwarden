@@ -173,6 +173,21 @@ published on the GitHub release and on the downloads host
 | `feed_url` | `https://cdn.rake.pro/releases/dropwarden/latest.json` | Release manifest. Empty disables update checks. |
 | `interval_hours` | `24` | Hours between background checks (must be > 0). |
 
+### Keeping the PC awake
+
+- dropwarden holds the OS "no idle sleep" assertion so a watch is not cut
+  short by the sleep timer. Display sleep is never blocked: monitors still
+  turn off on the OS schedule.
+- Windows: `SetThreadExecutionState(ES_SYSTEM_REQUIRED)`; macOS: `caffeinate
+  -i` bound to the app's pid; Linux: `systemd-inhibit --what=sleep:idle`.
+- Nothing wakes a sleeping machine. With nothing to watch (default mode) the
+  PC sleeps as usual and picks up when someone wakes it.
+- Settings > App edits this key (config.yaml `power:` block):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `keep_awake` | `while_watching` | `while_watching` holds only while an engine is opening, validating, watching or claiming; `always` holds for the app's lifetime; `never` leaves the sleep timer alone. |
+
 ### Watcher window
 
 - A minimized watcher tab reads `visibilityState` "hidden" and stops crediting,

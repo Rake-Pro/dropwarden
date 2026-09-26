@@ -28,6 +28,7 @@ type Config struct {
 	Logging   LoggingConfig   `yaml:"logging"`
 	UI        UIConfig        `yaml:"ui"`
 	Update    UpdateConfig    `yaml:"update"`
+	Power     PowerConfig     `yaml:"power"`
 
 	// Profiles lists the people this instance manages drops for. A config with
 	// no profiles block synthesizes exactly one profile (MainProfileName)
@@ -310,6 +311,27 @@ type UpdateConfig struct {
 	ShowChangelog *bool   `yaml:"show_changelog,omitempty"` // nil => true: offer release notes in the dashboard
 	FeedURL       *string `yaml:"feed_url,omitempty"`       // nil => DefaultUpdateFeedURL; "" disables checking
 	IntervalHours int     `yaml:"interval_hours"`           // background check period; 0 => 24
+}
+
+// PowerConfig controls the OS sleep inhibitor. Display sleep is never
+// blocked (monitors still turn off); only the system idle-sleep timer is.
+type PowerConfig struct {
+	KeepAwake string `yaml:"keep_awake"` // while_watching|always|never
+}
+
+// Keep-awake modes.
+const (
+	KeepAwakeWhileWatching = "while_watching" // hold only while an engine is mid-watch (default)
+	KeepAwakeAlways        = "always"         // hold for the app's whole lifetime
+	KeepAwakeNever         = "never"          // never touch the sleep timer
+)
+
+// KeepAwakeMode returns the effective power.keep_awake value.
+func (c *Config) KeepAwakeMode() string {
+	if c.Power.KeepAwake == "" {
+		return KeepAwakeWhileWatching
+	}
+	return c.Power.KeepAwake
 }
 
 // DefaultUpdateFeedURL is the release manifest the updater reads by default.

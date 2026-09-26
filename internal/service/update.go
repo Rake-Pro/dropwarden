@@ -8,6 +8,7 @@ import (
 
 	"github.com/rake-pro/dropwarden/internal/update"
 	"github.com/rake-pro/dropwarden/internal/version"
+	"github.com/rake-pro/dropwarden/internal/watcher"
 )
 
 // Updater is the self-updater the GUI host runs (UpdateController, wired by
@@ -93,6 +94,58 @@ func (b *Backend) updater() Updater {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.upd
+}
+
+// Power is the host's sleep inhibitor (internal/power.Controller): Refresh
+// re-evaluates the keep-awake mode against the watch state, Active reports
+// whether the inhibitor is held.
+type Power interface {
+	Refresh()
+	Active() bool
+}
+
+// SetPower installs the host's sleep inhibitor.
+func (b *Backend) SetPower(p Power) {
+	b.mu.Lock()
+	b.pwr = p
+	b.mu.Unlock()
+}
+
+func (b *Backend) power() Power {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.pwr
+}
+
+// KeepingAwake reports whether the sleep inhibitor is held right now.
+func (b *Backend) KeepingAwake() bool {
+	if p := b.power(); p != nil {
+		return p.Active()
+	}
+	return false
+}
+
+// WrapEmitterForPower returns an emitter that forwards every engine event to
+// next and refreshes the sleep inhibitor on each state transition.
+func (b *Backend) WrapEmitterForPower(next watcher.Emitter) watcher.Emitter {
+	return &powerEmitter{next: next, b: b}
+}
+
+type powerEmitter struct {
+	next watcher.Emitter
+	b    *Backend
+}
+
+func (e *powerEmitter) Emit(event string, payload any) {
+	if e.next != nil {
+		e.next.Emit(event, payload)
+	}
+	if event != watcher.EvState {
+		return
+	}
+	if p := e.b.power(); p != nil {
+		p.Refresh()
+	}
 }
 
 // updateState returns the updater's state, or a disabled placeholder when no
