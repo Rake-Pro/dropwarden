@@ -28,7 +28,6 @@ func TestChromeFlagsRequired(t *testing.T) {
 		"--disable-renderer-backgrounding",
 		"--disable-features=CalculateNativeWinOcclusion",
 		"--autoplay-policy=no-user-gesture-required",
-		"--disable-blink-features=AutomationControlled",
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--no-service-autorun",
@@ -42,10 +41,11 @@ func TestChromeFlagsRequired(t *testing.T) {
 
 // The absent flags matter as much as the present ones: --enable-automation and
 // --headless are bot tells, --mute-audio is strictly opt-in via
-// browser.mute_audio, and --no-sandbox is an unnecessary security downgrade.
+// browser.mute_audio, --no-sandbox is an unnecessary security downgrade, and
+// --disable-blink-features triggers Chrome's unsupported-flag bar.
 func TestChromeFlagsForbidden(t *testing.T) {
 	got := testFlags()
-	forbidden := []string{"--enable-automation", "--headless", "--mute-audio", "--no-sandbox"}
+	forbidden := []string{"--enable-automation", "--headless", "--mute-audio", "--no-sandbox", "--disable-blink-features"}
 	for _, f := range forbidden {
 		for _, g := range got {
 			if g == f || strings.HasPrefix(g, f+"=") {

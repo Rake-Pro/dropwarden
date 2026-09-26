@@ -4,6 +4,14 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.2.2 - 2026-09-26
+
+### Fixed
+- Chrome no longer shows the "unsupported command-line flag" bar on every
+  launch: `--disable-blink-features=AutomationControlled` is dropped. Without
+  `--enable-automation` the automation tell it suppressed never existed, and
+  the bar itself was one.
+
 ## v0.2.1 - 2026-09-26
 
 ### Fixed

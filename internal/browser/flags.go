@@ -16,7 +16,10 @@ import (
 //   - The omissions matter as much as the inclusions. --enable-automation and
 //     --headless are the two loudest bot tells on the platform, and --no-sandbox
 //     is a gratuitous security downgrade for a browser that loads untrusted
-//     pages.
+//     pages. --disable-blink-features=AutomationControlled is also left out:
+//     without --enable-automation navigator.webdriver is already false, and
+//     Chrome shows an "unsupported command-line flag" bar for it on every
+//     launch (live 2026-09-26), which is a tell to the person at the desk.
 //
 // --mute-audio is OPT-IN (browser.mute_audio): it silences the dedicated
 // instance at the audio sink while the player element itself stays unmuted at
@@ -38,7 +41,6 @@ func chromeFlags(cfg config.BrowserConfig, profileDir string, w config.WindowCon
 		"--disable-renderer-backgrounding",
 		"--disable-features=CalculateNativeWinOcclusion",
 		"--autoplay-policy=no-user-gesture-required",
-		"--disable-blink-features=AutomationControlled",
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--no-service-autorun",
