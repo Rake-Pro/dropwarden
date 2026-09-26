@@ -173,3 +173,31 @@ func TestOwnedAndCompleteBooksClaimed(t *testing.T) {
 		t.Fatalf("second pass must be a no-op: %+v", p2)
 	}
 }
+
+// A zero-minute (event-based) drop is never queued, and an already-queued one
+// is pruned on the next reconcile.
+func TestReconcileQueueSkipsZeroMinuteDrops(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	c := rustCampaign("c-lol", "d-badge", "WSCI Badge")
+	c.Drops[0].RequiredMinutes = 0
+	c.Drops = append(c.Drops, domain.Drop{ID: "d-timed", CampaignID: "c-lol", Name: "Timed", RequiredMinutes: 60})
+	if err := st.UpsertCampaign(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertQueueItem(domain.QueueItem{DropID: "d-badge", CampaignID: "c-lol", Platform: domain.PlatformTwitch,
+		Position: 1, Enabled: true, Status: domain.ItemUnavailable}); err != nil {
+		t.Fatal(err)
+	}
+	d := New(st, nil, &config.Config{Games: []string{"Rust"}, Queue: config.QueueConfig{AutoEnqueueNew: true}}, zerolog.Nop())
+	if n, err := d.reconcileQueue(context.Background()); err != nil || n != 1 {
+		t.Fatalf("only the timed drop is enqueued: n=%d err=%v", n, err)
+	}
+	items, _ := st.GetQueue()
+	if len(items) != 1 || items[0].DropID != "d-timed" {
+		t.Fatalf("zero-minute row must be pruned and never re-added: %+v", items)
+	}
+}

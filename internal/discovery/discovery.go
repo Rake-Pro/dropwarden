@@ -529,6 +529,11 @@ func ReconcileQueue(st *store.Store, cfg *config.Config, pf domain.Platform, log
 			continue
 		}
 		for _, drop := range c.Drops {
+			// Zero-minute drops are event-based (subs, gifts, chat), not
+			// earned by watching: keep them out of the queue entirely.
+			if drop.RequiredMinutes <= 0 {
+				continue
+			}
 			if has, _ := st.HasClaim(drop.ID); has {
 				continue
 			}

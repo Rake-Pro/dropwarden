@@ -4,6 +4,13 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.2.3 - 2026-09-26
+
+### Fixed
+- Zero-minute (event-based) drops such as sub or chat rewards never enter the
+  queue: discovery skips them and prunes any already-queued rows on its next
+  pass, instead of listing them as "not a watch-time drop".
+
 ## v0.2.2 - 2026-09-26
 
 ### Fixed
