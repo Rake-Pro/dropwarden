@@ -2,8 +2,10 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rake-pro/dropwarden/internal/browser"
 	"github.com/rake-pro/dropwarden/internal/discovery"
@@ -35,8 +37,9 @@ type fakeController struct {
 	sess         browser.Session
 	health       twitch.Health
 	probeErr     error
-	claimVisible bool
-	claimInv     bool
+	claimInv     bool   // ClaimInInventory result
+	claimInvSel  string // selector ClaimInInventory was last called with
+	claimInvHits int    // ClaimInInventory calls
 }
 
 func newFakeController() *fakeController {
@@ -52,8 +55,9 @@ func (f *fakeController) ReassertVolume(context.Context, twitch.PlayerPolicy) er
 func (f *fakeController) ClickPlay(context.Context) error                              { return nil }
 func (f *fakeController) ToggleDropsPanel(context.Context) error                       { return nil }
 func (f *fakeController) CancelRaid(context.Context) (bool, error)                     { return false, nil }
-func (f *fakeController) ClaimVisible(context.Context) (bool, error)                   { return f.claimVisible, nil }
-func (f *fakeController) ClaimInInventory(context.Context, string) (bool, error) {
+func (f *fakeController) ClaimInInventory(_ context.Context, selector, _ string) (bool, error) {
+	f.claimInvHits++
+	f.claimInvSel = selector
 	return f.claimInv, nil
 }
 
@@ -68,6 +72,19 @@ type fakePager struct {
 	currentDrop *domain.Progress
 	inventory   []domain.Progress
 	pollCalls   int
+
+	// Claim scripting: claimStatus/claimErr are ClaimDrop's result (claimErr
+	// may be errors.ErrUnsupported); claimed lists the claim ids sent;
+	// afterClaim, when set, replaces inventory once a claim succeeds (the
+	// verification re-read).
+	claimStatus  string
+	claimErr     error
+	claimed      []string
+	afterClaim   []domain.Progress
+	claimMarks   bool  // a successful claim marks the matching inventory row isClaimed (when afterClaim is nil)
+	invErr       error // FetchInventoryProgress error (e.g. no currentUser, errors.ErrUnsupported)
+	openInvCalls int
+	buttonsCalls int
 }
 
 func (f *fakePager) OpenChannel(context.Context, string, twitch.PlayerPolicy) error { return nil }
@@ -100,6 +117,9 @@ func (f *fakePager) FetchCurrentDrop(context.Context) (*domain.Progress, error) 
 	return f.currentDrop, nil
 }
 func (f *fakePager) FetchInventoryProgress(context.Context) ([]domain.Progress, error) {
+	if f.invErr != nil {
+		return nil, f.invErr
+	}
 	return f.inventory, nil
 }
 
@@ -140,4 +160,33 @@ func (r *recordingEmitter) count(event string) int {
 
 func (f *fakePager) DrainProgress(context.Context) ([]domain.Progress, error) {
 	return nil, nil
+}
+
+func (f *fakePager) ClaimDrop(_ context.Context, claimID string) (string, string, error) {
+	f.claimed = append(f.claimed, claimID)
+	if f.claimErr != nil {
+		return f.claimStatus, "", f.claimErr
+	}
+	if f.afterClaim != nil {
+		f.inventory = f.afterClaim
+	} else if f.claimMarks {
+		for i := range f.inventory {
+			if f.inventory[i].ClaimID == claimID {
+				at := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+				f.inventory[i].ClaimedAt = &at
+				f.inventory[i].Claimable = false
+			}
+		}
+	}
+	return f.claimStatus, `{"data":{}}`, nil
+}
+
+func (f *fakePager) OpenInventory(context.Context) error {
+	f.openInvCalls++
+	return nil
+}
+
+func (f *fakePager) InventoryButtons(context.Context) ([]byte, int, error) {
+	f.buttonsCalls++
+	return nil, 0, errors.ErrUnsupported // no debug file writes from tests
 }

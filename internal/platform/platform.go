@@ -68,10 +68,9 @@ type Controller interface {
 	// CancelRaid clicks the raid banner's cancel control; returns false if absent.
 	CancelRaid(ctx context.Context) (bool, error)
 
-	// ClaimVisible clicks an on-screen Claim affordance (toast/drops panel);
-	// returns false if none is present.
-	ClaimVisible(ctx context.Context) (bool, error)
-	// ClaimInInventory clicks the Claim button matching claimID on the already
-	// loaded inventory page; returns false if not found.
-	ClaimInInventory(ctx context.Context, claimID string) (bool, error)
+	// ClaimInInventory clicks the claim button on the already-loaded inventory
+	// page: the first element matching selector whose label text equals text
+	// (config claim.inventory_button_selector / _text). Returns false (no
+	// error) when nothing matches.
+	ClaimInInventory(ctx context.Context, selector, text string) (bool, error)
 }

@@ -4,6 +4,54 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.1.4 - 2026-09-26
+
+### Fixed
+- Claiming works: a completed drop is claimed with Twitch's
+  `DropsPage_ClaimDropRewards` GraphQL mutation (sent from the page with its
+  own auth and client-integrity headers, keyed by the drop's
+  `dropInstanceID`), and the claim only counts once a fresh inventory read
+  confirms it: a success status plus the row `isClaimed` or gone. A failure
+  status, a row still unclaimed, or a read without a `currentUser` (auth
+  expired, integrity rejection) is a failure; an inventory response with no
+  user is now a parse error everywhere instead of an empty list. Log lines
+  `claim: gql` / `claim: dom` name the path that worked; the raw mutation
+  response is logged at debug level.
+- The on-stream claim click (a guessed selector that could match an unrelated
+  "Claim" button and hung until the claim timeout) is gone.
+
+### Added
+- Claim sweep (`claim.sweep`, default true): after every discovery pass, and
+  after a progress poll that sees another drop complete, every completed,
+  unclaimed drop is claimed through the mutation, at most 10 per pass, 2-4 s
+  apart. Candidates come from one fresh inventory read (server minutes >=
+  required, `dropInstanceID` present), never from stored rows. Successes land
+  in History and drain stuck "completed - claim it manually" items; a failure
+  is logged and the drop waits `claim.retry_backoff` (in memory) before the
+  next try. The sweep never navigates or takes the window.
+- Drops Twitch already reports claimed (claimed by hand, or the mutation
+  answers `DROP_INSTANCE_ALREADY_CLAIMED`) are reconciled on every discovery
+  pass, progress poll and sweep: a needs_action / pending / active queue item
+  flips to claimed with reason "claimed (detected in inventory)" and History
+  gets one entry marked "detected in inventory" (new `claims.source` column).
+- `claim.inventory_button_selector` (default
+  `button:has([data-a-target="tw-core-button-label-text"])`) and
+  `claim.inventory_button_text` (default "Claim Now"), editable in
+  Settings > Player > Claim. An empty selector makes the fallback capture-only.
+- Every DOM fallback run writes `debug/inventory-buttons.json` (all buttons on
+  the inventory page with text, aria-label, data attributes, class, nearest
+  ancestor data-test-selector and truncated outerHTML), regardless of
+  `logging.capture_gql_bodies`.
+
+### Changed
+- The DOM claim fallback now runs only when the mutation is unsupported or
+  fails, opens the inventory page first, and clicks the first element matching
+  the configured selector whose label text matches, then verifies the claim:
+  only an `isClaimed` row confirms a click (a missing row does not). Kick has
+  no inventory read and trusts the click as before.
+- `claim.allow_gql_fallback` and `claim.strategy` are no longer read (the
+  mutation is the primary path); the Settings toggle for the former is removed.
+
 ## v0.1.3 - 2026-09-26
 
 ### Added

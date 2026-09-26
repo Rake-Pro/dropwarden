@@ -2,6 +2,7 @@ package twitch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -144,4 +145,30 @@ func (p *Pages) CaptureInventoryRaw(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("twitch: drain inventory capture: %w", err)
 	}
 	return raw, nil
+}
+
+// OpenInventory navigates the tab to the drops inventory page and waits for it
+// to load and settle, for the DOM claim fallback (claim button + button capture).
+func (p *Pages) OpenInventory(ctx context.Context) error {
+	if err := p.ctrl.Session().Navigate(ctx, URLInventory); err != nil {
+		return fmt.Errorf("twitch: open inventory: %w", err)
+	}
+	p.settle(ctx)
+	return ctx.Err()
+}
+
+// InventoryButtons returns every button-like element on the current page as
+// indented JSON (text, aria-label, data-test-selector, data-a-target, class,
+// nearest ancestor data-test-selector, truncated outerHTML) plus the count, so
+// the claim selector can be set from real markup.
+func (p *Pages) InventoryButtons(ctx context.Context) ([]byte, int, error) {
+	var rows []map[string]any
+	if err := p.ctrl.Session().Eval(ctx, jsInventoryButtons, &rows); err != nil {
+		return nil, 0, fmt.Errorf("twitch: capture inventory buttons: %w", err)
+	}
+	b, err := json.MarshalIndent(rows, "", "  ")
+	if err != nil {
+		return nil, 0, fmt.Errorf("twitch: encode inventory buttons: %w", err)
+	}
+	return b, len(rows), nil
 }

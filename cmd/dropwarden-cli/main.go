@@ -122,7 +122,7 @@ func doctor() error {
 	fmt.Fprintf(w, "priority mode\t%s\n", a.Cfg.Queue.PriorityMode)
 	fmt.Fprintf(w, "auth mode\t%s\n", a.Cfg.Auth.Mode)
 	fmt.Fprintf(w, "player volume\t%.3f (muted-safe: %v)\n", a.Cfg.Browser.Player.Volume, a.Cfg.Browser.Player.Volume > 0)
-	fmt.Fprintf(w, "gql claim fallback\t%v\n", a.Cfg.Claim.AllowGQLFallback)
+	fmt.Fprintf(w, "claim sweep\t%v\n", a.Cfg.ClaimSweep())
 	w.Flush()
 	if chromeErr != nil {
 		return fmt.Errorf("chrome not found; set browser.chrome_path in %s", a.ConfigPath)

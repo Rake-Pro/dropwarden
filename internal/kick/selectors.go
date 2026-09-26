@@ -22,7 +22,7 @@ const (
 	campaignsAPI = "https://web.kick.com/api/v1/drops/campaigns"
 )
 
-// selClaimButton targets a claim affordance on the inventory or stream page.
+// selClaimButton targets a claim affordance on the inventory page.
 // verify live: Kick's inventory claim button markup.
 const selClaimButton = `button[aria-label*='Claim' i], button[data-testid*='claim' i]`
 

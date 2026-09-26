@@ -221,10 +221,13 @@ func toConfigDTO(c *config.Config) ConfigDTO {
 		ClaimStrategy:      c.Claim.Strategy,
 		AllowGQLFallback:   c.Claim.AllowGQLFallback,
 		SkipAccountLink:    c.Claim.SkipAccountLink,
-		AuthMode:           c.Auth.Mode,
-		StoredEnabled:      c.Auth.Stored.Enabled,
-		LogLevel:           c.Logging.Level,
-		CaptureGQLBodies:   c.Logging.CaptureGQLBodies,
+
+		ClaimButtonSelector: ptr(c.ClaimInventorySelector()),
+		ClaimButtonText:     ptr(c.Claim.InventoryButtonText),
+		AuthMode:            c.Auth.Mode,
+		StoredEnabled:       c.Auth.Stored.Enabled,
+		LogLevel:            c.Logging.Level,
+		CaptureGQLBodies:    c.Logging.CaptureGQLBodies,
 
 		PreferChannelSpecific: c.PreferChannelSpecific(),
 
@@ -259,6 +262,17 @@ func applyConfigDTO(c *config.Config, d ConfigDTO) {
 	c.Claim.Strategy = d.ClaimStrategy
 	c.Claim.AllowGQLFallback = d.AllowGQLFallback
 	c.Claim.SkipAccountLink = d.SkipAccountLink
+	if d.ClaimButtonSelector != nil {
+		sel := strings.TrimSpace(*d.ClaimButtonSelector)
+		setUpdate(&c.Claim.InventoryButtonSelector, &sel, c.ClaimInventorySelector())
+	}
+	if d.ClaimButtonText != nil {
+		if txt := strings.TrimSpace(*d.ClaimButtonText); txt != "" {
+			c.Claim.InventoryButtonText = txt
+		} else {
+			c.Claim.InventoryButtonText = config.DefaultClaimButtonText
+		}
+	}
 	c.Auth.Mode = d.AuthMode
 	c.Auth.Stored.Enabled = d.StoredEnabled
 	c.Logging.Level = d.LogLevel

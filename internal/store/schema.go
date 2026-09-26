@@ -164,4 +164,8 @@ var migrations = []string{
 		created_at INTEGER,
 		PRIMARY KEY (platform, game_name, reward_key)
 	);`,
+
+	// source records how a claim was booked: '' = claimed by dropwarden,
+	// 'detected' = found already claimed in the Twitch inventory. Append-only.
+	`ALTER TABLE claims ADD COLUMN source TEXT NOT NULL DEFAULT '';`,
 }

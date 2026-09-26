@@ -116,9 +116,11 @@ func (p *Pages) FetchCurrentDrop(ctx context.Context) (*domain.Progress, error) 
 }
 
 // FetchInventoryProgress has no known Kick endpoint yet; progress arrives via
-// inventory-page parsing once its DOM shape is confirmed live.
+// inventory-page parsing once its DOM shape is confirmed live. It returns
+// errors.ErrUnsupported (not an empty list) so claim verification never reads
+// "no rows" as evidence.
 func (p *Pages) FetchInventoryProgress(ctx context.Context) ([]domain.Progress, error) {
-	return nil, nil
+	return nil, errors.ErrUnsupported
 }
 
 // DrainProgress: Kick has no passive capture shim yet; the stream page's
@@ -132,4 +134,25 @@ func (p *Pages) settle(ctx context.Context) {
 	case <-ctx.Done():
 	case <-time.After(settleDelay):
 	}
+}
+
+// OpenInventory navigates to the drops inventory page and waits for it to
+// settle, for the engine's DOM claim fallback.
+func (p *Pages) OpenInventory(ctx context.Context) error {
+	if err := p.ctrl.Session().Navigate(ctx, URLInventory); err != nil {
+		return fmt.Errorf("kick: open inventory: %w", err)
+	}
+	p.settle(ctx)
+	return ctx.Err()
+}
+
+// ClaimDrop is unsupported on Kick (no known claim API); the engine falls back
+// to the inventory page click.
+func (p *Pages) ClaimDrop(context.Context, string) (string, string, error) {
+	return "", "", errors.ErrUnsupported
+}
+
+// InventoryButtons has no Kick implementation yet.
+func (p *Pages) InventoryButtons(context.Context) ([]byte, int, error) {
+	return nil, 0, errors.ErrUnsupported
 }

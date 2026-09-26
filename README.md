@@ -27,8 +27,33 @@ v3. Development happens directly from GoLand.
    - playback health (offline, player error, frozen video, volume drift),
    - crash / hang (renderer crash and unresponsive-tab detection),
    - raid (cancel the banner, or adopt an eligible target, always refreshing).
-4. When the minutes are met it claims the drop by clicking the real Claim
-   button, records it, and moves on.
+4. When the minutes are met it claims the drop (see Claiming below), records
+   it, and moves on.
+
+### Claiming
+
+- Primary: Twitch's `DropsPage_ClaimDropRewards` GraphQL mutation, sent from
+  the page with the page's own auth and client-integrity headers, keyed by the
+  drop's `dropInstanceID`. A claim only counts once a fresh inventory read
+  confirms it (success status plus the row `isClaimed` or gone; a failed or
+  user-less read never confirms).
+- Fallback (mutation unsupported or failed): the tab opens the drops
+  inventory, writes `debug/inventory-buttons.json`, and clicks the first
+  element matching `claim.inventory_button_selector` whose label is
+  `claim.inventory_button_text` (defaults
+  `button:has([data-a-target="tw-core-button-label-text"])` / "Claim Now";
+  Settings > Player > Claim). An empty selector only writes the capture.
+- One bounded attempt (60 s) per completed drop; if both paths fail the
+  queue item goes to needs_action for a manual claim.
+- Claim sweep (`claim.sweep`, default true): after each discovery pass and
+  after a progress poll that sees another drop complete, up to 10 completed,
+  unclaimed drops (per one fresh inventory read) are claimed via the
+  mutation, 2-4 s apart, without navigating. Best-effort: a failed drop waits
+  `claim.retry_backoff`; successes go to History and clear stuck needs_action
+  items.
+- Drops already claimed on Twitch (by hand, or `DROP_INSTANCE_ALREADY_CLAIMED`)
+  flip their queue item to claimed and appear in History as "detected in
+  inventory".
 
 ### Queue order
 
@@ -67,8 +92,10 @@ top down, falling through past drops with no live channel:
   when its tab is backgrounded, which would silently stop drop credit.
 - A single pacer rate-limits every synthetic action with jitter; there is no
   rapid-fire anything.
-- Claims use in-page clicks. The `ClaimDropRewards` GraphQL replay is
-  implemented as a config flag but ships OFF (it has triggered bot blocks).
+- Claims use the web client's own `ClaimDropRewards` mutation from the page
+  context with the page's captured headers (older builds shipped it OFF over
+  bot-block reports; the owner re-enabled it as the primary path in v0.1.4).
+  The sweep is capped at 10 claims per pass, 2-4 s apart.
 - The window is launched unfocused and dimmed. (A periodic few-pixel burn-in
   shift is configured and plumbed but not yet wired to a timer - see the
   STATUS.md backlog.)

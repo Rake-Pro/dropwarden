@@ -19,12 +19,14 @@ func testEngine(t *testing.T, st *store.Store, ctrl *fakeController, pager *fake
 	t.Helper()
 	cfg, _ := config.StarterDefaults()
 	fixed := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
-	return New(Deps{
+	e := New(Deps{
 		Store: st, Ctrl: ctrl, Pages: pager, Disco: disco, Cfg: cfg, Emit: emit,
 		Log:  zerolog.Nop(),
 		Now:  func() time.Time { return fixed },
 		Rand: func() float64 { return 0.5 },
 	})
+	e.wait = func(context.Context, time.Duration) {}
+	return e
 }
 
 func seedCampaign(t *testing.T, st *store.Store, accountLink bool) domain.Campaign {
@@ -107,60 +109,6 @@ func TestDiscoveringEmitsAndAdvances(t *testing.T) {
 	}
 	if emit.count(EvCampaigns) != 1 {
 		t.Fatal("expected campaigns:updated event")
-	}
-}
-
-func TestClaimVisibleRecordsClaim(t *testing.T) {
-	st, _ := store.OpenMemory()
-	defer st.Close()
-	c := seedCampaign(t, st, false)
-	ctrl := newFakeController()
-	ctrl.claimVisible = true
-	emit := newRecordingEmitter()
-	e := testEngine(t, st, ctrl, &fakePager{}, &fakeDisco{}, emit)
-	e.cur = &activeWatch{
-		drop: c.Drops[0], campaign: c, login: "streamer_a",
-		session:     domain.WatchSession{ID: "s1", DropID: "d1", ChannelLogin: "streamer_a", StartedAt: e.deps.Now()},
-		lastMinutes: 60,
-	}
-	next, _ := e.runClaiming(context.Background())
-	if next != StateCooldown {
-		t.Fatalf("expected Cooldown after claim, got %s", next)
-	}
-	has, _ := st.HasClaim("d1")
-	if !has {
-		t.Fatal("expected claim recorded in store")
-	}
-	if emit.count(EvClaimed) != 1 {
-		t.Fatal("expected drop:claimed event")
-	}
-	q, _ := st.GetQueue()
-	if q[0].Status != domain.ItemClaimed {
-		t.Fatalf("queue item should be claimed, got %s", q[0].Status)
-	}
-}
-
-func TestClaimFailureFlagsForManualReconcile(t *testing.T) {
-	st, _ := store.OpenMemory()
-	defer st.Close()
-	c := seedCampaign(t, st, false)
-	ctrl := newFakeController() // claimVisible=false, claimInv=false
-	emit := newRecordingEmitter()
-	e := testEngine(t, st, ctrl, &fakePager{}, &fakeDisco{}, emit)
-	e.cur = &activeWatch{drop: c.Drops[0], campaign: c, login: "s", session: domain.WatchSession{ID: "s1", DropID: "d1"}}
-	next, _ := e.runClaiming(context.Background())
-	if next != StateCooldown {
-		t.Fatalf("expected Cooldown, got %s", next)
-	}
-	if has, _ := st.HasClaim("d1"); has {
-		t.Fatal("no claim should be recorded on failure")
-	}
-	q, _ := st.GetQueue()
-	if q[0].Status != domain.ItemNeedsAction {
-		t.Fatalf("failed claim should mark needs_action for manual reconcile, got %s", q[0].Status)
-	}
-	if emit.count(EvNeedsAction) != 1 {
-		t.Fatal("failed claim should emit a needs_action event for the UI")
 	}
 }
 

@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -86,10 +87,13 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 	}
 	invRows := 0
 	if inv, err := e.deps.Pages.FetchInventoryProgress(ctx); err != nil {
-		e.deps.Log.Warn().Err(err).Msg("inventory poll failed")
+		if !errors.Is(err, errors.ErrUnsupported) {
+			e.deps.Log.Warn().Err(err).Msg("inventory poll failed")
+		}
 	} else {
 		invRows = len(inv)
 		ps = append(ps, inv...)
+		e.reconcileClaimedRows(inv)
 	}
 	// Diagnostics: does the drop we are ACTUALLY watching for appear in the
 	// rows Twitch returned, and with what minutes? inventory_rows>0 while
@@ -134,6 +138,11 @@ func (e *Engine) pollProgress(ctx context.Context) (minutes int, increased bool)
 	minutes, increased = e.cur.lastMinutes, false
 	if len(ps) > 0 {
 		minutes, increased = e.applyProgress(ps)
+	}
+	// Another drop (e.g. a simultaneous tier) finished while we watch: claim it
+	// now rather than waiting for the next discovery pass.
+	if e.sweepWorthy(ps) {
+		e.claimSweep(ctx, "progress poll")
 	}
 	// One line per poll (~1/min): a poll that SUCCEEDS but sees nothing is
 	// otherwise invisible in the log, indistinguishable from Twitch simply not
@@ -253,20 +262,22 @@ func (e *Engine) endSession(outcome domain.SessionOutcome, note string) {
 }
 
 // dumpDebug writes a raw capture to <approot>/debug/<name> (debug only; the
-// heartbeat buffer carries player state and drop ids, never auth material).
-func (e *Engine) dumpDebug(name string, body []byte) {
+// heartbeat buffer carries player state and drop ids, never auth material) and
+// returns the file path ("" when the write failed).
+func (e *Engine) dumpDebug(name string, body []byte) string {
 	dir, err := config.Dir()
 	if err != nil {
-		return
+		return ""
 	}
 	ddir := filepath.Join(dir, "debug")
 	if err := os.MkdirAll(ddir, 0o700); err != nil {
-		return
+		return ""
 	}
 	path := filepath.Join(ddir, name)
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		e.deps.Log.Warn().Err(err).Msg("watcher: write debug dump failed")
-		return
+		return ""
 	}
 	e.deps.Log.Info().Str("file", path).Int("bytes", len(body)).Msg("watcher: wrote debug dump")
+	return path
 }

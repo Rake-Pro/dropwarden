@@ -2,6 +2,8 @@ package twitch
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/rake-pro/dropwarden/internal/browser"
 )
@@ -74,16 +76,29 @@ func (c *controller) CancelRaid(ctx context.Context) (bool, error) {
 	return c.sess.Click(ctx, selRaidCancel)
 }
 
-func (c *controller) ClaimVisible(ctx context.Context) (bool, error) {
-	return c.sess.Click(ctx, selClaimButton)
-}
-
-// ClaimInInventory clicks a Claim button on the already-loaded inventory page.
-// verify live: matching a specific claimID to its card - claim_id
-// (UserID#CampaignID#DropID) is not exposed in the DOM, so for MVP this clicks
-// the first visible Claim button, which is correct when only the drop we just
-// completed is claimable. The claimID is accepted for future precise matching.
-func (c *controller) ClaimInInventory(ctx context.Context, claimID string) (bool, error) {
-	_ = claimID
-	return c.sess.Click(ctx, selClaimButton)
+// ClaimInInventory clicks the claim button on the already-loaded inventory
+// page: the first element matching selector whose label text equals text
+// (case-insensitive; both from config claim.inventory_button_*). It returns
+// false with no error when selector is empty or nothing matches. The match is
+// done in page JS (tag the element), the click is the session's real CDP mouse
+// dispatch on the tagged element.
+func (c *controller) ClaimInInventory(ctx context.Context, selector, text string) (bool, error) {
+	if strings.TrimSpace(selector) == "" {
+		return false, nil
+	}
+	var res struct {
+		Found   bool   `json:"found"`
+		Matches int    `json:"matches"`
+		Error   string `json:"error"`
+	}
+	if err := c.sess.Eval(ctx, jsMarkClaimButton(selector, text), &res); err != nil {
+		return false, fmt.Errorf("twitch: find claim button: %w", err)
+	}
+	if res.Error != "" {
+		return false, fmt.Errorf("twitch: find claim button (selector %q): %s", selector, res.Error)
+	}
+	if !res.Found {
+		return false, nil
+	}
+	return c.sess.Click(ctx, selMarkedClaim)
 }

@@ -664,7 +664,7 @@ async function renderHistory() {
   </div>`));
   const grid = el('<div class="grid2"></div>');
   const claimsCard = el(`<div class="card mini"><h3>Recent claims</h3><div style="margin:0 -16px -15px">${claims.length ? claims.map(c => `
-    <div class="clm"><span class="gift">🎁</span><div><div class="n">${multi ? pfBadge(c.platform) + ' ' : ''}${esc(c.dropName)}</div><div class="g">${esc(c.game)}</div></div><div class="when">${esc(fmtDate(c.claimedAt))}</div></div>`).join('') : '<div class="empty">No claims yet.</div>'}</div></div>`);
+    <div class="clm"><span class="gift">🎁</span><div><div class="n">${multi ? pfBadge(c.platform) + ' ' : ''}${esc(c.dropName)}</div><div class="g">${esc(c.game)}${c.source === 'detected' ? ' &middot; detected in inventory' : ''}</div></div><div class="when">${esc(fmtDate(c.claimedAt))}</div></div>`).join('') : '<div class="empty">No claims yet.</div>'}</div></div>`);
   const outcomes = stats.outcomeCounts || {};
   const side = el(`<div class="stack">
     <div class="card mini"><h3>Minutes watched · recent</h3><div class="spark">${spark.map(h => `<i style="height:${h}%"></i>`).join('')}</div></div>
@@ -746,7 +746,6 @@ function settingsPaneHTML() {
       <div class="group"><div class="caption">Twitch</div><div class="card">
         <div class="row"><div class="lab"><div class="l">${pfBadge('twitch')} Twitch drops</div><div class="h">The primary platform — always on. The claim behavior below applies to Twitch only.</div></div><div class="ctl"><span class="pill active"><span class="d"></span> Always on</span></div></div>
         <div class="row"><div class="lab"><div class="l">Skip account-link drops</div><div class="h">Skip campaigns Twitch reports as unlinked. Drops the server is already crediting are watched regardless, and Off watches everything (failed claims surface for manual reconcile).</div></div><div class="ctl">${toggleHTML('skipAccountLink', cfg.skipAccountLink)}</div></div>
-        <div class="row"><div class="lab"><div class="l">Allow GQL claim fallback</div><div class="h">Off by design — replaying the claim mutation has triggered bot blocks.</div></div><div class="ctl">${toggleHTML('allowGqlFallback', cfg.allowGqlFallback)}</div></div>
       </div></div>
       <div class="group"><div class="caption">Kick</div><div class="card">
         <div class="row"><div class="lab"><div class="l">${pfBadge('kick')} Kick drops</div><div class="h">Runs a second dedicated Chrome and watcher engine in parallel with Twitch, sharing the game filter and queue. Starts and stops immediately.</div></div><div class="ctl">${toggleHTML('kickEnabled', cfg.kickEnabled)}</div></div>
@@ -759,6 +758,12 @@ function settingsPaneHTML() {
         <div class="row"><div class="lab"><div class="l">Force lowest quality</div><div class="h">Saves bandwidth and CPU; does not affect drop credit.</div></div><div class="ctl">${toggleHTML('forceLowestQuality', cfg.forceLowestQuality)}</div></div>
         <div class="row"><div class="lab"><div class="l">Mute Chrome audio</div><div class="h">Silences the watcher Chromes at the sink while the player stays unmuted at 1%, so crediting is unaffected. Needs a Chrome restart.</div></div><div class="ctl">${toggleHTML('muteAudio', cfg.muteAudio)}</div></div>
         <div class="row"><div class="lab"><div class="l">Keep Chrome minimized</div><div class="h">Minimizes only the watcher windows (via CDP). Each restores itself briefly while a channel is opened and validated — a hidden player will not autoplay — then re-minimizes once watching. Needs a Chrome restart.</div></div><div class="ctl">${toggleHTML('startMinimized', cfg.startMinimized)}</div></div>
+      </div></div>
+      <div class="group"><div class="caption">Claim</div><div class="card">
+        <div class="row stacked"><div class="lab"><div class="l">Inventory claim button selector</div><div class="h">Twitch only. Used when the claim mutation fails: the inventory page opens and the first element matching this CSS selector whose label is the text below is clicked. Empty = only write debug/inventory-buttons.json (every fallback run writes it) so the right selector can be read from real markup.</div></div>
+          <div class="ctl"><input class="input mono" type="text" data-field="claimButtonSelector" value="${esc(cfg.claimButtonSelector)}" placeholder="empty = capture only, no click" style="width:100%"></div></div>
+        <div class="row stacked"><div class="lab"><div class="l">Inventory claim button text</div><div class="h">Whole trimmed label, case-insensitive.</div></div>
+          <div class="ctl"><input class="input mono" type="text" data-field="claimButtonText" value="${esc(cfg.claimButtonText)}" placeholder="Claim Now" style="width:100%"></div></div>
       </div></div>`;
     case 'browser': return `
       <div class="group"><div class="caption">Browser</div><div class="card">

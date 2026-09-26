@@ -56,6 +56,7 @@ type ClaimDTO struct {
 	DropName  string    `json:"dropName"`
 	Game      string    `json:"game"`
 	ClaimedAt time.Time `json:"claimedAt"`
+	Source    string    `json:"source,omitempty"` // "" = claimed by dropwarden, "detected" = found claimed in the inventory
 }
 
 type SessionDTO struct {
@@ -114,10 +115,14 @@ type ConfigDTO struct {
 	ClaimStrategy      string   `json:"claimStrategy"`
 	AllowGQLFallback   bool     `json:"allowGqlFallback"`
 	SkipAccountLink    bool     `json:"skipAccountLink"`
-	AuthMode           string   `json:"authMode"`
-	StoredEnabled      bool     `json:"storedEnabled"`
-	LogLevel           string   `json:"logLevel"`
-	CaptureGQLBodies   bool     `json:"captureGqlBodies"`
+	// DOM claim fallback (claim.inventory_button_*). Pointers so a partial POST
+	// that omits them leaves the config alone; "" selector = capture only.
+	ClaimButtonSelector *string `json:"claimButtonSelector,omitempty"`
+	ClaimButtonText     *string `json:"claimButtonText,omitempty"`
+	AuthMode            string  `json:"authMode"`
+	StoredEnabled       bool    `json:"storedEnabled"`
+	LogLevel            string  `json:"logLevel"`
+	CaptureGQLBodies    bool    `json:"captureGqlBodies"`
 	// PreferChannelSpecific is read-only here (config file only; Save ignores
 	// it): the Queue view uses it to describe the selection order accurately.
 	PreferChannelSpecific bool `json:"preferChannelSpecific"`

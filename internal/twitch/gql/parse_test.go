@@ -3,6 +3,7 @@ package gql
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rake-pro/dropwarden/internal/domain"
@@ -487,5 +488,66 @@ func TestParseHeartbeat(t *testing.T) {
 	hb, err = ParseHeartbeat(plain)
 	if err != nil || len(hb.Progress) != 1 || hb.Progress[0].RealMinutes != 3 {
 		t.Fatalf("pubsub framing: err=%v hb=%+v", err, hb)
+	}
+}
+
+func TestParseClaimDropRewards(t *testing.T) {
+	cases := []struct {
+		name, body, status string
+		ok                 bool
+	}{
+		{"eligible", `{"data":{"claimDropRewards":{"status":"ELIGIBLE_FOR_ALL","isUserAccountConnected":true,"__typename":"ClaimDropRewardsPayload"}},"extensions":{}}`, "ELIGIBLE_FOR_ALL", true},
+		{"already claimed", `{"data":{"claimDropRewards":{"status":"DROP_INSTANCE_ALREADY_CLAIMED","isUserAccountConnected":false,"__typename":"ClaimDropRewardsPayload"}}}`, "DROP_INSTANCE_ALREADY_CLAIMED", true},
+		{"not found", `{"data":{"claimDropRewards":{"status":"DROP_INSTANCE_NOT_FOUND","isUserAccountConnected":false,"__typename":"ClaimDropRewardsPayload"}}}`, "DROP_INSTANCE_NOT_FOUND", false},
+		{"ineligible", `{"data":{"claimDropRewards":{"status":"INELIGIBLE","__typename":"ClaimDropRewardsPayload"}}}`, "INELIGIBLE", false},
+		{"graphql error", `{"errors":[{"message":"failed integrity check","path":["claimDropRewards"]}],"data":{"claimDropRewards":null}}`, "", false},
+		{"null payload", `{"data":{"claimDropRewards":null}}`, "", false},
+		{"fetch wrapper error", `{"error":"TypeError: Failed to fetch"}`, "", false},
+		{"batched success", `[{"data":{"claimDropRewards":{"status":"ELIGIBLE_FOR_ALL"}}}]`, "ELIGIBLE_FOR_ALL", true},
+		{"batched error", `[{"errors":[{"message":"service timeout"}],"data":null}]`, "", false},
+		{"empty batch", `[]`, "", false},
+		{"not json", `<html>`, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, err := ParseClaimDropRewards([]byte(tc.body))
+			if status != tc.status {
+				t.Errorf("status = %q, want %q", status, tc.status)
+			}
+			if (err == nil) != tc.ok {
+				t.Errorf("err = %v, want ok=%v", err, tc.ok)
+			}
+			if !tc.ok && tc.status != "" && (err == nil || !strings.Contains(err.Error(), tc.status)) {
+				t.Errorf("error %v should name the status %q", err, tc.status)
+			}
+		})
+	}
+}
+
+// Claim verification treats a missing row as evidence, so a response without
+// a currentUser.inventory object must be an error, never an empty list.
+func TestParseInventoryNoUserIsError(t *testing.T) {
+	bad := map[string]string{
+		"no user":         `{"data":{"currentUser":null}}`,
+		"no data":         `{}`,
+		"null data":       `{"data":null}`,
+		"no inventory":    `{"data":{"currentUser":{"inventory":null}}}`,
+		"graphql error":   `{"errors":[{"message":"failed integrity check"}],"data":{"currentUser":null}}`,
+		"fetch wrapper":   `{"error":"TypeError: Failed to fetch"}`,
+		"errors, no list": `{"errors":[{"message":"partial"}],"data":{"currentUser":{"inventory":{"dropCampaignsInProgress":null}}}}`,
+	}
+	for name, body := range bad {
+		if ps, err := ParseInventory([]byte(body)); err == nil {
+			t.Errorf("%s: expected error, got %+v", name, ps)
+		}
+	}
+	for name, body := range map[string]string{
+		"null list":  `{"data":{"currentUser":{"inventory":{"dropCampaignsInProgress":null}}}}`,
+		"empty list": `{"data":{"currentUser":{"inventory":{"dropCampaignsInProgress":[]}}}}`,
+		"batched":    `[{"data":{"currentUser":{"inventory":{"dropCampaignsInProgress":[]}}}}]`,
+	} {
+		if ps, err := ParseInventory([]byte(body)); err != nil || len(ps) != 0 {
+			t.Errorf("%s: want empty success, got %+v, %v", name, ps, err)
+		}
 	}
 }

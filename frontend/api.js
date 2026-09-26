@@ -59,7 +59,7 @@ const SAMPLE = {
     theme: 'dark', games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'], anyGame: false,
     priorityMode: 'top_down', preferChannelSpecific: true, autoEnqueueNew: true, volume: 0.01, forceLowestQuality: true,
     neverFocus: true, alwaysOnBottom: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, kickEnabled: true, claimStrategy: 'in_page',
-    allowGqlFallback: false, skipAccountLink: true, authMode: 'manual', storedEnabled: false, logLevel: 'info',
+    allowGqlFallback: false, skipAccountLink: true, claimButtonSelector: 'button:has([data-a-target="tw-core-button-label-text"])', claimButtonText: 'Claim Now', authMode: 'manual', storedEnabled: false, logLevel: 'info',
     updateEnabled: true, updateAutoInstall: true, updateShowChangelog: true,
     updateFeedURL: 'https://cdn.rake.pro/releases/dropwarden/latest.json', updateIntervalHours: 24,
   },

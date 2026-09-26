@@ -64,13 +64,14 @@ func (s *Store) AppendClaim(c domain.Claim) error {
 		at = time.Now()
 	}
 	_, err := s.db.Exec(`INSERT INTO claims
-		(drop_id,campaign_id,platform,drop_name,game_name,benefits,claimed_at)
-		VALUES (?,?,?,?,?,?,?)
+		(drop_id,campaign_id,platform,drop_name,game_name,benefits,claimed_at,source)
+		VALUES (?,?,?,?,?,?,?,?)
 		ON CONFLICT(drop_id) DO UPDATE SET
 			campaign_id=excluded.campaign_id, platform=excluded.platform,
 			drop_name=excluded.drop_name,
-			game_name=excluded.game_name, benefits=excluded.benefits, claimed_at=excluded.claimed_at`,
-		c.DropID, c.CampaignID, string(c.Platform.OrTwitch()), c.DropName, c.GameName, string(benefits), at.UnixMilli())
+			game_name=excluded.game_name, benefits=excluded.benefits, claimed_at=excluded.claimed_at,
+			source=excluded.source`,
+		c.DropID, c.CampaignID, string(c.Platform.OrTwitch()), c.DropName, c.GameName, string(benefits), at.UnixMilli(), c.Source)
 	if err != nil {
 		return fmt.Errorf("store: append claim: %w", err)
 	}
@@ -87,7 +88,7 @@ func (s *Store) ListClaims(from, to time.Time) ([]domain.Claim, error) {
 	if !to.IsZero() {
 		hi = to.UnixMilli()
 	}
-	rows, err := s.db.Query(`SELECT drop_id,campaign_id,platform,drop_name,game_name,benefits,claimed_at FROM claims WHERE claimed_at BETWEEN ? AND ? ORDER BY claimed_at DESC`, lo, hi)
+	rows, err := s.db.Query(`SELECT drop_id,campaign_id,platform,drop_name,game_name,benefits,claimed_at,source FROM claims WHERE claimed_at BETWEEN ? AND ? ORDER BY claimed_at DESC`, lo, hi)
 	if err != nil {
 		return nil, fmt.Errorf("store: list claims: %w", err)
 	}
@@ -97,7 +98,7 @@ func (s *Store) ListClaims(from, to time.Time) ([]domain.Claim, error) {
 		var c domain.Claim
 		var pf, benefits string
 		var at sql.NullInt64
-		if err := rows.Scan(&c.DropID, &c.CampaignID, &pf, &c.DropName, &c.GameName, &benefits, &at); err != nil {
+		if err := rows.Scan(&c.DropID, &c.CampaignID, &pf, &c.DropName, &c.GameName, &benefits, &at, &c.Source); err != nil {
 			return nil, fmt.Errorf("store: scan claim: %w", err)
 		}
 		c.Platform = domain.Platform(pf).OrTwitch()

@@ -64,6 +64,7 @@ func (c *Config) applyDefaults() {
 
 	setString(&c.Claim.Strategy, "in_page")
 	setDuration(&c.Claim.RetryBackoff, 5*time.Minute)
+	setString(&c.Claim.InventoryButtonText, DefaultClaimButtonText)
 
 	// X/Y are NOT defaulted here (see the Kick window comment above); the
 	// window-tiling default lives in ProfileRuntimeConfig.

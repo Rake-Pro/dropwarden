@@ -4,6 +4,10 @@ Snapshot for resuming after a context clear. Repo: Rake-Pro/dropwarden (private)
 branch main. This file is the "where are we" note; deeper design is in README.md,
 NOTES-twitch.md, NOTES-wails.md.
 
+## 2026-09-26 - v0.1.4 claim mutation + sweep (uncommitted working tree)
+
+- Claiming via `DropsPage_ClaimDropRewards` (inventory-verified), DOM fallback on the inventory page with configurable selector/text + `debug/inventory-buttons.json`, `claim.sweep` (fresh inventory read, in-memory backoff), already-claimed reconcile (History source "detected"); mutation acceptance with replayed integrity headers not yet verified live.
+
 ## 2026-09-26 - v0.1.3 queue pins + game order (uncommitted working tree)
 
 - Selection keys: pin rank, game rank (`games` order), alongside (any-channel

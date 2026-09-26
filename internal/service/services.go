@@ -840,7 +840,7 @@ func (s *HistoryService) Claims(profile string) ([]ClaimDTO, error) {
 	}
 	out := make([]ClaimDTO, 0, len(claims))
 	for _, c := range claims {
-		out = append(out, ClaimDTO{DropID: c.DropID, Platform: string(c.Platform.OrTwitch()), DropName: c.DropName, Game: c.GameName, ClaimedAt: c.ClaimedAt})
+		out = append(out, ClaimDTO{DropID: c.DropID, Platform: string(c.Platform.OrTwitch()), DropName: c.DropName, Game: c.GameName, ClaimedAt: c.ClaimedAt, Source: c.Source})
 	}
 	return out, nil
 }

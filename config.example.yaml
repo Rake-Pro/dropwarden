@@ -53,8 +53,16 @@ watcher:
   timing_jitter: 0.2            # +/- fraction on periodic watcher delays (bot-detection avoidance: desynchronizes periodic actions); 0 disables, max 0.5
 
 claim:
-  strategy: in_page            # in_page | in_page_then_gql
-  allow_gql_fallback: false    # OFF: replaying ClaimDropRewards has triggered bot blocks
+  # Claiming: the DropsPage_ClaimDropRewards GraphQL mutation (sent from the
+  # page with its own auth/integrity headers) is the primary path, verified by
+  # re-reading the inventory. If it fails, the tab opens the inventory page,
+  # writes debug/inventory-buttons.json and clicks the first element matching
+  # inventory_button_selector whose label text is inventory_button_text.
+  sweep: true                  # also claim every completed, unclaimed drop after discovery / progress polls (max 10 per pass)
+  # inventory_button_selector: 'button:has([data-a-target="tw-core-button-label-text"])'   # default; "" = capture only, no click
+  inventory_button_text: "Claim Now"   # case-insensitive, whole trimmed label
+  strategy: in_page            # legacy, not read by the claim flow
+  allow_gql_fallback: false    # legacy, ignored since v0.1.4 (the mutation is now the primary path)
   retry_backoff: 5m
   skip_account_link_drops: true
 

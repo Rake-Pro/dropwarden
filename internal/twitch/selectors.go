@@ -5,6 +5,8 @@ package twitch
 // they must be confirmed against the real authenticated site during phase 1-3
 // testing (see docs/NOTES-twitch.md) because they cannot be checked in-container.
 
+import "encoding/json"
+
 // URLs.
 const (
 	URLBase          = "https://www.twitch.tv"
@@ -24,7 +26,6 @@ const (
 	selRaidCancel    = "[data-test-selector='raid-cancel-button'], button[aria-label*='Cancel']"
 	selDropsCallout  = "[data-test-selector='drops-campaign-details'], .drops-campaign-callout"
 	selDropsChatIcon = "button[aria-label*='Drops'], [data-a-target='drops-in-chat']"
-	selClaimButton   = "button[data-test-selector='DropsCampaignInProgressRewardPresentation-claim-button'], button[aria-label*='Claim']"
 	selInventoryCard = "[data-test-selector='DropsCampaignInProgressDescription'], .inventory-drop-card" // verify live
 
 	// selContentGateAccept is the content-classification (mature) gate's
@@ -256,3 +257,53 @@ const jsLoggedIn = `(() => {
   const avatar = document.querySelector("button[data-a-target='user-menu-toggle'], img.tw-image-avatar");
   return { loggedIn: !login && !!avatar, hasLoginButton: !!login };
 })()`
+
+// jsInventoryButtons collects every button-like element on the current page
+// (the drops inventory) with the attributes a claim selector could key on, so
+// the owner can pick the exact claim.inventory_button_selector /
+// claim.inventory_button_text from real markup when Twitch changes it. Written
+// to debug/inventory-buttons.json on every DOM claim fallback run. Bounded:
+// at most 400 buttons, text 200 and outerHTML 600 characters each.
+const jsInventoryButtons = `(() => {
+  const out = [];
+  document.querySelectorAll("button, a[role='button']").forEach(b => {
+    if (out.length >= 400) return;
+    const anc = b.parentElement ? b.parentElement.closest('[data-test-selector]') : null;
+    out.push({
+      text: (b.textContent || '').trim().slice(0, 200),
+      ariaLabel: b.getAttribute('aria-label') || '',
+      dataTestSelector: b.getAttribute('data-test-selector') || '',
+      dataATarget: b.getAttribute('data-a-target') || '',
+      className: (typeof b.className === 'string') ? b.className : '',
+      ancestorTestSelector: anc ? (anc.getAttribute('data-test-selector') || '') : '',
+      outerHTML: (b.outerHTML || '').slice(0, 600),
+    });
+  });
+  return out;
+})()`
+
+// jsMarkClaimButton returns JS that finds the first element matching selector
+// whose trimmed textContent equals text (case-insensitive), scrolls it into
+// view and tags it data-dw-claim="1" so the session's human-like CDP click can
+// target it by attribute (Session.Click only takes a CSS selector, and the
+// button is only distinguishable by its label text). selector and text are
+// injected as JSON string literals. The result is {found, matches, error}.
+func jsMarkClaimButton(selector, text string) string {
+	sel, _ := json.Marshal(selector)
+	txt, _ := json.Marshal(text)
+	return `(() => {
+  try {
+    document.querySelectorAll('[data-dw-claim]').forEach(x => x.removeAttribute('data-dw-claim'));
+    const want = ` + string(txt) + `.trim().toLowerCase();
+    const els = Array.from(document.querySelectorAll(` + string(sel) + `));
+    const hit = els.find(x => (x.textContent || '').trim().toLowerCase() === want);
+    if (!hit) return { found: false, matches: els.length, error: '' };
+    hit.scrollIntoView({ block: 'center' });
+    hit.setAttribute('data-dw-claim', '1');
+    return { found: true, matches: els.length, error: '' };
+  } catch (e) { return { found: false, matches: 0, error: String(e) }; }
+})()`
+}
+
+// selMarkedClaim targets the element jsMarkClaimButton tagged.
+const selMarkedClaim = "[data-dw-claim='1']"

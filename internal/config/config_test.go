@@ -596,3 +596,41 @@ func TestPreferChannelSpecificDefault(t *testing.T) {
 		t.Fatal("the starter config should set prefer_channel_specific: true explicitly")
 	}
 }
+
+func TestClaimDefaultsAndExplicitEmptySelector(t *testing.T) {
+	cfg, err := parse([]byte("claim:\n  retry_backoff: 5m\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ClaimSweep() {
+		t.Fatal("claim.sweep must default true for configs without the key")
+	}
+	if cfg.ClaimInventorySelector() != DefaultClaimButtonSelector || cfg.Claim.InventoryButtonText != DefaultClaimButtonText {
+		t.Fatalf("claim button defaults = %q / %q", cfg.ClaimInventorySelector(), cfg.Claim.InventoryButtonText)
+	}
+	cfg, err = parse([]byte("claim:\n  sweep: false\n  inventory_button_selector: \"\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClaimSweep() {
+		t.Fatal("explicit claim.sweep: false must stick")
+	}
+	if cfg.ClaimInventorySelector() != "" {
+		t.Fatalf("explicit empty selector must stick, got %q", cfg.ClaimInventorySelector())
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Load(path); err != nil || got.ClaimInventorySelector() != "" {
+		t.Fatalf("empty selector must survive save/load, got %v", err)
+	}
+	legacy, err := parse([]byte("claim:\n  strategy: in_page_then_gql\n  allow_gql_fallback: true\n"))
+	if err != nil || !legacy.ClaimSweep() {
+		t.Fatalf("legacy claim keys must still load: %v", err)
+	}
+	starter, _ := StarterDefaults()
+	if !starter.ClaimSweep() || starter.ClaimInventorySelector() != DefaultClaimButtonSelector {
+		t.Fatal("starter config must keep the claim sweep on and the default selector")
+	}
+}

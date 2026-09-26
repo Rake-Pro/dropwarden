@@ -159,10 +159,44 @@ type WatcherConfig struct {
 }
 
 type ClaimConfig struct {
-	Strategy         string        `yaml:"strategy"`           // in_page|in_page_then_gql
-	AllowGQLFallback bool          `yaml:"allow_gql_fallback"` // OFF: ClaimDropRewards replay risks a bot block
+	Strategy         string        `yaml:"strategy"`           // legacy: in_page|in_page_then_gql, no longer read by the claim flow
+	AllowGQLFallback bool          `yaml:"allow_gql_fallback"` // legacy: ignored since v0.1.4, the claim mutation is the primary path
 	RetryBackoff     time.Duration `yaml:"retry_backoff"`
 	SkipAccountLink  bool          `yaml:"skip_account_link_drops"`
+
+	// Sweep claims every completed, unclaimed drop after each discovery pass
+	// and each progress poll that sees one complete (nil => true). Read via
+	// ClaimSweep.
+	Sweep *bool `yaml:"sweep,omitempty"`
+
+	// InventoryButtonSelector / InventoryButtonText drive the DOM claim
+	// fallback on the inventory page: the first element matching the selector
+	// whose trimmed label text equals the text (case-insensitive) is clicked.
+	// The selector is a pointer so an explicit "" (fallback only writes the
+	// button capture) sticks while nil means the default; read via
+	// ClaimInventorySelector. Text defaults to DefaultClaimButtonText.
+	InventoryButtonSelector *string `yaml:"inventory_button_selector,omitempty"`
+	InventoryButtonText     string  `yaml:"inventory_button_text"`
+}
+
+// Defaults for the DOM claim fallback. data-a-target="tw-core-button-label-text"
+// is Twitch's generic core-button label, so the button is identified by
+// selector AND label text together.
+const (
+	DefaultClaimButtonSelector = `button:has([data-a-target="tw-core-button-label-text"])`
+	DefaultClaimButtonText     = "Claim Now"
+)
+
+// ClaimSweep reports whether the claim sweep runs (default true).
+func (c *Config) ClaimSweep() bool { return boolOr(c.Claim.Sweep, true) }
+
+// ClaimInventorySelector returns the DOM claim fallback's button selector; ""
+// means the fallback only writes the inventory button capture.
+func (c *Config) ClaimInventorySelector() string {
+	if c.Claim.InventoryButtonSelector == nil {
+		return DefaultClaimButtonSelector
+	}
+	return strings.TrimSpace(*c.Claim.InventoryButtonSelector)
 }
 
 type BrowserConfig struct {

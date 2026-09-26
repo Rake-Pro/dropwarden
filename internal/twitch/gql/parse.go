@@ -162,15 +162,62 @@ func ParseCampaignDetails(body []byte) (domain.Campaign, []domain.Progress, erro
 	return c, progress, nil
 }
 
+// gqlEnvelope is the error part of a GraphQL response: the GraphQL errors
+// array and the in-page fetch wrapper's own {"error": ...} failure.
+type gqlEnvelope struct {
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+	Error string `json:"error"`
+}
+
+// unbatch returns the first response of a batched (positional array) GraphQL
+// response, or body unchanged when it is a single object.
+func unbatch(body []byte) ([]byte, error) {
+	t := bytes.TrimSpace(body)
+	if len(t) == 0 || t[0] != '[' {
+		return body, nil
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(t, &arr); err != nil {
+		return nil, err
+	}
+	if len(arr) == 0 {
+		return nil, fmt.Errorf("empty batched response")
+	}
+	return arr[0], nil
+}
+
 // ParseInventory parses an "Inventory" operation response into one Progress
-// per in-progress time-based drop.
+// per in-progress time-based drop. A response without a currentUser.inventory
+// object (auth expired, integrity rejection, fetch failure, empty data) is an
+// ERROR, never an empty result: callers treat a missing row as evidence (e.g.
+// claim verification), so "no data" must not read as "nothing in progress". A
+// null dropCampaignsInProgress with a present inventory is a real empty list,
+// unless the response also carries GraphQL errors.
 func ParseInventory(body []byte) ([]domain.Progress, error) {
-	var resp inventoryResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
+	b, err := unbatch(body)
+	if err != nil {
 		return nil, fmt.Errorf("gql: parse inventory response: %w", err)
 	}
+	var resp struct {
+		inventoryResponse
+		gqlEnvelope
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		return nil, fmt.Errorf("gql: parse inventory response: %w", err)
+	}
+	if resp.Error != "" {
+		return nil, fmt.Errorf("gql: inventory request failed: %s", resp.Error)
+	}
 	if resp.Data.CurrentUser == nil || resp.Data.CurrentUser.Inventory == nil {
-		return nil, nil
+		if len(resp.Errors) > 0 {
+			return nil, fmt.Errorf("gql: inventory: %s", resp.Errors[0].Message)
+		}
+		return nil, fmt.Errorf("gql: inventory: no currentUser.inventory in response")
+	}
+	if len(resp.Errors) > 0 && len(resp.Data.CurrentUser.Inventory.DropCampaignsInProgress) == 0 {
+		return nil, fmt.Errorf("gql: inventory: no in-progress list with errors: %s", resp.Errors[0].Message)
 	}
 
 	now := time.Now()
@@ -408,4 +455,51 @@ func ParseLiveChannels(body []byte) ([]domain.Channel, error) {
 		out = append(out, ch)
 	}
 	return out, nil
+}
+
+// Claim mutation statuses Twitch returns in claimDropRewards.status that mean
+// the reward is (now) on the account. Anything else is a failure.
+const (
+	ClaimStatusEligible       = "ELIGIBLE_FOR_ALL"
+	ClaimStatusAlreadyClaimed = "DROP_INSTANCE_ALREADY_CLAIMED"
+)
+
+// ParseClaimDropRewards parses a DropsPage_ClaimDropRewards mutation response.
+// It returns the raw status string whenever one is present (so callers can log
+// the real values) and a non-nil error unless the status means the reward is
+// on the account: ELIGIBLE_FOR_ALL, or DROP_INSTANCE_ALREADY_CLAIMED (claimed
+// earlier, e.g. by hand, which is the same end state). GraphQL errors, a page
+// fetch error, or a missing payload are failures. A batched (positional array)
+// response is read from its first element.
+func ParseClaimDropRewards(body []byte) (string, error) {
+	b, err := unbatch(body)
+	if err != nil {
+		return "", fmt.Errorf("gql: parse claim response (%.160s): %w", body, err)
+	}
+	var resp struct {
+		Data *struct {
+			ClaimDropRewards *struct {
+				Status string `json:"status"`
+			} `json:"claimDropRewards"`
+		} `json:"data"`
+		gqlEnvelope
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		return "", fmt.Errorf("gql: parse claim response (%.160s): %w", body, err)
+	}
+	if resp.Error != "" {
+		return "", fmt.Errorf("gql: claim request failed: %s", resp.Error)
+	}
+	if len(resp.Errors) > 0 {
+		return "", fmt.Errorf("gql: claim: %s", resp.Errors[0].Message)
+	}
+	if resp.Data == nil || resp.Data.ClaimDropRewards == nil {
+		return "", fmt.Errorf("gql: claim: no claimDropRewards payload (%.160s)", body)
+	}
+	status := resp.Data.ClaimDropRewards.Status
+	switch status {
+	case ClaimStatusEligible, ClaimStatusAlreadyClaimed:
+		return status, nil
+	}
+	return status, fmt.Errorf("gql: claim rejected: status %q", status)
 }

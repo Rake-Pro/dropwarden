@@ -140,6 +140,12 @@ func (e *Engine) runDiscovering(ctx context.Context) (State, string) {
 	}
 	e.deps.Emit.Emit(EvCampaigns, map[string]any{"count": res.Campaigns + res.Details, "at": e.deps.Now()})
 	e.backoff = 0
+	// Discovery just saved fresh inventory progress: book drops Twitch already
+	// reports claimed, then claim anything completed.
+	if rows, err := e.deps.Store.ListProgress(); err == nil {
+		e.reconcileClaimedRows(rows)
+	}
+	e.claimSweep(ctx, "discovery")
 	if e.paused {
 		return StateIdle, "paused"
 	}

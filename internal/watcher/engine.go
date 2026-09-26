@@ -42,6 +42,18 @@ type Pager interface {
 	// reporting since the last call (Twitch: spade minute-watched beacons and
 	// WebSocket drop-progress pushes). Platforms without capture return zero.
 	DrainHeartbeat(ctx context.Context) (domain.Heartbeat, error)
+	// ClaimDrop claims an earned drop by its claim id (domain.Progress.ClaimID)
+	// through the platform's claim API, returning the raw status and response
+	// body. Platforms without one return errors.ErrUnsupported and the engine
+	// uses the inventory-page click instead.
+	ClaimDrop(ctx context.Context, claimID string) (status, raw string, err error)
+	// OpenInventory navigates the tab to the drops inventory page and waits
+	// for it to load, for the DOM claim fallback.
+	OpenInventory(ctx context.Context) error
+	// InventoryButtons captures every button-like element on the current page
+	// (JSON) and its count, written to debug/inventory-buttons.json on each DOM
+	// claim fallback run. Unsupported platforms return errors.ErrUnsupported.
+	InventoryButtons(ctx context.Context) ([]byte, int, error)
 }
 
 // Discoverer is the engine's view of the discovery pass (discovery.Discoverer).
@@ -197,6 +209,14 @@ type Engine struct {
 	noCreditDrops map[string]bool
 
 	staggered bool // true once the first-discovery stagger delay has run (or been skipped)
+
+	// sweepTried records when the claim sweep last failed to claim a drop, so
+	// it waits claim.retry_backoff before trying that drop again. In-memory.
+	sweepTried map[string]time.Time
+
+	// wait is the ctx-aware pause between sweep claims and after a DOM claim
+	// click. Replaced in tests.
+	wait func(ctx context.Context, d time.Duration)
 }
 
 // LastEligibility returns the most recent selection eligibility tally.
@@ -230,7 +250,7 @@ func New(d Deps) *Engine {
 			return float64(s>>11) / float64(1<<53)
 		}
 	}
-	e := &Engine{deps: d, cmds: make(chan command, 16), state: StateIdle, noCreditDrops: map[string]bool{}}
+	e := &Engine{deps: d, cmds: make(chan command, 16), state: StateIdle, noCreditDrops: map[string]bool{}, sweepTried: map[string]time.Time{}, wait: waitCtx}
 	e.paused = !d.Cfg.Watcher.EnabledOnStart
 	e.status = Status{Profile: d.Profile, Platform: string(d.Platform.OrTwitch()), State: StateIdle, Paused: e.paused}
 	return e

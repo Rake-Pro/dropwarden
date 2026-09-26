@@ -68,4 +68,11 @@ type Claim struct {
 	GameName   string
 	Benefits   []Benefit
 	ClaimedAt  time.Time
+	// Source is how the claim was booked: "" = claimed by dropwarden,
+	// ClaimSourceDetected = found already claimed in the Twitch inventory.
+	Source string
 }
+
+// ClaimSourceDetected marks a claim dropwarden did not make itself but found
+// already claimed server-side (claimed by hand, or by an earlier run).
+const ClaimSourceDetected = "detected"

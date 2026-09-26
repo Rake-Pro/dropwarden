@@ -174,3 +174,35 @@ func (p *Pages) LiveChannels(ctx context.Context, logins []string) ([]domain.Cha
 	}
 	return gql.ParseLiveChannels([]byte(raw))
 }
+
+// claimMutation is the web client's DropsPage_ClaimDropRewards mutation as full
+// query text (not a persisted hash). Its status field is parsed by
+// gql.ParseClaimDropRewards.
+const claimMutation = `mutation DropsPage_ClaimDropRewards($input: ClaimDropRewardsInput!) { claimDropRewards(input: $input) { status isUserAccountConnected __typename } }`
+
+// ClaimDrop claims one earned drop by its dropInstanceID (domain.Progress.ClaimID)
+// via a page-context GraphQL mutation, replaying the page's own auth and
+// client-integrity headers like every other query here. It returns the raw
+// claimDropRewards.status (when present), the raw response body for debug
+// logging, and a non-nil error unless the status means the reward is on the
+// account. verify live: whether Twitch accepts the mutation with replayed
+// integrity headers, and the real status strings.
+func (p *Pages) ClaimDrop(ctx context.Context, dropInstanceID string) (string, string, error) {
+	if dropInstanceID == "" {
+		return "", "", fmt.Errorf("twitch: claim: empty drop instance id")
+	}
+	body, _ := json.Marshal(map[string]any{
+		"operationName": "DropsPage_ClaimDropRewards",
+		"query":         claimMutation,
+		"variables":     map[string]any{"input": map[string]string{"dropInstanceID": dropInstanceID}},
+	})
+	var raw string
+	if err := p.ctrl.Session().Eval(ctx, gqlFetchIIFE(body), &raw); err != nil {
+		return "", raw, fmt.Errorf("twitch: claim %s: %w", dropInstanceID, err)
+	}
+	status, err := gql.ParseClaimDropRewards([]byte(raw))
+	if err != nil {
+		return status, raw, fmt.Errorf("twitch: claim %s: %w", dropInstanceID, err)
+	}
+	return status, raw, nil
+}

@@ -28,6 +28,26 @@ Field-name assumptions to confirm against captured JSON (see
 - CurrentDrop: `data.currentUser.dropCurrentSession.
   {dropID,currentMinutesWatched,requiredMinutesWatched}`.
 
+## Claim mutation (`internal/twitch/details.go` ClaimDrop)
+
+Sent via `gqlFetchIIFE` (replayed `window.__dw_headers` incl. client-integrity):
+
+```
+{"operationName":"DropsPage_ClaimDropRewards","query":"mutation DropsPage_ClaimDropRewards($input: ClaimDropRewardsInput!) { claimDropRewards(input: $input) { status isUserAccountConnected __typename } }","variables":{"input":{"dropInstanceID":"<self.dropInstanceID>"}}}
+```
+
+- Success statuses: `ELIGIBLE_FOR_ALL`, `DROP_INSTANCE_ALREADY_CLAIMED`;
+  anything else (e.g. `DROP_INSTANCE_NOT_FOUND`, `INELIGIBLE`) or GraphQL
+  `errors` is a failure. A success is then verified by re-reading
+  `inventoryQuery`: row `isClaimed`, or row gone. A row still unclaimed, or a
+  read without `currentUser.inventory` (ParseInventory returns an error for
+  that), is a failure. The DOM click path accepts only `isClaimed`.
+- Responses may be a batched positional array; ParseClaimDropRewards and
+  ParseInventory read the first element.
+- verify live: that Twitch accepts the non-persisted mutation text with
+  `operationName` and the replayed integrity token, and the real status
+  strings (raw response logged at debug level, status on every warn line).
+
 ## DOM selectors (`internal/twitch/selectors.go`)
 
 All selectors are best-effort guesses and marked `// verify live`. Confirm in
@@ -37,7 +57,11 @@ DevTools on a live channel / the inventory page and fix as needed:
 - Offline gate, player error overlays.
 - Raid banner + its Cancel control.
 - Drops indicator: chat callout / drops icon in the chat input bar.
-- Claim button (channel toast + inventory card).
+- Inventory claim button: config `claim.inventory_button_selector` +
+  `claim.inventory_button_text`, default `button:has([data-a-target=
+  "tw-core-button-label-text"])` + "Claim Now" (from the owner's real markup,
+  2026-09-26; the label div is Twitch's generic core-button label, so text
+  decides). Each fallback run dumps `debug/inventory-buttons.json`.
 - Directory channel cards (for any-channel campaigns) and the `?filter=drops`
   query param.
 

@@ -60,11 +60,9 @@ func (c *controller) ToggleDropsPanel(ctx context.Context) error { return nil }
 // engine's navigation watchdog still catches a redirected channel.
 func (c *controller) CancelRaid(ctx context.Context) (bool, error) { return false, nil }
 
-func (c *controller) ClaimVisible(ctx context.Context) (bool, error) {
-	return c.sess.Click(ctx, selClaimButton)
-}
-
-func (c *controller) ClaimInInventory(ctx context.Context, claimID string) (bool, error) {
-	_ = claimID // verify live: no stable per-claim identifier known yet
+// ClaimInInventory clicks a claim affordance on the loaded inventory page. The
+// configured selector/text are Twitch markup (claim.inventory_button_*), so
+// Kick keeps its own verify-live selector and ignores them.
+func (c *controller) ClaimInInventory(ctx context.Context, _, _ string) (bool, error) {
 	return c.sess.Click(ctx, selClaimButton)
 }
