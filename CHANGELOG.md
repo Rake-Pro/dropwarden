@@ -4,6 +4,26 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.2.7 - 2026-09-27
+
+### Fixed
+- Twitch integrity check failing on everything (empty campaigns page, no
+  claim ids, every completed drop parked on "claim it manually"): v0.2.2
+  dropped `--disable-blink-features=AutomationControlled`, and a Chrome
+  launched for remote debugging reports `navigator.webdriver === true`
+  without it, which Twitch's bot check keys on. The flag is back, and the
+  "unsupported command-line flag" bar it triggers is suppressed with
+  `--test-type` instead of by removing the flag.
+- Twitch integrity rejections are handled instead of read as "no
+  dropCampaign in response": when the campaign list, a campaign's details
+  or the claim mutation comes back `IntegrityCheckFailed`, dropwarden drops
+  the captured token, reloads the campaigns page so the client mints a fresh
+  one, and retries once (throttled to one refresh per 3 minutes). Discovery
+  and the claim path log the rejection by name; a list still rejected after
+  a fresh token is flagged as Twitch refusing the browser's own requests.
+- Queue rows no longer keep a stale "watching <channel>" label from a
+  previous run: only the drop the engine is watching stays active.
+
 ## v0.2.6 - 2026-09-27
 
 ### Added

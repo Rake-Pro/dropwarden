@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/rake-pro/dropwarden/internal/domain"
 	"github.com/rake-pro/dropwarden/internal/twitch/gql"
 )
@@ -20,6 +22,36 @@ const settleDelay = 7 * time.Second
 type Pages struct {
 	ctrl  Controller
 	login string // cached logged-in user login, for detail queries
+
+	// integrityAt is when the page was last sent for a fresh Client-Integrity
+	// token (refreshIntegrity); refreshes are throttled to integrityRefreshGap.
+	integrityAt time.Time
+}
+
+// integrityRefreshGap throttles refreshIntegrity: a rejected token that a
+// fresh page load does not cure is not going to be cured by reloading in a
+// loop, and each refresh is a navigation.
+const integrityRefreshGap = 3 * time.Minute
+
+// refreshIntegrity drops the captured Client-Integrity header and loads the
+// campaigns page so the client mints a new token, which the capture shim then
+// picks up from the page's own requests. It navigates the tab, so callers
+// must only use it off-stream (discovery, claiming). Returns false when
+// throttled.
+func (p *Pages) refreshIntegrity(ctx context.Context, why string) bool {
+	if !p.integrityAt.IsZero() && time.Since(p.integrityAt) < integrityRefreshGap {
+		return false
+	}
+	p.integrityAt = time.Now()
+	log.Warn().Str("op", why).Msg("twitch: integrity token rejected; reloading the campaigns page for a fresh one")
+	sess := p.ctrl.Session()
+	_ = sess.Eval(ctx, `(() => { try { delete (window.__dw_headers || {})['client-integrity']; } catch (e) {} })()`, nil)
+	if err := sess.Navigate(ctx, URLCampaigns); err != nil {
+		log.Warn().Err(err).Msg("twitch: integrity refresh navigation failed")
+		return false
+	}
+	p.settle(ctx)
+	return true
 }
 
 // NewPages builds a Pages driver over a Controller.
@@ -35,7 +67,24 @@ func (p *Pages) DiscoverCampaigns(ctx context.Context) (CaptureResult, error) {
 		return CaptureResult{}, fmt.Errorf("twitch: open campaigns: %w", err)
 	}
 	p.settle(ctx)
-	return Drain(ctx, sess)
+	res, err := Drain(ctx, sess)
+	if err != nil {
+		return res, err
+	}
+	// The page's own campaign list came back IntegrityCheckFailed (live
+	// 2026-09-26): one fresh token and one more read before giving up.
+	if len(res.Campaigns) == 0 && gql.IsIntegrityFailure([]byte(res.CampaignsRaw)) && p.refreshIntegrity(ctx, "campaigns") {
+		again, err := Drain(ctx, sess)
+		if err != nil {
+			return res, err
+		}
+		if len(again.Campaigns) == 0 && gql.IsIntegrityFailure([]byte(again.CampaignsRaw)) {
+			log.Warn().Msg("twitch: campaigns list still rejected with a fresh integrity token - Twitch is refusing this browser's page requests, not just dropwarden's")
+		}
+		again.RawCount += res.RawCount
+		return again, nil
+	}
+	return res, nil
 }
 
 // DrainProgress drains the passive GQL capture buffer and returns any progress

@@ -21,6 +21,8 @@ func TestChromeFlagsRequired(t *testing.T) {
 	want := []string{
 		"--user-data-dir=/profiles/dropwarden",
 		"--remote-debugging-port=0",
+		"--disable-blink-features=AutomationControlled",
+		"--test-type",
 		"--window-size=640,400",
 		"--window-position=40,40",
 		"--disable-background-timer-throttling",
@@ -45,7 +47,7 @@ func TestChromeFlagsRequired(t *testing.T) {
 // --disable-blink-features triggers Chrome's unsupported-flag bar.
 func TestChromeFlagsForbidden(t *testing.T) {
 	got := testFlags()
-	forbidden := []string{"--enable-automation", "--headless", "--mute-audio", "--no-sandbox", "--disable-blink-features"}
+	forbidden := []string{"--enable-automation", "--headless", "--mute-audio", "--no-sandbox"}
 	for _, f := range forbidden {
 		for _, g := range got {
 			if g == f || strings.HasPrefix(g, f+"=") {

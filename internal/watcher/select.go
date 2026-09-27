@@ -78,8 +78,11 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 		eligible, status, reason := queue.EligibilityReason(it, campaigns, progress, claimed, e.deps.Cfg.Claim.SkipAccountLink, now)
 		if eligible {
 			tally["eligible"]++
-			// Preserve an actively-watched item; otherwise it is selectable now.
-			if it.Status == domain.ItemActive {
+			// Preserve the item THIS engine is watching; any other "active"
+			// row is a leftover (a previous run that quit mid-watch) and is
+			// selectable now (live 2026-09-26: two rows read "watching
+			// xchocobars" while the engine was on another channel).
+			if it.Status == domain.ItemActive && e.cur != nil && e.cur.drop.ID == it.DropID {
 				status = domain.ItemActive
 			} else {
 				status = domain.ItemPending

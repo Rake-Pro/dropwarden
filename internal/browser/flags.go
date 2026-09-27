@@ -16,10 +16,15 @@ import (
 //   - The omissions matter as much as the inclusions. --enable-automation and
 //     --headless are the two loudest bot tells on the platform, and --no-sandbox
 //     is a gratuitous security downgrade for a browser that loads untrusted
-//     pages. --disable-blink-features=AutomationControlled is also left out:
-//     without --enable-automation navigator.webdriver is already false, and
-//     Chrome shows an "unsupported command-line flag" bar for it on every
-//     launch (live 2026-09-26), which is a tell to the person at the desk.
+//     pages.
+//   - --disable-blink-features=AutomationControlled is REQUIRED. A Chrome
+//     launched with --remote-debugging-port alone still reports
+//     navigator.webdriver === true (live 2026-09-26: v0.2.2 dropped the flag
+//     and within a day Twitch answered every integrity-gated query, the page's
+//     own included, with IntegrityCheckFailed; the campaigns page went empty
+//     and no drop could be claimed). Chrome shows an "unsupported
+//     command-line flag" bar for it, which --test-type suppresses (the same
+//     pair ChromeDriver ships); --test-type is not visible to page scripts.
 //
 // --mute-audio is OPT-IN (browser.mute_audio): it silences the dedicated
 // instance at the audio sink while the player element itself stays unmuted at
@@ -34,6 +39,8 @@ func chromeFlags(cfg config.BrowserConfig, profileDir string, w config.WindowCon
 	flags := []string{
 		"--user-data-dir=" + profileDir,
 		"--remote-debugging-port=0",
+		"--disable-blink-features=AutomationControlled",
+		"--test-type",
 		fmt.Sprintf("--window-size=%d,%d", w.Width, w.Height),
 		fmt.Sprintf("--window-position=%d,%d", w.X, w.Y),
 		"--disable-background-timer-throttling",

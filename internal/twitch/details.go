@@ -3,6 +3,7 @@ package twitch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -154,6 +155,14 @@ func (p *Pages) FetchCampaignDetails(ctx context.Context, login, campaignID stri
 		return domain.Campaign{}, nil, raw, fmt.Errorf("twitch: fetch details %s: %w", campaignID, err)
 	}
 	c, prog, err := gql.ParseCampaignDetails([]byte(raw))
+	// A rejected integrity token: mint a fresh one (a navigation, so this is
+	// only reached off-stream: discovery and claiming) and retry once.
+	if errors.Is(err, gql.ErrIntegrity) && p.refreshIntegrity(ctx, "campaign details") {
+		if err2 := p.gqlEval(ctx, body, &raw); err2 != nil {
+			return domain.Campaign{}, nil, raw, fmt.Errorf("twitch: fetch details %s (retry): %w", campaignID, err2)
+		}
+		c, prog, err = gql.ParseCampaignDetails([]byte(raw))
+	}
 	if err != nil {
 		return domain.Campaign{}, nil, raw, fmt.Errorf("twitch: parse details %s (%.160s): %w", campaignID, raw, err)
 	}
@@ -314,6 +323,12 @@ func (p *Pages) ClaimDrop(ctx context.Context, dropInstanceID string) (string, s
 		return "", raw, fmt.Errorf("twitch: claim %s: %w", dropInstanceID, err)
 	}
 	status, err := gql.ParseClaimDropRewards([]byte(raw))
+	if errors.Is(err, gql.ErrIntegrity) && p.refreshIntegrity(ctx, "claim") {
+		if err2 := p.gqlEval(ctx, body, &raw); err2 != nil {
+			return "", raw, fmt.Errorf("twitch: claim %s (retry): %w", dropInstanceID, err2)
+		}
+		status, err = gql.ParseClaimDropRewards([]byte(raw))
+	}
 	if err != nil {
 		return status, raw, fmt.Errorf("twitch: claim %s: %w", dropInstanceID, err)
 	}

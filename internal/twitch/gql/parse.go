@@ -3,6 +3,7 @@ package gql
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -33,6 +34,39 @@ func campaignStatus(raw string) domain.CampaignStatus {
 	return domain.CampaignStatus(raw)
 }
 
+// ErrIntegrity is returned when Twitch answered an integrity-gated operation
+// (dropCampaigns, dropCampaign, claimDropRewards) with IntegrityCheckFailed:
+// the Client-Integrity token the page holds is rejected. Callers refresh the
+// token (twitch.Pages) and retry once.
+var ErrIntegrity = errors.New("twitch rejected the request's integrity token (IntegrityCheckFailed)")
+
+// integrityError reports ErrIntegrity when any GraphQL error names the
+// integrity check, else nil.
+func integrityError(errs []struct {
+	Message string `json:"message"`
+}) error {
+	for _, e := range errs {
+		if strings.Contains(strings.ToLower(e.Message), "integrity") {
+			return ErrIntegrity
+		}
+	}
+	return nil
+}
+
+// IsIntegrityFailure reports whether a raw response body carries the
+// integrity rejection.
+func IsIntegrityFailure(body []byte) bool {
+	b, err := unbatch(body)
+	if err != nil {
+		return false
+	}
+	var env gqlEnvelope
+	if json.Unmarshal(b, &env) != nil {
+		return false
+	}
+	return integrityError(env.Errors) != nil
+}
+
 // ParseCampaigns parses a "Campaigns" operation response into a list of
 // campaigns. The list view lacks AccountLinkURL, ACL, and drop tiers; those
 // are only available via ParseCampaignDetails.
@@ -43,6 +77,9 @@ func ParseCampaigns(body []byte) ([]domain.Campaign, error) {
 	}
 	if resp.Data.CurrentUser == nil {
 		return nil, nil
+	}
+	if resp.Data.CurrentUser.DropCampaigns == nil && IsIntegrityFailure(body) {
+		return nil, fmt.Errorf("gql: campaigns: %w", ErrIntegrity)
 	}
 
 	out := make([]domain.Campaign, 0, len(resp.Data.CurrentUser.DropCampaigns))
@@ -80,6 +117,9 @@ func ParseCampaignDetails(body []byte) (domain.Campaign, []domain.Progress, erro
 		return domain.Campaign{}, nil, fmt.Errorf("gql: parse campaign details response: %w", err)
 	}
 	if resp.Data.User == nil || resp.Data.User.DropCampaign == nil {
+		if IsIntegrityFailure(body) {
+			return domain.Campaign{}, nil, fmt.Errorf("gql: campaign details: %w", ErrIntegrity)
+		}
 		return domain.Campaign{}, nil, fmt.Errorf("gql: parse campaign details response: no dropCampaign in response")
 	}
 	dc := resp.Data.User.DropCampaign
@@ -215,6 +255,9 @@ func ParseInventory(body []byte) ([]domain.Progress, error) {
 		return nil, fmt.Errorf("gql: inventory: %w", domain.ErrLoggedOut)
 	}
 	if resp.Data.CurrentUser == nil || resp.Data.CurrentUser.Inventory == nil {
+		if err := integrityError(resp.Errors); err != nil {
+			return nil, fmt.Errorf("gql: inventory: %w", err)
+		}
 		if len(resp.Errors) > 0 {
 			return nil, fmt.Errorf("gql: inventory: %s", resp.Errors[0].Message)
 		}
@@ -522,6 +565,9 @@ func ParseClaimDropRewards(body []byte) (string, error) {
 	}
 	if resp.Error != "" {
 		return "", fmt.Errorf("gql: claim request failed: %s", resp.Error)
+	}
+	if err := integrityError(resp.Errors); err != nil {
+		return "", fmt.Errorf("gql: claim: %w", err)
 	}
 	if len(resp.Errors) > 0 {
 		return "", fmt.Errorf("gql: claim: %s", resp.Errors[0].Message)
