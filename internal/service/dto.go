@@ -48,6 +48,10 @@ type QueueItemDTO struct {
 	// same game and platform also credits (ranked after those drops).
 	Pin       int  `json:"pin"`
 	Alongside bool `json:"alongside"`
+	// LiveLogins lists the channels the engine last saw live for this drop's
+	// campaign (nil = never checked, empty = none live); LiveCheckedAt is when.
+	LiveLogins    []string   `json:"liveLogins"`
+	LiveCheckedAt *time.Time `json:"liveCheckedAt,omitempty"`
 	// NeedsUser is true only for a needs_action row a human must act on: an
 	// account link, a claim that has to be made by hand, or an expired session.
 	// Informational needs_action rows (owned-reward skip, not crediting) are

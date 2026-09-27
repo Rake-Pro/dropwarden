@@ -44,16 +44,20 @@ var (
 	mdInline = regexp.MustCompile("[*_`]{1,2}")
 )
 
-// NoteLine is one rendered line of release notes.
+// NoteLine is one rendered item of release notes: a heading, a bullet, a
+// paragraph, or a gap (empty Text, neither flag).
 type NoteLine struct {
 	Text    string `json:"text"`
 	Heading bool   `json:"heading"`
+	Bullet  bool   `json:"bullet,omitempty"`
 }
 
-// RenderNotes flattens markdown release bodies into plain lines: headings
-// keep their text and are flagged, bullets get a "- " marker, links keep
-// their label, emphasis markers are dropped, blank runs collapse. Each
-// release is introduced by a "vX.Y.Z (date)" heading.
+// RenderNotes flattens markdown release bodies into items: headings keep
+// their text and are flagged, bullets are flagged with the marker removed,
+// hard-wrapped continuation lines are joined onto the bullet or paragraph
+// they belong to, links keep their label, emphasis markers are dropped,
+// blank runs collapse. Each release is introduced by a "vX.Y.Z (date)"
+// heading.
 func RenderNotes(notes []ReleaseNotes) []NoteLine {
 	var out []NoteLine
 	for _, n := range notes {
@@ -69,19 +73,23 @@ func RenderNotes(notes []ReleaseNotes) []NoteLine {
 				blank = true
 				continue
 			}
-			if blank && len(out) > 0 && !out[len(out)-1].Heading {
-				out = append(out, NoteLine{Text: ""})
-			}
-			blank = false
 			line = mdLink.ReplaceAllString(line, "$1")
+			last := &out[len(out)-1]
 			switch {
 			case strings.HasPrefix(line, "#"):
 				out = append(out, NoteLine{Text: strings.TrimSpace(strings.TrimLeft(line, "#")), Heading: true})
 			case strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* "):
-				out = append(out, NoteLine{Text: "- " + mdInline.ReplaceAllString(line[2:], "")})
+				out = append(out, NoteLine{Text: mdInline.ReplaceAllString(line[2:], ""), Bullet: true})
+			case !blank && !last.Heading && last.Text != "":
+				// A wrapped continuation of the previous bullet or paragraph.
+				last.Text += " " + mdInline.ReplaceAllString(line, "")
 			default:
+				if blank && !last.Heading && !last.Bullet && last.Text != "" {
+					out = append(out, NoteLine{Text: ""})
+				}
 				out = append(out, NoteLine{Text: mdInline.ReplaceAllString(line, "")})
 			}
+			blank = false
 		}
 		out = append(out, NoteLine{Text: ""})
 	}

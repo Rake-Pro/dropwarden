@@ -250,6 +250,12 @@ type Engine struct {
 	// click. Replaced in tests.
 	wait func(ctx context.Context, d time.Duration)
 
+	// live is the per-campaign live-channel snapshot the Queue view shows
+	// (see live.go); nextLiveAt gates the watch-time refresh.
+	liveMu     sync.Mutex
+	live       map[string]CampaignLive
+	nextLiveAt time.Time
+
 	// lastDiscoveryAt is when the last successful discovery pass ran and
 	// discoveryGap the jittered discovery.interval drawn for the next one;
 	// runDiscovering skips the pass until the gap has elapsed.

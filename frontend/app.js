@@ -394,12 +394,24 @@ async function startInstall(btn) {
   }
 }
 
+// notesHTML renders NoteLine items (internal/update.RenderNotes) as a real
+// changelog: version and section headings, bullets grouped into lists,
+// paragraphs, gaps.
 function notesHTML(notes) {
-  if (!(notes || []).length) return '<p class="m-body">No release notes for this version.</p>';
-  return notes.map(l => l.heading
-    ? `<div class="nl h">${esc(l.text)}</div>`
-    : (l.text ? `<div class="nl">${esc(l.text)}</div>` : '<div class="nl gap"></div>')).join('');
+  if (!notes || !notes.length) return '<p class="m-body">No release notes for this version.</p>';
+  let html = '', list = [];
+  const flush = () => { if (list.length) { html += `<ul class="nlist">${list.join('')}</ul>`; list = []; } };
+  for (const l of notes) {
+    if (l.bullet) { list.push(`<li>${esc(l.text)}</li>`); continue; }
+    flush();
+    if (l.heading) html += `<div class="nl h${/^v\d/.test(l.text) ? ' ver' : ''}">${esc(l.text)}</div>`;
+    else if (l.text) html += `<div class="nl">${esc(l.text)}</div>`;
+    else html += '<div class="nl gap"></div>';
+  }
+  flush();
+  return html;
 }
+
 
 // updModalContent picks the dialog title/body/buttons for an update snapshot.
 function updModalContent(u) {
@@ -881,6 +893,22 @@ function queueActionsHTML(q, pinCount) {
   return `<div class="qact">${open}${force}${ranks}${star}</div>`;
 }
 
+// liveInfo renders the live-channel dot and meta text for a queue row from
+// the engine's last status check (liveLogins: null = never checked, [] =
+// none live). The dot sits before the name; the meta lists up to three
+// logins so the row still fits on one line.
+function liveInfo(q) {
+  const logins = q.liveLogins;
+  if (!Array.isArray(logins)) return { dot: '', meta: '' };
+  const at = q.liveCheckedAt ? new Date(q.liveCheckedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+  if (!logins.length) return { dot: `<span class="ldot" title="No allowed channel was live at ${esc(at)}"></span>`, meta: '' };
+  const shown = logins.slice(0, 3).map(esc).join(', ') + (logins.length > 3 ? ` +${logins.length - 3}` : '');
+  return {
+    dot: `<span class="ldot on" title="Live at ${esc(at)}: ${esc(logins.join(', '))}"></span>`,
+    meta: `<span class="lmeta">live: ${shown}</span>`,
+  };
+}
+
 function queueRowHTML(q, ctx, sec) {
   const active = q.status === 'active';
   const cls = 'qrow' + (active ? ' active' : '') + (q.pin > 0 ? ' pinned' : '');
@@ -891,10 +919,12 @@ function queueRowHTML(q, ctx, sec) {
   const barCls = active ? (q.platform === 'kick' ? 'kick' : '') : 'blue';
   const mins = q.requiredMinutes ? q.currentMinutes + ' / ' + q.requiredMinutes + ' min' : '&mdash;';
   const status = esc(labelOf(STATUS_LABEL, q.status));
-  const meta = (sec.pinned ? esc(q.game) + (q.reason ? ' &middot; ' : '') : '') + esc(q.reason || '');
+  const live = liveInfo(q);
+  const metaParts = [sec.pinned ? esc(q.game) : '', esc(q.reason || ''), live.meta].filter(Boolean);
+  const meta = metaParts.join(' &middot; ');
   return `<div class="${cls}" data-id="${esc(q.dropID)}" tabindex="0" aria-label="${name}" draggable="${sec.pinned ? 'false' : 'true'}">
     <span class="grip" title="${sec.pinned ? 'Pinned: use the arrows to change rank' : 'Drag (or Alt+Up/Down) to reorder within this game'}" aria-hidden="true">&#8285;&#8285;</span>
-    <div class="qname"><div class="n">${ctx.multi ? pfBadge(q.platform) + ' ' : ''}${name}</div><div class="meta">${badge}${meta}</div></div>
+    <div class="qname"><div class="n">${live.dot}${ctx.multi ? pfBadge(q.platform) + ' ' : ''}${name}</div><div class="meta">${badge}${meta}</div></div>
     <div class="qmini">${barHTML(q.currentMinutes, q.requiredMinutes, barCls, 'Progress for ' + (q.dropName || q.dropID))}<div class="mm mono">${mins}</div></div>
     ${queueActionsHTML(q, ctx.pinCount)}
     <div class="qstat"><span class="pill ${esc(q.status)}" title="${status}"><span class="d"></span><span class="t">${status}</span></span></div>

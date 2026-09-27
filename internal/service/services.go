@@ -538,6 +538,23 @@ func (s *QueueService) Get(profile string) ([]QueueItemDTO, error) {
 		}
 	}
 	alongside := queue.Alongside(items, cmap, progress, claimed, s.b.config().Claim.SkipAccountLink, time.Now())
+	// Live snapshot per platform engine, read once per platform.
+	pb := s.b.Profile(profile)
+	liveness := map[domain.Platform]map[string]watcher.CampaignLive{}
+	liveFor := func(plat domain.Platform) map[string]watcher.CampaignLive {
+		plat = plat.OrTwitch()
+		if lv, ok := liveness[plat]; ok {
+			return lv
+		}
+		var lv map[string]watcher.CampaignLive
+		if pb != nil {
+			if eng := pb.Engine(plat); eng != nil {
+				lv = eng.Liveness()
+			}
+		}
+		liveness[plat] = lv
+		return lv
+	}
 	out := make([]QueueItemDTO, 0, len(items))
 	for _, it := range items {
 		d := dmap[it.DropID]
@@ -550,6 +567,11 @@ func (s *QueueService) Get(profile string) ([]QueueItemDTO, error) {
 			NeedsUser: needsUser(it),
 		}
 		dto.ActionURL, dto.ActionLabel = queueAction(it, cmap[it.CampaignID])
+		if l, ok := liveFor(it.Platform)[it.CampaignID]; ok {
+			dto.LiveLogins = l.Logins
+			at := l.CheckedAt
+			dto.LiveCheckedAt = &at
+		}
 		if p, ok := progress[it.DropID]; ok {
 			dto.CurrentMinutes, _ = p.Effective()
 			dto.Owned = p.Owned

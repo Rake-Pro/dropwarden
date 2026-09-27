@@ -4,6 +4,21 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.2.6 - 2026-09-27
+
+### Added
+- Queue rows show whether a channel for the drop is live right now: a green
+  dot before the name plus up to three live logins in the row's detail line
+  (grey dot = none of the allowed channels is live, no dot = not checked yet).
+  Allowlist campaigns are refreshed in one batched status query at selection
+  and every ~5 minutes while watching; any-channel campaigns reflect the
+  directory read from the last selection.
+
+### Fixed
+- "What's new" renders the notes as a changelog: real bullet lists, section
+  headings, and hard-wrapped changelog lines joined back into one bullet
+  instead of breaking mid-sentence.
+
 ## v0.2.5 - 2026-09-26
 
 ### Fixed

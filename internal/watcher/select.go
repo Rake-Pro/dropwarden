@@ -141,6 +141,9 @@ func (e *Engine) runSelecting(ctx context.Context) (State, string) {
 	if len(cands) == 0 {
 		return StateCooldown, "nothing eligible to watch"
 	}
+	// One batched status query so every allowlist row shows who is live,
+	// not only the campaigns the loop below reaches.
+	e.liveSweep(ctx, "select")
 
 	// Try candidates in priority order and take the first with an available
 	// channel. When wait_for_top is set, only the single top drop is tried, so
@@ -225,6 +228,7 @@ func (e *Engine) pickChannel(ctx context.Context, c domain.Campaign, cands []que
 		for _, l := range logins {
 			live = append(live, domain.Channel{Login: l, Live: true, DropsEnabled: true, GameName: c.GameName, FirstSeenLiveAt: now.Add(-time.Hour)})
 		}
+		e.setLive(c.ID, channelLogins(live))
 	} else {
 		// ACL campaign: candidates are the allowlisted channels that are live
 		// NOW. The allowlist alone ranks an offline channel above a live one
@@ -273,6 +277,7 @@ func (e *Engine) pickChannel(ctx context.Context, c domain.Campaign, cands []que
 			e.deps.Log.Info().Str("campaign", c.Name).Int("allowed", len(logins)).Int("live", len(live)).
 				Strs("live_logins", channelLogins(live)).Strs("off_game", channelLogins(offGame)).
 				Msg("select: ACL live status")
+			e.setLive(c.ID, channelLogins(live))
 		}
 	}
 

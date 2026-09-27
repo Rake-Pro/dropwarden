@@ -195,6 +195,9 @@ body {
 .qname { min-width: 0; }
 .qname .n { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qname .meta { color: var(--text-tertiary); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qname .n .ldot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--text-tertiary); margin-right: 8px; vertical-align: 1px; flex: none; }
+.qname .n .ldot.on { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-dim); }
+.qname .meta .lmeta { color: var(--pill-ok); }
 .qmini .bar { height: 6px; } .qmini .mm { font-size: 11px; color: var(--text-tertiary); margin-top: 5px; }
 .switch { width: 34px; height: 20px; border-radius: 999px; background: var(--switch-off); position: relative; cursor: pointer; transition: background .15s; justify-self: end; }
 .switch.on { background: var(--ok); }
@@ -253,8 +256,13 @@ body {
 .modal { width: min(560px, 100%); max-height: min(560px, 90vh); display: flex; flex-direction: column; padding: 16px 18px; }
 .modal h3 { margin: 0 0 10px; font-size: 15px; }
 .modal .notes { overflow: auto; flex: 1; font-size: 12.5px; line-height: 1.5; }
-.modal .notes .nl.h { font-weight: 600; margin-top: 6px; }
+.modal .notes .nl.h { font-weight: 600; margin-top: 10px; }
+.modal .notes .nl.h.ver { font-size: 13.5px; margin-top: 0; }
+.modal .notes .nl.h.ver ~ .nl.h.ver { margin-top: 16px; }
 .modal .notes .nl.gap { height: 8px; }
+.modal .notes .nlist { margin: 4px 0 6px; padding-left: 20px; }
+.modal .notes .nlist li { margin: 4px 0; }
+.modal .notes .nlist li::marker { color: var(--text-tertiary); }
 .modal:focus { outline: none; }
 .m-body { margin: 0 0 8px; }
 .m-err { color: var(--pill-err); }
