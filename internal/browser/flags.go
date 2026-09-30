@@ -33,6 +33,10 @@ import (
 // frozen-video and stall watchdogs catch and recover it, and the toggle turns
 // it back off.
 //
+// --hide-crash-restore-bubble backs up the Preferences exit_type rewrite in
+// profile.go: the dedicated instance is always killed rather than shut down, so
+// without both Chrome greets every launch with "Restore pages?".
+//
 // The trailing about:blank gives Chrome a real startup page, so the CDP target
 // list has exactly one page for the session to adopt.
 func chromeFlags(cfg config.BrowserConfig, profileDir string, w config.WindowConfig) []string {
@@ -51,6 +55,7 @@ func chromeFlags(cfg config.BrowserConfig, profileDir string, w config.WindowCon
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--no-service-autorun",
+		"--hide-crash-restore-bubble",
 	}
 	if cfg.MuteAudio {
 		flags = append(flags, "--mute-audio")

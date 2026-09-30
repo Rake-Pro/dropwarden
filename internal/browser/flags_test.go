@@ -33,6 +33,7 @@ func TestChromeFlagsRequired(t *testing.T) {
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--no-service-autorun",
+		"--hide-crash-restore-bubble",
 	}
 	for _, w := range want {
 		if !slices.Contains(got, w) {

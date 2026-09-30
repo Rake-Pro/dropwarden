@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,7 +24,53 @@ func ensureProfile(dir string, logger zerolog.Logger) error {
 	}
 	clearStaleLock(dir, logger)
 	clearStalePortFile(dir, logger)
+	markCleanExit(dir, logger)
 	return nil
+}
+
+// preferencesFile is Chrome's per-profile JSON settings file under the
+// user-data-dir's Default profile.
+const preferencesFile = "Default/Preferences"
+
+// markCleanExit rewrites profile.exit_type/exited_cleanly in the Default
+// profile's Preferences so Chrome does not open the "Restore pages? Chrome
+// didn't shut down correctly" bubble on launch.
+//
+// Chrome records exit_type=Crashed at startup and only flips it back to Normal
+// during an orderly shutdown. Instance.Close sends Browser.close and kills the
+// process group in the same breath, and the orphan reap plus any dropwarden
+// crash kill Chrome outright, so from Chrome's point of view every dropwarden
+// run ends in a crash. A missing file (first launch) is left alone.
+func markCleanExit(dir string, logger zerolog.Logger) {
+	path := filepath.Join(dir, preferencesFile)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var prefs map[string]any
+	if err := json.Unmarshal(raw, &prefs); err != nil {
+		logger.Warn().Err(err).Str("file", path).Msg("could not parse chrome preferences; crash-restore bubble may show")
+		return
+	}
+	profile, _ := prefs["profile"].(map[string]any)
+	if profile == nil {
+		profile = map[string]any{}
+		prefs["profile"] = profile
+	}
+	if profile["exit_type"] == "Normal" && profile["exited_cleanly"] == true {
+		return
+	}
+	profile["exit_type"] = "Normal"
+	profile["exited_cleanly"] = true
+	out, err := json.Marshal(prefs)
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		logger.Warn().Err(err).Str("file", path).Msg("could not mark chrome profile as cleanly exited")
+		return
+	}
+	logger.Debug().Str("file", path).Msg("marked chrome profile as cleanly exited")
 }
 
 // lockNames are the singleton artifacts Chrome writes into a user-data-dir. On

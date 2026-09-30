@@ -4,6 +4,15 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.2.8 - 2026-09-30
+
+### Fixed
+- Chrome no longer opens the "Restore pages? Chrome didn't shut down
+  correctly" bubble every time dropwarden starts. The watcher browser is
+  always killed rather than shut down, so Chrome recorded each run as a
+  crash; the profile is now marked as cleanly exited before every launch,
+  and `--hide-crash-restore-bubble` backs that up.
+
 ## v0.2.7 - 2026-09-27
 
 ### Fixed
