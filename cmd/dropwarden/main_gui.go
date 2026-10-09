@@ -11,7 +11,9 @@ import (
 	"net/http"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
+	"github.com/rake-pro/dropwarden/cmd/dropwarden/icons"
 	webui "github.com/rake-pro/dropwarden/frontend"
 	"github.com/rake-pro/dropwarden/internal/app"
 	"github.com/rake-pro/dropwarden/internal/power"
@@ -62,7 +64,13 @@ func main() {
 	wapp := application.New(application.Options{
 		Name:        "dropwarden",
 		Description: "Twitch and Kick drops collector",
+		Icon:        icons.Dock(icons.Idle),
 		Assets:      application.AssetOptions{Handler: assets},
+		// Tray-first: the dashboard is one window that closes to the tray,
+		// so losing the last window must never end the process (Wails quits
+		// on it by default on Windows and Linux; macOS keeps running).
+		Windows: application.WindowsOptions{DisableQuitOnLastWindowClosed: true},
+		Linux:   application.LinuxOptions{DisableQuitOnLastWindowClosed: true},
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "pro.rake.dropwarden",
 		},
@@ -83,6 +91,7 @@ func main() {
 	// left behind (*.old binaries, stage dirs) and pick up its failure marker.
 	update.CleanupOld()
 	win := newDashboardWindow(wapp, a.Cfg.UI.StartMinimized)
+	installAppMenu(wapp)
 	updates.SetWindowHooks(wapp.Quit, func() { win.Show() })
 	updates.LoadFailure()
 	buildTray(wapp, win, backend, updates)
@@ -103,7 +112,10 @@ func main() {
 }
 
 // newDashboardWindow creates the main window, hidden at start when configured to
-// live in the tray. Closing it hides rather than quits; quit is from the tray.
+// live in the tray. Closing it (title-bar button, Cmd+W, Alt+F4) hides it
+// rather than destroying it, so "Open dashboard" in the tray always has a
+// window to show; quitting is the tray's Quit item, Cmd+Q on macOS, or the
+// updater's restart.
 func newDashboardWindow(wapp *application.App, startHidden bool) *application.WebviewWindow {
 	win := wapp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "dashboard",
@@ -118,6 +130,14 @@ func newDashboardWindow(wapp *application.App, startHidden bool) *application.We
 		Windows: application.WindowsWindow{
 			Theme: application.Dark,
 		},
+	})
+	// A hook runs before Wails' own WindowClosing listener (which destroys
+	// the window) and a cancelled event stops that listener. Quitting still
+	// fires the hook (the window hides), but App.Quit tears the process down
+	// on every platform without waiting for windows, so it cannot block it.
+	win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		e.Cancel()
+		win.Hide()
 	})
 	return win
 }

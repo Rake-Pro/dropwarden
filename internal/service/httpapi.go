@@ -147,7 +147,7 @@ func NewHTTPHandler(b *Backend) http.Handler {
 		case err != nil:
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadGateway)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "twitch search failed: " + err.Error()})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "Couldn't search Twitch right now. Try again in a moment."})
 		default:
 			writeJSON(w, res)
 		}
@@ -231,12 +231,31 @@ func NewHTTPHandler(b *Backend) http.Handler {
 			if !needsEngine() {
 				return
 			}
+			// The dashboard sends the drop its card showed. A card a few
+			// seconds old must not skip a drop the user never saw.
+			var body struct {
+				DropID string `json:"dropID"`
+			}
+			if r.ContentLength > 0 && !decode(w, r, &body) {
+				return
+			}
+			if body.DropID != "" {
+				if e := b.EngineFor(eff.Name, p); e == nil || e.Status().DropID != body.DropID {
+					writeErr(w, errors.New("That drop is no longer being watched, so nothing was skipped."))
+					return
+				}
+			}
 			actErr = watch.SkipCurrent(eff.Name, p)
 		case "refresh":
 			if !needsEngine() {
 				return
 			}
 			actErr = watch.ForceRefresh(eff.Name, p)
+		case "pause":
+			if !needsEngine() {
+				return
+			}
+			actErr = watch.Pause(eff.Name, p)
 		default:
 			writeErr(w, fmt.Errorf("unknown action %q", r.PathValue("action")))
 			return
@@ -516,8 +535,11 @@ func profileStates(b *Backend, queue *QueueService, history *HistoryService) []m
 			continue
 		}
 		pb := b.Profile(eff.Name)
+		// games/inheritGames: the resolved games list and whether it is the
+		// shared one, so the Queue orders a profile's sections by its own list.
 		entry := map[string]any{
 			"name": eff.Name, "displayName": eff.DisplayName, "enabled": eff.Enabled,
+			"games": eff.Games, "inheritGames": len(pc.Games) == 0 && pc.AnyGame == nil,
 			"platforms": platformStates(b, eff, pb),
 			"queue":     []QueueItemDTO{},
 			"claims":    []ClaimDTO{},
@@ -589,9 +611,13 @@ func engineDownError(b *Backend, eff *config.ProfileEffective, p domain.Platform
 		return fmt.Errorf("kick is disabled for %s - enable it in Settings > Platforms", eff.DisplayName)
 	}
 	if b.Profile(eff.Name) == nil {
-		return fmt.Errorf("profile %q has no store open yet - it is still starting, or its store failed to open (see the Debugging view)", eff.Name)
+		return fmt.Errorf("%s is still starting up. Try again in a moment, or open the Debugging page if this keeps happening.", eff.DisplayName)
 	}
-	return fmt.Errorf("%s runtime is not running for %s (starting Chrome, or it failed to launch - see the Debugging view)", p, eff.DisplayName)
+	name := "Twitch"
+	if p == domain.PlatformKick {
+		name = "Kick"
+	}
+	return fmt.Errorf("%s is not running for %s. Press Start, or open the Debugging page if it does not start.", name, eff.DisplayName)
 }
 
 // buildDebug assembles the debug snapshot for the Debugging pane: one section

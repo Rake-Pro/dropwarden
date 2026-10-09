@@ -38,8 +38,9 @@ const SAMPLE = {
       kick: { dropsEarned: 2, dropsClaimed: 2, minutesWatched: 252, sessions: 5 },
     } },
     spark: [10, 30, 20, 60, 40, 80, 55, 90, 70, 100, 65, 45, 85, 60],
+    inheritGames: true, games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'],
   }, {
-    name: 'p2', displayName: 'Profile 2', enabled: true,
+    name: 'p2', displayName: 'Profile 2', enabled: true, inheritGames: false, games: ['Once Human'],
     platforms: [
       {
         platform: 'twitch', enabled: true, up: true, needsLogin: false, launchError: '', reason: 'nothing eligible to watch',
@@ -158,12 +159,21 @@ async function fetchState() {
   }
 }
 
+// A fetch that never reached the backend throws the browser's own TypeError
+// ("Failed to fetch", "Load failed"); actions show this instead.
+const NOT_RESPONDING = "dropwarden isn't responding. Try again in a moment.";
+
 async function post(path, body) {
-  const r = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let r;
+  try {
+    r = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (_) {
+    throw new Error(NOT_RESPONDING);
+  }
   cache = null; // invalidate so the next read reflects the action
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
@@ -176,7 +186,8 @@ async function post(path, body) {
 }
 
 async function getText(path) {
-  const r = await fetch(path, { cache: 'no-store' });
+  let r;
+  try { r = await fetch(path, { cache: 'no-store' }); } catch (_) { throw new Error(NOT_RESPONDING); }
   if (!r.ok) throw new Error('request failed: ' + r.status);
   return r.text();
 }
@@ -214,8 +225,12 @@ export const api = {
       // Launches the watcher window parked on the login page (no watcher yet).
       login() { return post(`${base}/login`); },
       stop() { return post(`${base}/stop`); },
-      skip() { return post(`${base}/skip`); },
+      // dropID: the drop the caller showed; the server skips only if that
+      // drop is still the one being watched.
+      skip(dropID) { return post(`${base}/skip`, dropID ? { dropID } : undefined); },
       refresh() { return post(`${base}/refresh`); },
+      // Parks a running engine with its window open (the tray's Pause).
+      pause() { return post(`${base}/pause`); },
     };
   },
 
@@ -237,13 +252,15 @@ export const api = {
   // up, or a platform with no probe - see docs/NOTES-kick.md). On-demand only.
   loginCheck(profile, platform) { return post('/api/profiles/login-check', { profile, platform }); },
   // The Profiles settings pane's raw per-profile overlay (games/inherit/kick),
-  // distinct from the resolved blocks profiles() returns.
+  // distinct from the resolved blocks profiles() returns. Like update(), it
+  // throws once the backend has been seen: SAMPLE only before first contact.
   async profileConfigs() {
     try {
       const r = await fetch('/api/profiles', { cache: 'no-store' });
       if (!r.ok) throw new Error('profiles ' + r.status);
       return await r.json();
     } catch (e) {
+      if (everOnline) throw (e instanceof TypeError ? new Error(NOT_RESPONDING) : e);
       return SAMPLE_PROFILE_CONFIGS;
     }
   },
@@ -261,7 +278,7 @@ export const api = {
       if (!r.ok) throw new Error('update ' + r.status);
       return await r.json();
     } catch (e) {
-      if (everOnline) throw e;
+      if (everOnline) throw (e instanceof TypeError ? new Error(NOT_RESPONDING) : e);
       return SAMPLE.update;
     }
   },
@@ -277,7 +294,7 @@ export const api = {
       if (!r.ok) throw new Error('catalog ' + r.status);
       return await r.json();
     } catch (e) {
-      if (everOnline) throw e;
+      if (everOnline) throw (e instanceof TypeError ? new Error(NOT_RESPONDING) : e);
       return SAMPLE_CATALOG;
     }
   },
@@ -287,7 +304,7 @@ export const api = {
       if (!r.ok) throw new Error('search ' + r.status);
       return (await r.json()) || [];
     } catch (e) {
-      if (everOnline) throw e;
+      if (everOnline) throw (e instanceof TypeError ? new Error(NOT_RESPONDING) : e);
       return SAMPLE_SEARCH.filter(x => x.game.toLowerCase().includes(String(q).toLowerCase()));
     }
   },

@@ -866,9 +866,13 @@ func (s *WatcherService) LoginCheck(ctx context.Context, profile string, plat do
 	// must never run against an engine mid-watch - that would yank its player.
 	// Only a parked engine (paused or idle) may be probed.
 	if e := p.Engine(plat); e != nil {
+		// The probe navigates the window, so a watching engine must be paused.
 		if est := e.Status(); !est.Paused && est.State != watcher.StateIdle {
-			return nil, "", fmt.Errorf("cannot check login while the %s watcher is %s - pause it first (the probe navigates its window)",
-				plat.OrTwitch(), est.State)
+			name := "Twitch"
+			if plat.OrTwitch() == domain.PlatformKick {
+				name = "Kick"
+			}
+			return nil, "", fmt.Errorf("%s is busy watching, so its sign-in can't be checked right now. Pause it from the tray menu, then try again.", name)
 		}
 	}
 	var loggedIn bool
@@ -918,6 +922,13 @@ func (s *WatcherService) SkipCurrent(profile string, plat domain.Platform) error
 
 func (s *WatcherService) ForceRefresh(profile string, plat domain.Platform) error {
 	return s.engineDo(profile, plat, func(e *watcher.Engine) { e.RefreshNow() })
+}
+
+// Pause parks a running engine with its window left open, the same as the
+// tray's Pause item. The dashboard's "Restart now" uses it to put a paused
+// engine back the way it was after relaunching its Chrome.
+func (s *WatcherService) Pause(profile string, plat domain.Platform) error {
+	return s.engineDo(profile, plat, func(e *watcher.Engine) { e.Stop() })
 }
 
 func (s *WatcherService) engineDo(profile string, plat domain.Platform, f func(*watcher.Engine)) error {

@@ -17,6 +17,8 @@ import (
 	"github.com/rake-pro/dropwarden/internal/domain"
 	"github.com/rake-pro/dropwarden/internal/kick"
 	"github.com/rake-pro/dropwarden/internal/twitch"
+	"github.com/rake-pro/dropwarden/internal/watcher"
+	"github.com/rs/zerolog"
 )
 
 // stateDTO is the /api/state shape the frontend consumes: shared config plus
@@ -116,6 +118,12 @@ func TestHTTPStateAndActions(t *testing.T) {
 	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "not running") {
 		t.Fatalf("skip with nil engine should be 400 not-running, got %d %s", rr.Code, rr.Body.String())
 	}
+	// Pause (used by "Restart now" to re-park a paused engine) needs one too.
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/main/twitch/pause", nil))
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "not running") {
+		t.Fatalf("pause with nil engine should be 400 not-running, got %d %s", rr.Code, rr.Body.String())
+	}
 
 	// Kick disabled -> 400 with a settings hint; bogus profile/platform/action -> 400.
 	rr = httptest.NewRecorder()
@@ -205,7 +213,7 @@ func TestHTTPStateListsUnstartedProfile(t *testing.T) {
 	}
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/greg/twitch/skip", nil))
-	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "no store open") {
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "still starting") {
 		t.Fatalf("skip on a profile with no store should be 400 and say so, got %d %s", rr.Code, rr.Body.String())
 	}
 
@@ -218,6 +226,29 @@ func TestHTTPStateListsUnstartedProfile(t *testing.T) {
 	}
 	if len(b.config().Profiles) != 2 {
 		t.Fatalf("rejected profile must not reach the live config: %+v", b.config().Profiles)
+	}
+}
+
+// TestHTTPEngineSkipDropIDAndPause covers the live-engine actions the
+// dashboard sends: skip naming a drop that is no longer the one being watched
+// is refused, skip without a drop ID and pause are accepted.
+func TestHTTPEngineSkipDropIDAndPause(t *testing.T) {
+	b := testBackend(t)
+	e := watcher.New(watcher.Deps{Cfg: b.config(), Log: zerolog.Nop()})
+	b.Attach(config.MainProfileName, domain.PlatformTwitch, e, nil, nil, false)
+	h := NewHTTPHandler(b)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, jsonReq("POST", "/api/engine/main/twitch/skip", `{"dropID":"not-the-current-drop"}`))
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "no longer being watched") {
+		t.Fatalf("skip with a stale drop ID should be 400 'no longer being watched', got %d %s", rr.Code, rr.Body.String())
+	}
+	for _, path := range []string{"/api/engine/main/twitch/skip", "/api/engine/main/twitch/pause"} {
+		rr = httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest("POST", path, nil))
+		if rr.Code != 200 {
+			t.Fatalf("%s with a live engine should be 200, got %d %s", path, rr.Code, rr.Body.String())
+		}
 	}
 }
 

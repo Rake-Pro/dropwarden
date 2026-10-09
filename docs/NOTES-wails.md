@@ -23,9 +23,24 @@ GTK4 + WebKitGTK there.
 - Windows: `app.Window.NewWithOptions(application.WebviewWindowOptions{...})`
   with `Hidden`, `BackgroundColour application.RGBA`, `Windows:
   application.WindowsWindow{Theme: application.Dark}`, `Width/Height/URL/Title`.
-- Tray: `app.SystemTray.New()` -> `SetLabel`, `SetTooltip`, `SetMenu(*Menu)`,
-  `AttachWindow(win)`, `OnClick(func())`, `SetIcon`/`SetDarkModeIcon`.
+- Tray: `app.SystemTray.New()` -> `SetIcon([]byte)` (44x44 PNG from
+  `cmd/dropwarden/icons`, swapped per status level), `SetTooltip`,
+  `SetMenu(*Menu)`, `AttachWindow(win)`, `OnClick(func())`. No `SetLabel`:
+  the icon is the mark. `app.SetIcon` sets the macOS Dock icon, used for the
+  same status dot, and is only called on darwin (`setAppIcon`): Windows
+  ignores it, and Linux gtk3 only seeds future windows and leaks the old
+  pixbuf. Wails keeps the pointer to the icon bytes and reads them after the
+  call, so the icons package caches every PNG for the process lifetime.
 - Menu: `application.NewMenu()`, `m.Add(label) *MenuItem`, `m.AddSeparator()`.
+- macOS menu bar: `menu.AddRole(application.AppMenu/EditMenu/WindowMenu)` +
+  `app.Menu.Set(menu)` (`cmd/dropwarden/appmenu_darwin.go`). Off macOS a set
+  menu renders inside the window, so it is a no-op there.
+- Close-to-hide: `win.RegisterHook(events.Common.WindowClosing, ...)` with
+  `e.Cancel()` + `win.Hide()`. Hooks run before Wails' own closing listener
+  (which destroys the window); plain `OnWindowEvent` listeners run after it
+  and cannot stop it. `Options.Windows/Linux.DisableQuitOnLastWindowClosed`
+  is the belt to that suspender. Quit still fires the hook (window hides),
+  but `App.Quit` ends the process without waiting on windows, so it is safe.
 - `MenuItem.OnClick(func(*application.Context))` - note the `*Context` argument;
   a `func()` will not compile (the documented gotcha).
 - Events: `app.Event.Emit(name string, data ...any)`.

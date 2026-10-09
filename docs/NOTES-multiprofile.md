@@ -129,6 +129,8 @@ engine/disco handles + startupKick flag per profile), plus `Order []string`.
 - Engine actions: `POST /api/engine/{profile}/{platform}/{action}` (start/
   stop/skip/refresh). Unknown profile/platform/action -> 400 with the same
   honest disabled-vs-not-running messages, now per profile.
+  Later additions: `login`; `pause` (parks a live engine like the tray's
+  Pause); skip takes an optional `{dropID}` body and refuses a stale one.
 - Queue actions gain `profile` in the body (`/api/queue/order|enabled|
   priority`); priority mode stays a root (shared) setting in v1.
 - `POST /api/profiles` (add), `POST /api/profiles/enabled` (enable/disable)

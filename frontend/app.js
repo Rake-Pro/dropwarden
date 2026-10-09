@@ -4,6 +4,11 @@ const $ = (s, r = document) => r.querySelector(s);
 const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const pct = (cur, req) => req > 0 ? Math.min(100, Math.round(cur / req * 100)) : 0;
+// fmtMins is "watched / required min" (HTML), never above required; a dash
+// when the drop has no watch-time requirement.
+const fmtMins = (cur, req) => req > 0 ? `${Math.min(cur || 0, req)} / ${req} min` : '&mdash;';
+// fmtWatch is total watch time: minutes under an hour, hours above.
+const fmtWatch = (m) => (m || 0) < 60 ? `${m || 0} min` : `${((m || 0) / 60).toFixed(1)} h`;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // localStorage can throw (private window, blocked site data); every access is
@@ -120,7 +125,10 @@ const takeSnapshot = () => { cfgSnapshot = JSON.stringify(cfg || {}); };
 const snap = () => JSON.parse(cfgSnapshot || '{}');
 const savedGames = () => (cfgSnapshot ? snap().games : (cfg && cfg.games)) || [];
 
-function applyTheme(theme) {
+// applyTheme sets the page theme. remember (load and save, never the live
+// preview) keeps it for the next start, so the first paint is already right.
+function applyTheme(theme, remember = false) {
+  if (remember) LS.set('dw.theme', theme || '');
   if (theme && theme !== 'system') document.documentElement.setAttribute('data-theme', theme);
   else document.documentElement.removeAttribute('data-theme');
 }
@@ -151,6 +159,30 @@ function toast(msg, kind = 'ok') {
 // ---- modal dialogs (decisions) ----
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea, summary, [tabindex]:not([tabindex="-1"])';
+
+// focusKey/restoreFocus keep keyboard focus across a rebuild of host: the key
+// is the nearest [data-fk] block plus the control's id, aria-label, data-act
+// or text, so the same control in the rebuilt DOM gets focus back. When that
+// control is now disabled (a row moved to the top), focus goes to the first
+// enabled control of the same block.
+const ctlLabel = (n) => n.id || n.getAttribute('aria-label') || (n.dataset && n.dataset.act) || n.textContent.trim();
+function focusKey(host) {
+  const a = document.activeElement;
+  if (!host || !a || a === document.body || !host.contains(a)) return null;
+  const s = a.closest('[data-fk]');
+  return { scope: s && host.contains(s) ? s.dataset.fk : null, tag: a.tagName, label: ctlLabel(a) };
+}
+function restoreFocus(host, k) {
+  if (!host || !k) return;
+  const cur = document.activeElement;
+  if (cur && cur !== document.body && cur.isConnected) return;
+  const scopes = k.scope === null ? [host] : [...host.querySelectorAll('[data-fk]')].filter(s => s.dataset.fk === k.scope);
+  for (const s of scopes) {
+    const hit = [s, ...s.querySelectorAll(k.tag)].find(n => n.tagName === k.tag && !n.disabled && ctlLabel(n) === k.label);
+    const alt = hit || (k.scope !== null && (s.matches(FOCUSABLE) ? s : s.querySelector(FOCUSABLE)));
+    if (alt) { alt.focus({ preventScroll: true }); return; }
+  }
+}
 let modalClose = null;
 let modalSeq = 0;
 
@@ -216,7 +248,9 @@ function footRow(row, displayName, multiProfile, p) {
 async function renderFoot() {
   const state = await api.state();
   const profiles = state.profiles || [];
-  const multiProfile = profiles.length > 1;
+  // Same rule as the dashboard: a disabled profile with nothing running is
+  // not shown, so it does not count.
+  const multiProfile = profiles.filter(p => p.enabled || (p.platforms || []).some(pl => pl.up)).length > 1;
   const foot = $('#rail-foot');
   const row = (cls, label) => `<div class="frow" title="${esc(label)}"><span class="fdot ${cls}"></span><span class="ftxt">${esc(label)}</span></div>`;
   if (api.offline) { foot.innerHTML = row('off', 'Preview mode') + row('off', 'Backend not connected'); return; }
@@ -427,6 +461,7 @@ function updModalContent(u) {
       btns: `<button class="btn primary" type="button" data-m="install" data-autofocus ${off}>${failed ? 'Retry install' : 'Install now'}</button><button class="btn" type="button" data-m="close">Later</button>`,
     };
   }
+  if (u.status === 'checking' || u.phase === 'checking') return { title: 'Checking for updates', body: '<p class="m-body">dropwarden is checking for a new version.</p>', btns: closeBtn('Close') };
   if (u.status === 'none_published') return { title: 'No releases published yet', body: '<p class="m-body">There is nothing to install yet. dropwarden checks again automatically.</p>', btns: closeBtn('Close') };
   if (u.status === 'error') return { title: "Couldn't check for updates", body: `<p class="m-body">${esc(clean(u.lastError) || 'The update check failed.')}</p>`, btns: closeBtn('Close') };
   return { title: "You're up to date", body: `<p class="m-body">dropwarden v${esc(u.currentVersion)} is the latest version.</p>`, btns: closeBtn('Close') };
@@ -565,9 +600,35 @@ function reasonCopy(reason) {
   if (/no live channel/i.test(r)) return { text: 'No live channel for any of your drops right now. Checking again in a few minutes.', games: true };
   if (/cooldown complete/i.test(r)) return { text: 'Getting ready for the next drop...' };
   if (/minimized/i.test(r)) return { text: 'The Chrome window was minimized. Restoring it so the stream keeps playing.' };
-  if (r && !/^paused$/i.test(r)) return { text: r.charAt(0).toUpperCase() + r.slice(1) };
+  const claimed = /^claimed (?!\()(.+)/i.exec(r);
+  if (claimed) return { text: `Claimed ${claimed[1]}. Getting ready for the next drop...` };
+  // Any other engine reason is internal wording: show the plain default.
   return { text: 'Looking for the next drop to watch...' };
 }
+
+// QUEUE_REASON puts the engine's queue-row reasons into plain words; a reason
+// not listed here shows as it is.
+const QUEUE_REASON = [
+  [/^user disabled/i, 'Turned off by you'],
+  [/not found/i, 'No longer offered'],
+  [/window has passed/i, 'Campaign has ended'],
+  [/not started yet/i, 'Starts later'],
+  [/account link required/i, 'Link your game account to earn this'],
+  [/^already claimed|^claimed \(detected/i, 'Already claimed'],
+  [/not a watch-time drop/i, 'Earned in the game, not by watching'],
+  [/already owned/i, 'You already own this reward'],
+  [/claim it .*kick inventory/i, 'Watched. Claim it in your Kick inventory'],
+  [/claim it .*twitch inventory/i, 'Watched. Claim it in your Twitch inventory'],
+  [/prerequisite/i, 'Earn the earlier drop first'],
+  [/^not crediting/i, "Twitch isn't counting progress for this drop"],
+  [/channel offline/i, 'The channel went offline'],
+  [/different game/i, 'The channel is streaming a different game'],
+];
+const queueReason = (r) => {
+  const s = String(r || '');
+  const hit = QUEUE_REASON.find(([re]) => re.test(s));
+  return hit ? hit[1] : s;
+};
 
 const gamesLink = () => ' <button class="linkbtn" type="button" data-choose-games>Choose games</button>';
 
@@ -576,7 +637,7 @@ function watchingBody(p, st) {
     ? `<span class="wd">${icon('check', 13)} Progress ticking</span>`
     : `<span class="wd wait">${icon('wait', 13)} Waiting for the first progress update</span>`;
   return `<div class="drop-row">
-      <div class="lbl"><span class="name">${esc(st.dropName)}</span><span class="mins mono">${st.current} / ${st.required} min</span></div>
+      <div class="lbl"><span class="name">${esc(st.dropName)}</span><span class="mins mono">${fmtMins(st.current, st.required)}</span></div>
       ${barHTML(st.current, st.required, p.platform === 'kick' ? 'kick' : '', 'Drop progress')}
     </div>
     <div class="watchdogs">${tick}</div>`;
@@ -587,7 +648,7 @@ function loginBody(p, st, key) {
   const m = loginMsg[key];
   return `<div class="card-msg">
     <p>${expired ? `Your ${esc(platLabel(p.platform))} session expired. ` : ''}Sign in to ${esc(platLabel(p.platform))} in the Chrome window dropwarden opened, then press I'm signed in.</p>
-    <div class="login-msg ${m ? esc(m.cls) : ''}" aria-live="polite">${m ? esc(m.text) : ''}</div>
+    <div class="login-msg ${m ? esc(m.cls) : ''}" aria-live="polite">${m ? esc(m.text) : ''}${m && m.detail ? `<div class="login-detail muted">Details: ${esc(m.detail)}</div>` : ''}</div>
   </div>`;
 }
 
@@ -614,8 +675,12 @@ function cardBody(kind, p, st, key) {
   }
 }
 
+// cardBusy holds the profile/platform keys with an engine request in flight:
+// their buttons stay aria-disabled, across re-renders too, until it settles.
+const cardBusy = new Set();
+
 function cardButtons(kind, p, st, key) {
-  const off = api.offline ? 'disabled' : '';
+  const off = api.offline || api.disconnected ? 'disabled' : (cardBusy.has(key) ? 'aria-disabled="true"' : '');
   const b = (act, text, cls = '') => `<button class="btn ${cls}" type="button" data-act="${act}" ${off}>${text}</button>`;
   const stop = b('stop', 'Stop', 'ghost danger');
   const refresh = `<button class="btn ghost" type="button" data-act="refresh" ${st.paused ? 'disabled title="Resume first"' : off}>Check for drops</button>`;
@@ -645,7 +710,7 @@ function nowCardEl(p, multi, profile) {
   if (kind !== 'login') delete loginMsg[key];
   const showChannel = ['watching', 'busy'].includes(kind) && st.channelLogin;
   const headName = showChannel ? st.channelLogin : platLabel(p.platform);
-  const card = el(`<div class="card now">
+  const card = el(`<div class="card now" data-fk="c:${esc(key)}">
     <div class="head">
       <div class="avatar" aria-hidden="true">${esc((showChannel ? st.channelLogin : platLabel(p.platform)).slice(0, 2).toUpperCase())}</div>
       <div class="who">
@@ -657,10 +722,11 @@ function nowCardEl(p, multi, profile) {
     ${cardBody(kind, p, st, key)}
     <div class="foot-btns">${cardButtons(kind, p, st, key)}</div>
   </div>`);
-  card.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => cardAction(b.dataset.act, p, profile)));
+  card.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => cardAction(b.dataset.act, p, profile, card)));
   return card;
 }
 
+// checkLogin runs the sign-in probe; cardAction refreshes the views after.
 async function checkLogin(p, profile) {
   const key = profile + '/' + p.platform;
   loginMsg[key] = { text: 'Checking...', cls: '' };
@@ -669,24 +735,30 @@ async function checkLogin(p, profile) {
     const r = await api.loginCheck(profile, p.platform);
     if (r.loggedIn === true) loginMsg[key] = { text: 'Signed in. Starting the watcher...', cls: 'ok' };
     else if (r.loggedIn === false) loginMsg[key] = { text: 'Not signed in yet. Finish signing in, then press I\'m signed in again.', cls: 'warn' };
-    else loginMsg[key] = { text: `dropwarden can't confirm the ${platLabel(p.platform)} sign-in by itself. If you are signed in, press Start.`, cls: '', unknown: true };
+    else loginMsg[key] = { text: `dropwarden can't confirm the ${platLabel(p.platform)} sign-in by itself. If you are signed in, press Start.`, cls: '', unknown: true, detail: r.detail || '' };
   } catch (e) {
     loginMsg[key] = { text: 'Check failed: ' + errText(e), cls: 'err' };
   }
-  refreshAll();
 }
 
 const ENGINE_DONE = { skip: 'Skipped to the next drop', refresh: 'Checking for new drops', stop: 'Stopped' };
 
-async function cardAction(act, p, profile) {
-  if (act === 'check-login') return checkLogin(p, profile);
+// cardAction runs one card button. A second press while the first request is
+// still running is ignored, and Skip names the drop the card shows so a card
+// that is a few seconds old never skips a different drop.
+async function cardAction(act, p, profile, card) {
   if (act === 'chrome') return openSettings('browser');
   if (act === 'review') { selectedProfile = profile; return go('queue'); }
+  const key = profile + '/' + p.platform;
+  if (cardBusy.has(key)) return;
   const a = api.engine(p.platform, profile);
-  const fn = { start: a.start, login: a.login, stop: a.stop, skip: a.skip, refresh: a.refresh }[act];
+  const fn = { 'check-login': () => checkLogin(p, profile), start: a.start, login: a.login, stop: a.stop, skip: () => a.skip((p.status || {}).dropID), refresh: a.refresh }[act];
   if (!fn) return;
+  cardBusy.add(key);
+  if (card) card.querySelectorAll('.foot-btns [data-act]').forEach(b => b.setAttribute('aria-disabled', 'true'));
   try { await fn(); if (ENGINE_DONE[act]) toast(ENGINE_DONE[act]); }
   catch (e) { toast(errText(e), 'err'); }
+  cardBusy.delete(key);
   refreshAll();
 }
 
@@ -736,17 +808,21 @@ function combineStats(profiles) {
   return s;
 }
 
+// upNextHTML lists the next three drops; with several profiles, the next drop
+// of each profile instead (unnumbered: there is no order across profiles).
 function upNextHTML(profiles, multiProfile) {
   const upnext = multiProfile
-    ? profiles.flatMap(p => (p.queue || []).filter(q => q.status === 'pending')
-        .map(q => ({ ...q, profName: p.displayName, profPlatMulti: isMulti(p.platforms) }))).slice(0, 3)
+    ? profiles.map(p => {
+        const q = (p.queue || []).find(x => x.status === 'pending');
+        return q && { ...q, profName: p.displayName, profPlatMulti: isMulti(p.platforms) };
+      }).filter(Boolean)
     : ((profiles[0] && profiles[0].queue) || []).filter(q => q.status === 'pending').slice(0, 3);
   const soloMulti = !multiProfile && isMulti((profiles[0] || {}).platforms);
   if (!upnext.length) return `<div class="empty">Nothing queued yet.${gamesLink()}</div>`;
   return upnext.map((q, i) => {
     const platBit = (multiProfile ? q.profPlatMulti : soloMulti) ? pfBadge(q.platform) + ' ' : '';
     const profBit = multiProfile ? profBadge(q.profName) + ' ' : '';
-    return `<div class="up"><span class="idx">${i + 1}</span><div class="t"><div class="n">${profBit}${platBit}${esc(q.dropName)}</div><div class="g">${esc(q.game)}${q.reason ? ' &middot; ' + esc(q.reason) : ''}</div></div><span class="m mono">${q.currentMinutes}/${q.requiredMinutes}</span></div>`;
+    return `<div class="up">${multiProfile ? '' : `<span class="idx">${i + 1}</span>`}<div class="t"><div class="n">${profBit}${platBit}${esc(q.dropName)}</div><div class="g">${esc(q.game)}${q.reason ? ' &middot; ' + esc(queueReason(q.reason)) : ''}</div></div><span class="m mono">${fmtMins(q.currentMinutes, q.requiredMinutes)}</span></div>`;
   }).join('');
 }
 
@@ -755,14 +831,14 @@ function totalsHTML(profiles, multiProfile) {
   const stats = multiProfile ? combineStats(profiles) : ((profiles[0] && profiles[0].stats) || {});
   const kv = (k, v) => `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
   const rows = multiProfile
-    ? profiles.map(p => kv(esc(p.displayName), `${(p.stats || {}).minutesWatched || 0} min &middot; ${(p.stats || {}).dropsClaimed || 0} claimed`)).join('')
+    ? profiles.map(p => kv(esc(p.displayName), `${fmtWatch((p.stats || {}).minutesWatched)} &middot; ${(p.stats || {}).dropsClaimed || 0} claimed`)).join('')
     : (soloMulti ? visiblePlatforms((profiles[0] || {}).platforms).map(p => {
         const bp = (((profiles[0] || {}).stats || {}).byPlatform || {})[p.platform] || {};
-        return kv(pfBadge(p.platform), `${bp.minutesWatched || 0} min &middot; ${bp.dropsClaimed || 0} claimed`);
+        return kv(pfBadge(p.platform), `${fmtWatch(bp.minutesWatched)} &middot; ${bp.dropsClaimed || 0} claimed`);
       }).join('') : '');
   return kv('Drops earned', stats.dropsEarned || 0) + kv('Drops claimed', stats.dropsClaimed || 0) +
-    kv('Minutes watched', stats.minutesWatched || 0) + kv('Sessions', stats.sessions || 0) +
-    kv('Success rate', (stats.successRate || 0) + '%') + rows;
+    kv('Watch time', fmtWatch(stats.minutesWatched)) + kv('Sessions', stats.sessions || 0) +
+    kv('Session success', (stats.successRate || 0) + '%') + rows;
 }
 
 function dashboardCards(profiles, v) {
@@ -799,6 +875,7 @@ async function renderDashboard() {
   const anyMulti = profiles.some(p => isMulti(p.platforms));
 
   const v = $('#v-dashboard');
+  const fk = focusKey(v);
   v.innerHTML = '';
   v.append(el(`<div>
     <h2 class="title">Now watching</h2>
@@ -818,6 +895,7 @@ async function renderDashboard() {
   const grid = el(`<div class="grid2"></div>`);
   grid.append(left, side);
   v.append(grid);
+  restoreFocus(v, fk);
 }
 
 // ---- queue ----
@@ -833,7 +911,8 @@ const PRIO_LABEL = {
 // in internal/queue/select.go).
 function queueOrderText(mode) {
   const chan = !cfg || cfg.preferChannelSpecific !== false ? ', streamer-specific drops before any-channel drops' : '';
-  return `Pinned drops first, then your games in list order${chan}, then ${PRIO_LABEL[mode] || PRIO_LABEL.top_down}`;
+  const whose = queueOwnGames ? "this profile's games" : 'your games';
+  return `Pinned drops first, then ${whose} in list order${chan}, then ${PRIO_LABEL[mode] || PRIO_LABEL.top_down}`;
 }
 
 function setQueueOrderText(mode) {
@@ -843,6 +922,9 @@ function setQueueOrderText(mode) {
 
 let queuePlatFilter = 'all';
 let queueFocusID = null;
+// queueOwnGames: the selected profile has its own games list (not the shared
+// one), so sections follow that list and section moves edit it.
+let queueOwnGames = false;
 
 const gIndex = (games, g) => (games || []).findIndex(x => String(x).toLowerCase() === String(g || '').toLowerCase());
 
@@ -857,7 +939,10 @@ function queueSections(queue, games) {
     byGame.get(q.game).push(q);
   }
   const names = [...byGame.keys()];
-  const rank = (g) => { const i = gIndex(games, g); return i < 0 ? games.length + names.indexOf(g) : i; };
+  // Unlisted games keep their first-seen order (read from a copy: sort
+  // reorders names while it runs).
+  const seen = new Map(names.map((n, i) => [n, i]));
+  const rank = (g) => { const i = gIndex(games, g); return i < 0 ? games.length + seen.get(g) : i; };
   names.sort((a, b) => rank(a) - rank(b));
   const secs = pinned.length ? [{ key: '__pinned', title: 'Pinned', rows: pinned, pinned: true }] : [];
   for (const g of names) secs.push({ key: g, title: g || 'Other', rows: byGame.get(g), listed: gIndex(games, g) >= 0 });
@@ -917,12 +1002,12 @@ function queueRowHTML(q, ctx, sec) {
     ? '<span class="qbadge" title="A streamer-specific drop of this game also credits this any-channel drop, so it waits behind the streamer drops">also earned by the streamer drops above</span> '
     : '';
   const barCls = active ? (q.platform === 'kick' ? 'kick' : '') : 'blue';
-  const mins = q.requiredMinutes ? q.currentMinutes + ' / ' + q.requiredMinutes + ' min' : '&mdash;';
+  const mins = fmtMins(q.currentMinutes, q.requiredMinutes);
   const status = esc(labelOf(STATUS_LABEL, q.status));
   const live = liveInfo(q);
-  const metaParts = [sec.pinned ? esc(q.game) : '', esc(q.reason || ''), live.meta].filter(Boolean);
+  const metaParts = [sec.pinned ? esc(q.game) : '', esc(queueReason(q.reason)), live.meta].filter(Boolean);
   const meta = metaParts.join(' &middot; ');
-  return `<div class="${cls}" data-id="${esc(q.dropID)}" tabindex="0" aria-label="${name}" draggable="${sec.pinned ? 'false' : 'true'}">
+  return `<div class="${cls}" data-id="${esc(q.dropID)}" data-fk="q:${esc(q.dropID)}" tabindex="0" role="group" aria-label="${name}" draggable="${sec.pinned ? 'false' : 'true'}">
     <span class="grip" title="${sec.pinned ? 'Pinned: use the arrows to change rank' : 'Drag (or Alt+Up/Down) to reorder within this game'}" aria-hidden="true">&#8285;&#8285;</span>
     <div class="qname"><div class="n">${live.dot}${ctx.multi ? pfBadge(q.platform) + ' ' : ''}${name}</div><div class="meta">${badge}${meta}</div></div>
     <div class="qmini">${barHTML(q.currentMinutes, q.requiredMinutes, barCls, 'Progress for ' + (q.dropName || q.dropID))}<div class="mm mono">${mins}</div></div>
@@ -983,14 +1068,35 @@ function wireOpenButton(row, q, profile) {
   });
 }
 
-// ensureTopDown: a manual reorder implies "your order"; switch so it applies.
-function ensureTopDown() {
-  if (!cfg || cfg.priorityMode === 'top_down') return;
-  cfg.priorityMode = 'top_down';
-  api.setPriority('top_down').catch(() => {});
+// paintPriority shows mode in cfg, the Queue select and its description;
+// setSavedPriority records a mode the server accepted in the saved snapshot,
+// so a later Settings Discard or Save cannot write the old mode back.
+function paintPriority(mode) {
+  if (cfg) cfg.priorityMode = mode;
   const sel = document.querySelector('#prio');
-  if (sel) sel.value = 'top_down';
-  setQueueOrderText('top_down');
+  if (sel) sel.value = mode;
+  setQueueOrderText(mode);
+}
+function setSavedPriority(mode) {
+  if (!cfgSnapshot) return;
+  const b = snap();
+  b.priorityMode = mode;
+  cfgSnapshot = JSON.stringify(b);
+}
+
+// ensureTopDown: a manual reorder implies "your order"; switch so it applies,
+// and roll back if the server refuses.
+async function ensureTopDown() {
+  if (!cfg || cfg.priorityMode === 'top_down') return;
+  const prev = cfg.priorityMode;
+  paintPriority('top_down');
+  try {
+    await api.setPriority('top_down');
+    setSavedPriority('top_down');
+  } catch (err) {
+    paintPriority(prev);
+    toast(errText(err), 'err');
+  }
 }
 
 // moveRowKey handles Alt+ArrowUp/Down: a pin rank step in Pinned, a swap
@@ -1004,7 +1110,7 @@ async function moveRowKey(q, dir, sec, ctx) {
       if (j < 0 || j >= ids.length) return;
       [ids[i], ids[j]] = [ids[j], ids[i]];
       await api.setOrder(reorderIds(ctx.queue, ids), ctx.profile);
-      ensureTopDown();
+      await ensureTopDown();
     }
   } catch (err) { toast(errText(err), 'err'); }
   queueFocusID = q.dropID;
@@ -1027,9 +1133,28 @@ function queueRowEl(q, sec, ctx) {
 }
 
 // moveGameSection swaps two games in the SAVED games list (fresh GET, then
-// POST), leaving any unsaved Settings edits alone.
-async function moveGameSection(game, other) {
+// POST), leaving any unsaved Settings edits alone. For a profile with its own
+// list it swaps them in that profile's list instead.
+async function moveGameSection(game, other, ctx) {
   try {
+    if (ctx.ownGames) {
+      const pc = ((await api.profileConfigs()) || []).find(x => x.name === ctx.profile);
+      if (!pc) return;
+      const games = [...(pc.games || [])];
+      const a = gIndex(games, game), b = gIndex(games, other);
+      if (a < 0 || b < 0) return;
+      [games[a], games[b]] = [games[b], games[a]];
+      await api.updateProfile({ name: pc.name, displayName: pc.displayName, kickEnabled: pc.kickEnabled, games, inheritGames: false });
+      // Keep the Profiles pane in step unless it holds other edits of this list.
+      const s = (profileSnapshot || []).find(x => x.name === pc.name);
+      const e = (profileEdits || []).find(x => x.name === pc.name);
+      if (s) {
+        if (e && arraysEqual(e.games, s.games)) e.games = [...games];
+        s.games = [...games];
+      }
+      renderQueue();
+      return;
+    }
     await api.refreshState();
     const fresh = await loadCfg();
     const a = gIndex(fresh.games, game), b = gIndex(fresh.games, other);
@@ -1054,11 +1179,11 @@ function queueSectionEl(sec, i, secs, ctx) {
     ? `<button class="qbtn" type="button" data-gmv="up" aria-label="Move ${esc(sec.title)} up in your games"${prev ? '' : ' disabled'}>&#9650;</button>` +
       `<button class="qbtn" type="button" data-gmv="down" aria-label="Move ${esc(sec.title)} down in your games"${next ? '' : ' disabled'}>&#9660;</button>`
     : (sec.pinned ? '' : '<span class="qsec-note">not in your games list</span>');
-  const box = el(`<section class="qsec"><div class="qsec-head"><h3>${esc(sec.title)}</h3><span class="qsec-n">${sec.rows.length}</span><div class="qsec-mv">${arrows}</div></div><div class="card qlist"></div></section>`);
+  const box = el(`<section class="qsec" data-fk="s:${esc(sec.key)}"><div class="qsec-head"><h3>${esc(sec.title)}</h3><span class="qsec-n">${sec.rows.length}</span><div class="qsec-mv">${arrows}</div></div><div class="card qlist"></div></section>`);
   const up = box.querySelector('[data-gmv="up"]');
-  if (up && prev) up.addEventListener('click', () => moveGameSection(sec.key, prev.key));
+  if (up && prev) up.addEventListener('click', () => moveGameSection(sec.key, prev.key, ctx));
   const down = box.querySelector('[data-gmv="down"]');
-  if (down && next) down.addEventListener('click', () => moveGameSection(sec.key, next.key));
+  if (down && next) down.addEventListener('click', () => moveGameSection(sec.key, next.key, ctx));
   const list = box.querySelector('.qlist');
   for (const q of sec.rows) list.append(queueRowEl(q, sec, ctx));
   if (!sec.pinned && sec.rows.length > 1) attachQueueDrag(list, ctx);
@@ -1092,10 +1217,19 @@ function queueHeaderEl(multi) {
   </div>`);
   const sel = $('#prio', h);
   if (cfg) sel.value = cfg.priorityMode || 'top_down';
+  // A mouse press opens the dropdown: hold the poll re-render until a choice
+  // is made (queueBusy), then let it run again even though focus stays here.
+  // Closing it without a choice (Escape, leaving it) ends the hold too, and
+  // queueBusy caps it at 10 s in case neither event comes.
+  sel.addEventListener('mousedown', () => { prioChanged = false; prioOpenedAt = Date.now(); });
+  sel.addEventListener('blur', () => { prioChanged = true; });
+  sel.addEventListener('keydown', e => { if (e.key === 'Escape') prioChanged = true; });
   sel.addEventListener('change', async e => {
+    prioChanged = true;
     try {
       await api.setPriority(e.target.value);
       if (cfg) cfg.priorityMode = e.target.value;
+      setSavedPriority(e.target.value);
       setQueueOrderText(e.target.value);
     } catch (err) { if (cfg) e.target.value = cfg.priorityMode; toast(errText(err), 'err'); }
   });
@@ -1112,15 +1246,28 @@ async function renderQueue() {
   const kickOn = (cfg && cfg.kickEnabled) || multi;
   if (!kickOn) queuePlatFilter = 'all';
   const shown = queuePlatFilter === 'all' ? queue : queue.filter(q => q.platform === queuePlatFilter);
-  const ctx = { profile: prof.name, multi, queue, pinCount: queue.filter(q => q.pin > 0).length };
+  // A profile with its own games list orders sections by that list.
+  queueOwnGames = prof.inheritGames === false;
+  const games = queueOwnGames ? (prof.games || []) : savedGames();
+  const ctx = { profile: prof.name, multi, queue, pinCount: queue.filter(q => q.pin > 0).length, ownGames: queueOwnGames };
   const v = $('#v-queue');
+  const key = JSON.stringify([queue, games, queueOwnGames, queuePlatFilter, selectedProfile, kickOn, multi,
+    profiles.map(p => [p.name, p.displayName]), cfg && cfg.priorityMode, cfg && cfg.preferChannelSpecific]);
+  if (key === lastQueueKey && !queueFocusID && v.childElementCount) return;
+  lastQueueKey = key;
+  const fk = focusKey(v);
   v.innerHTML = '';
   v.append(queueHeaderEl(multi));
   if (multiProfile) v.append(profilePillBar(profiles, () => renderQueue()));
   if (kickOn) v.append(platformChips(() => renderQueue()));
   const wrap = el(`<div class="qwrap"></div>`);
-  if (!shown.length) wrap.append(el(`<div class="card"><div class="empty">No drops queued yet. Drops for your games appear here after the next check.${gamesLink()}</div></div>`));
-  const secs = queueSections(shown, savedGames());
+  if (!shown.length && queue.length) {
+    // Drops are queued, just none on the chosen platform.
+    const box = el(`<div class="card"><div class="empty">No ${esc(platLabel(queuePlatFilter))} drops right now. <button class="linkbtn" type="button">Show all</button></div></div>`);
+    box.querySelector('button').addEventListener('click', () => { queuePlatFilter = 'all'; renderQueue(); });
+    wrap.append(box);
+  } else if (!shown.length) wrap.append(el(`<div class="card"><div class="empty">No drops queued yet. Drops for your games appear here after the next check.${gamesLink()}</div></div>`));
+  const secs = queueSections(shown, games);
   secs.forEach((sec, i) => wrap.append(queueSectionEl(sec, i, secs, ctx)));
   v.append(wrap);
   if (queueFocusID) {
@@ -1128,9 +1275,15 @@ async function renderQueue() {
     queueFocusID = null;
     if (r) r.focus();
   }
+  restoreFocus(v, fk);
 }
 
 let dragRow = null;
+let prioChanged = true;
+let prioOpenedAt = 0;
+// lastQueueKey is everything renderQueue draws from: a poll with nothing new
+// skips the rebuild, so a screen reader is not re-told the focused row.
+let lastQueueKey = '';
 
 function queueDragAfter(list, y) {
   const rows = [...list.querySelectorAll('.qrow:not(.dragging)')];
@@ -1144,22 +1297,35 @@ function queueDragAfter(list, y) {
 }
 
 // attachQueueDrag reorders rows inside ONE game section; a drag never leaves
-// its section's list.
+// its section's list. Only a drop inside the list that changed the order is
+// saved: a press-and-release, an Escape or a release elsewhere puts the rows
+// back and saves nothing.
 function attachQueueDrag(list, ctx) {
+  let startIds = [];
+  let dropped = false;
+  const order = () => [...list.querySelectorAll('.qrow')].map(r => r.dataset.id);
   list.querySelectorAll('.qrow').forEach(row => {
     row.addEventListener('dragstart', e => {
       dragRow = row;
+      startIds = order();
+      dropped = false;
       row.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'move';
       try { e.dataTransfer.setData('text/plain', row.dataset.id || ''); } catch (_) { /* optional */ }
     });
     row.addEventListener('dragend', async () => {
       row.classList.remove('dragging');
-      const ids = [...list.querySelectorAll('.qrow')].map(r => r.dataset.id);
+      const ids = order();
+      const moved = ids.join('\n') !== startIds.join('\n');
+      if (!dropped || !moved) {
+        if (moved) startIds.forEach(id => { const r = list.querySelector(`.qrow[data-id="${CSS.escape(id)}"]`); if (r) list.appendChild(r); });
+        dragRow = null;
+        return;
+      }
       // dragRow clears only after the order is saved: it also gates the poll
       // re-render, which would otherwise snap the list back mid-save.
-      try { await api.setOrder(reorderIds(ctx.queue, ids), ctx.profile); ensureTopDown(); }
-      catch (err) { toast(errText(err), 'err'); }
+      try { await api.setOrder(reorderIds(ctx.queue, ids), ctx.profile); await ensureTopDown(); }
+      catch (err) { toast(errText(err), 'err'); lastQueueKey = ''; } // redraw the real order
       dragRow = null;
     });
   });
@@ -1168,9 +1334,15 @@ function attachQueueDrag(list, ctx) {
     if (!dragRow.isConnected) { dragRow = null; return; } // re-rendered mid-drag
     if (!list.contains(dragRow)) return; // other section: not a drop target
     e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
     const after = queueDragAfter(list, e.clientY);
     if (after == null) list.appendChild(dragRow);
     else list.insertBefore(dragRow, after);
+  });
+  list.addEventListener('drop', e => {
+    if (!dragRow || !list.contains(dragRow)) return;
+    e.preventDefault();
+    dropped = true;
   });
 }
 
@@ -1185,14 +1357,14 @@ async function renderHistory() {
   const stats = prof.stats || {};
   const spark = prof.spark || [];
   const v = $('#v-history');
-  const hours = ((stats.minutesWatched || 0) / 60).toFixed(1);
+  const fk = focusKey(v);
   v.innerHTML = '';
   v.append(el(`<div><h2 class="title">History</h2><p class="sub" title="A session is one continuous watch of one channel toward one drop. Minutes watched is time on stream; drops that credit together can progress faster than it.">Lifetime totals${multi ? ' across every platform' : ''}, including the session in progress.</p></div>`));
   if (multiProfile) v.append(profilePillBar(profiles, () => renderHistory()));
   v.append(el(`<div class="stat-row">
     <div class="card stat"><div class="big ok">${stats.dropsEarned || 0}</div><div class="cap">Drops earned</div></div>
     <div class="card stat"><div class="big ok">${stats.dropsClaimed || 0}</div><div class="cap">Drops claimed</div></div>
-    <div class="card stat"><div class="big">${hours}h</div><div class="cap">Watch time</div></div>
+    <div class="card stat"><div class="big">${fmtWatch(stats.minutesWatched)}</div><div class="cap">Watch time</div></div>
     <div class="card stat"><div class="big">${stats.successRate || 0}%</div><div class="cap">Session success</div></div>
     <div class="card stat"><div class="big">${stats.sessions || 0}</div><div class="cap">Sessions</div></div>
   </div>`));
@@ -1202,12 +1374,13 @@ async function renderHistory() {
   const outcomes = stats.outcomeCounts || {};
   const outRows = Object.entries(outcomes).map(([k, n]) => `<div class="kv"><span class="k">${esc(labelOf(OUTCOME_LABEL, k))}</span><span class="v">${n}</span></div>`).join('');
   const side = el(`<div class="stack">
-    <div class="card mini"><h3>Minutes watched &middot; last 14 days</h3><div class="spark" role="img" aria-label="Minutes watched per day, last 14 days">${spark.map(h => `<i style="height:${h}%"></i>`).join('')}</div></div>
+    <div class="card mini"><h3>Minutes watched &middot; last 14 days</h3><div class="spark" role="img" aria-label="Watch time per day for the last 14 days, as bars relative to the busiest day">${spark.map(h => `<i style="height:${h}%"></i>`).join('')}</div></div>
     <div class="card mini"><h3>Session outcomes</h3>${outRows || '<div class="empty">No sessions yet.</div>'}</div>
   </div>`);
   const grid = el('<div class="grid2"></div>');
   grid.append(claimsCard, side);
   v.append(grid);
+  restoreFocus(v, fk);
 }
 
 // ---- settings ----
@@ -1245,8 +1418,10 @@ const RESTART_FIELDS = ['chromePath', 'muteAudio', 'startMinimized'];
 const DISCOVERY_FIELDS = ['games', 'anyGame', 'autoEnqueueNew'];
 
 const fieldChanged = (f, base = snap()) => !!cfg && JSON.stringify(cfg[f]) !== JSON.stringify(base[f]);
-const paneDirty = (k) => (PANE_FIELDS[k] || []).some(f => fieldChanged(f));
-const isDirty = () => !!cfg && !!cfgSnapshot && Object.keys(PANE_FIELDS).some(paneDirty);
+// The Profiles pane keeps its own edits (profileEdits) next to cfg.
+const paneDirty = (k) => k === 'profiles' ? profilesDirty() : (PANE_FIELDS[k] || []).some(f => fieldChanged(f));
+const cfgDirty = () => !!cfg && !!cfgSnapshot && Object.keys(PANE_FIELDS).some(paneDirty);
+const isDirty = () => cfgDirty() || profilesDirty();
 
 // A disabled toggle renders off and ignores clicks: the backend cannot honour
 // it on this OS, so it must not look enabled.
@@ -1276,7 +1451,7 @@ async function renderSettings() {
   if (state.update) updState = state.update;
   const v = $('#v-settings');
   v.innerHTML = '';
-  v.append(el(`<div><h2 class="title">Settings</h2><p class="sub">Changes are saved to config.yaml when you press Save.</p></div>`));
+  v.append(el(`<div><h2 class="title">Settings</h2><p class="sub">Changes apply when you press Save.</p></div>`));
   const wrap = el(`<div class="set-wrap"><nav class="set-nav" id="set-nav" aria-label="Settings sections"></nav><div id="set-content"></div></div>`);
   v.append(wrap);
   const nav = $('#set-nav', wrap);
@@ -1302,11 +1477,17 @@ function syncSettingsNav() {
 // markDirty enables Save/Discard only when something changed and dots the
 // panes holding unsaved edits.
 function markDirty() {
-  const d = isDirty();
+  // The shared Save/Discard cover cfg only; profile edits have their own.
+  const d = cfgDirty();
   const s = $('#save');
   if (s) s.disabled = !d || api.offline;
   const x = $('#discard');
   if (x) x.disabled = !d;
+  const pd = profilesDirty();
+  const ps = $('#prof-save');
+  if (ps) ps.disabled = !pd || api.offline;
+  const px = $('#prof-discard');
+  if (px) px.disabled = !pd;
   document.querySelectorAll('#set-nav [data-pane]').forEach(b => {
     const pd = paneDirty(b.dataset.pane);
     b.classList.toggle('dirty', pd);
@@ -1327,17 +1508,17 @@ function gamesPaneHTML() {
 function platformsPaneHTML() {
   const claimFields =
     row('Claim button selector (inventory page)', 'Used only when a normal claim fails: dropwarden opens the Twitch inventory page and clicks the first element matching this CSS selector whose label matches the text below. Empty = only save the page\'s buttons to the debug folder.',
-      `<input class="input mono" type="text" data-field="claimButtonSelector" value="${esc(cfg.claimButtonSelector)}" placeholder="empty = save buttons only, no click" style="width:100%">`, true) +
+      `<input class="input mono" type="text" data-field="claimButtonSelector" value="${esc(cfg.claimButtonSelector)}" placeholder="empty = save buttons only, no click" aria-label="Claim button selector" style="width:100%">`, true) +
     row('Claim button text', 'Whole label, not case-sensitive.',
-      `<input class="input mono" type="text" data-field="claimButtonText" value="${esc(cfg.claimButtonText)}" placeholder="Claim Now" style="width:100%">`, true);
+      `<input class="input mono" type="text" data-field="claimButtonText" value="${esc(cfg.claimButtonText)}" placeholder="Claim Now" aria-label="Claim button text" style="width:100%">`, true);
   return group('Twitch',
     row(pfBadge('twitch') + ' Twitch drops', 'Always on.', '<span class="pill active"><span class="d"></span> Always on</span>') +
     toggleRow('skipAccountLink', 'Skip drops that need a linked game account', 'Drops Twitch is already crediting are watched anyway. Off = watch everything; claims that fail show up in the queue as Needs you.'),
     advanced('Advanced (troubleshooting)', claimFields)) +
   group('Kick',
-    row(pfBadge('kick') + ' Kick drops (experimental)', 'Runs next to Twitch with the same games and queue. Starts and stops right away.', toggleHTML('kickEnabled', cfg.kickEnabled, 'Kick drops (experimental)')) +
+    row(pfBadge('kick') + ' Kick drops (experimental)', 'Runs next to Twitch with the same games and queue. Starts or stops when you press Save.', toggleHTML('kickEnabled', cfg.kickEnabled, 'Kick drops (experimental)')) +
     row('First run', 'Sign in to Kick once in its Chrome window; the session is kept. Kick rewards expire if left unclaimed, so keep an eye on the Needs you banner.', ''),
-    `<div class="warnnote">${icon('alert', 13)} Untested against a live campaign; runs in its own Chrome window.</div>`);
+    `<div class="warnnote">${icon('alert', 13)} Kick support is still new. If a Kick drop stops making progress, copy the diagnostics from the Debugging page and send them in.</div>`);
 }
 
 function playerPaneHTML() {
@@ -1356,7 +1537,7 @@ function browserPaneHTML() {
     : (hostInfo.chromePath ? `Using: <span class="mono">${esc(hostInfo.chromePath)}</span>` : '');
   return group('Browser',
     row('Chrome path', 'Blank = find Chrome automatically. Set it for Chrome Beta or an unusual install. ' + found,
-      `<input class="input mono" data-field="chromePath" value="${esc(cfg.chromePath)}" placeholder="found automatically" style="width:100%">`, true) +
+      `<input class="input mono" data-field="chromePath" value="${esc(cfg.chromePath)}" placeholder="found automatically" aria-label="Chrome path" style="width:100%">`, true) +
     toggleRow('alwaysOnBottom', 'Keep Chrome behind other windows (Windows only)', 'Keeps the watcher windows under your other windows without focusing them, so they keep earning drops. Not available on macOS or Linux; cover the window instead.', hostOS !== 'windows'));
 }
 
@@ -1431,11 +1612,16 @@ function renderSettingsContent() {
   const host = $('#set-content');
   if (!host) return;
   // The Profiles pane edits its own data through its own endpoints, so it
-  // skips the shared cfg form and Save/Discard wiring.
+  // skips the shared cfg form and Save/Discard wiring. Unsaved profile edits
+  // are kept (not reloaded) when the user comes back to the pane.
   if (settingsPane === 'profiles') {
     host.innerHTML = '<div class="empty">Loading profiles...</div>';
-    Promise.all([loadProfileEdits(), loadProfileLive()]).then(() => {
+    Promise.all([profilesDirty() ? null : loadProfileEdits(), loadProfileLive()]).then(() => {
       if (settingsPane === 'profiles') renderProfilesPane(host);
+    }).catch(e => {
+      if (settingsPane !== 'profiles') return;
+      host.innerHTML = `<div class="card"><div class="empty">Couldn't load your profiles right now. <button class="linkbtn" type="button" data-retry>Try again</button></div></div>`;
+      host.querySelector('[data-retry]').addEventListener('click', () => renderSettingsContent());
     });
     return;
   }
@@ -1482,8 +1668,10 @@ function onFieldInput(inp, host) {
     if (p) p.textContent = n + '%';
     inp.setAttribute('aria-valuetext', n + '%');
   } else if (f === 'updateIntervalHours') {
+    // An empty or invalid entry is kept as invalid (NaN), so Save can say so
+    // instead of quietly saving the old number the field no longer shows.
     const n = parseInt(inp.value, 10);
-    if (Number.isFinite(n)) cfg.updateIntervalHours = n;
+    cfg.updateIntervalHours = Number.isFinite(n) && n >= 1 ? n : NaN;
   } else if (f === 'theme') {
     cfg.theme = inp.value;
     applyTheme(cfg.theme); // live preview; Discard reverts it
@@ -1572,6 +1760,12 @@ async function saveSettings() {
   const before = snap();
   const restart = RESTART_FIELDS.some(f => fieldChanged(f, before));
   const rediscover = DISCOVERY_FIELDS.some(f => fieldChanged(f, before));
+  if (cfg.updateIntervalHours !== undefined && !(cfg.updateIntervalHours >= 1)) {
+    const m = 'Enter how many hours to wait between update checks (1 or more).';
+    showFieldError('updateIntervalHours', m);
+    toast(m, 'err');
+    return false;
+  }
   try {
     await api.saveConfig(cfg);
   } catch (e) {
@@ -1581,7 +1775,7 @@ async function saveSettings() {
     return false;
   }
   takeSnapshot();
-  applyTheme(cfg.theme);
+  applyTheme(cfg.theme, true);
   if (restart && anyEngineUp(await api.profiles())) restartNeeded = true;
   if (isActive('settings') && settingsPane !== 'profiles') renderSettingsContent();
   toast(rediscover ? 'Saved. Checking for drops for your games...' : 'Saved');
@@ -1591,20 +1785,48 @@ async function saveSettings() {
 }
 
 // restartChrome stops then starts every running engine so Chrome picks up
-// launch settings.
+// launch settings, and puts each one back the way it was: a window waiting for
+// sign-in comes back on the sign-in page (Start would mark it signed in), and
+// a paused one is paused again once it is up (Start would resume it).
 async function restartChrome(btn) {
   btn.disabled = true;
   btn.textContent = 'Restarting...';
   const up = [];
   for (const prof of await api.profiles()) {
-    for (const p of prof.platforms || []) if (p.up) up.push([prof.name, p.platform]);
+    for (const p of prof.platforms || []) {
+      if (p.up) up.push({ n: prof.name, pl: p.platform, mode: p.needsLogin ? 'login' : (p.status && p.status.paused ? 'paused' : 'watch') });
+    }
   }
   try {
-    for (const [n, pl] of up) await api.engine(pl, n).stop();
-    await waitEnginesDown(up);
-    for (const [n, pl] of up) await api.engine(pl, n).start();
+    for (const e of up) await api.engine(e.pl, e.n).stop();
+    await waitEngines(up, false);
+    for (const e of up) {
+      const a = api.engine(e.pl, e.n);
+      await (e.mode === 'login' ? a.login() : a.start());
+    }
+    // Pause each formerly paused engine the moment IT is up (a fresh engine
+    // starts watching at once), and stop any that never comes back rather
+    // than leave it set to watch.
+    const left = new Set(up.filter(e => e.mode === 'paused'));
+    // A pause that fails must not leave that engine watching, nor skip the
+    // engines after it: it joins the stop list below.
+    const unpaused = [];
+    for (let i = 0; i < 120 && left.size; i++) {
+      const ps = (await api.refreshState()).profiles || [];
+      for (const e of [...left]) {
+        const pr = ps.find(p => p.name === e.n);
+        if (pr && (pr.platforms || []).some(x => x.platform === e.pl && x.up)) {
+          left.delete(e);
+          try { await api.engine(e.pl, e.n).pause(); } catch (err) { unpaused.push(e); }
+        }
+      }
+      if (left.size) await sleep(250);
+    }
+    for (const e of [...left, ...unpaused]) {
+      try { await api.engine(e.pl, e.n).stop(); } catch (err) { /* reported by the toast below */ }
+    }
     restartNeeded = false;
-    toast('Chrome restarted');
+    toast(left.size || unpaused.length ? 'Chrome restarted. A paused window did not come back, so it was stopped; press Start when you want it.' : 'Chrome restarted');
   } catch (e) {
     toast(errText(e), 'err');
   }
@@ -1612,14 +1834,17 @@ async function restartChrome(btn) {
   refreshAll();
 }
 
-async function waitEnginesDown(list) {
+// waitEngines polls until every listed engine is up (wantUp) or down, for at
+// most 10 s.
+async function waitEngines(list, wantUp) {
   for (let i = 0; i < 20; i++) {
     const profiles = await api.refreshState().then(s => s.profiles || []);
-    const still = list.some(([n, pl]) => {
+    const pending = list.some(({ n, pl }) => {
       const prof = profiles.find(p => p.name === n);
-      return prof && (prof.platforms || []).some(x => x.platform === pl && x.up);
+      const isUp = !!prof && (prof.platforms || []).some(x => x.platform === pl && x.up);
+      return isUp !== wantUp;
     });
-    if (!still) return;
+    if (!pending) return;
     await sleep(500);
   }
 }
@@ -1640,7 +1865,7 @@ function confirmLeave() {
 
 function gameRowHTML(g, i, n) {
   const name = esc(g);
-  return `<div class="grow"><span class="grank mono">${i + 1}</span><span class="gname">${name}</span>` +
+  return `<div class="grow" data-fk="g:${name}"><span class="grank mono">${i + 1}</span><span class="gname">${name}</span>` +
     `<button class="qbtn" type="button" data-mv="${i}" data-step="-1" aria-label="Move ${name} up"${i === 0 ? ' disabled' : ''}>&#9650;</button>` +
     `<button class="qbtn" type="button" data-mv="${i}" data-step="1" aria-label="Move ${name} down"${i === n - 1 ? ' disabled' : ''}>&#9660;</button>` +
     `<button class="qbtn" type="button" data-rm="${i}" aria-label="Remove ${name}">&times;</button></div>`;
@@ -1665,11 +1890,24 @@ function renderGamesCtl() {
   if (!gamesCtl) return;
   const disabled = cfg.anyGame;
   gamesCtl.classList.toggle('dim', !!disabled);
+  // inert: a list shown as off must not be reachable by keyboard either.
+  gamesCtl.inert = !!disabled;
   const games = cfg.games || [];
   const rows = games.map((g, i) => gameRowHTML(g, i, games.length)).join('');
+  const fk = focusKey(gamesCtl);
   gamesCtl.innerHTML = (disabled ? '<div class="h">Any game is on (Advanced), so this list is ignored.</div>' : '') +
     `<div class="glist">${rows || '<span class="muted">No games yet. Add some below.</span>'}</div>`;
-  gamesCtl.querySelectorAll('[data-rm]').forEach(x => x.addEventListener('click', () => { cfg.games.splice(+x.dataset.rm, 1); renderGamesCtl(); refreshPickers(); }));
+  restoreFocus(gamesCtl, fk);
+  gamesCtl.querySelectorAll('[data-rm]').forEach(x => x.addEventListener('click', () => {
+    const i = +x.dataset.rm;
+    const kb = x === document.activeElement;
+    cfg.games.splice(i, 1);
+    renderGamesCtl();
+    refreshPickers();
+    // The removed row is gone: keyboard focus moves to the next remove button.
+    const rest = gamesCtl.querySelectorAll('[data-rm]');
+    if (kb && rest.length) rest[Math.min(i, rest.length - 1)].focus();
+  }));
   gamesCtl.querySelectorAll('[data-mv]').forEach(b => b.addEventListener('click', () => moveGame(+b.dataset.mv, +b.dataset.step)));
   markDirty();
 }
@@ -1684,9 +1922,11 @@ let catalogLoading = null;
 function loadCatalog(refresh = false) {
   if (catalogCache && !refresh) return Promise.resolve(catalogCache);
   if (catalogLoading && !refresh) return catalogLoading;
+  // A failure keeps the last good list, or stores a failed marker so the
+  // picker shows "Could not load the list" instead of loading forever.
   catalogLoading = api.gamesCatalog(refresh)
     .then(c => { catalogCache = c || { games: [] }; return catalogCache; })
-    .catch(e => { toast(errText(e), 'err'); return catalogCache || { games: [], failed: true }; })
+    .catch(() => { toast("Couldn't load the games with drops right now. Try Refresh in a moment.", 'err'); catalogCache = catalogCache || { games: [], failed: true }; return catalogCache; })
     .finally(() => { catalogLoading = null; });
   return catalogLoading;
 }
@@ -1725,6 +1965,7 @@ function renderSearchList(pk, results, q) {
   sec.hidden = !q;
   if (!q) return;
   if (results === null) { list.innerHTML = '<div class="muted pk-empty">Searching...</div>'; return; }
+  if (results === false) { list.innerHTML = '<div class="muted pk-empty">Couldn\'t search Twitch right now. Try again in a moment.</div>'; return; }
   if (!results.length) { list.innerHTML = '<div class="muted pk-empty">No Twitch categories match.</div>'; return; }
   list.innerHTML = results.map(r => pickerRowHTML(r.game, pk.has(r.game), '',
     r.boxArt ? `<img class="pk-art" src="${esc(r.boxArt)}" alt="" loading="lazy" width="24" height="32">` : '<span class="pk-art"></span>')).join('');
@@ -1735,16 +1976,18 @@ function renderSearchList(pk, results, q) {
 function onPickerInput(pk) {
   renderCatalogList(pk);
   clearTimeout(pk.timer);
+  // Every keystroke makes an answer still in flight stale, not only the
+  // next timer firing.
+  const seq = ++pk.seq;
   const q = pk.el.querySelector('.pk-search').value.trim();
   pk.lastQ = q.length >= 2 ? q : '';
   if (!pk.lastQ) { pk.results = []; renderSearchList(pk, [], ''); return; }
   renderSearchList(pk, null, q);
   pk.timer = setTimeout(async () => {
-    const seq = ++pk.seq;
-    let res = [];
-    try { res = await api.searchGames(q); } catch (e) { toast(errText(e), 'err'); }
+    let res;
+    try { res = (await api.searchGames(q)) || []; } catch (e) { res = false; }
     if (seq !== pk.seq) return;
-    pk.results = res || [];
+    pk.results = res;
     renderSearchList(pk, pk.results, pk.lastQ);
   }, 400);
 }
@@ -1770,7 +2013,8 @@ function gamePicker(has, add) {
   pk.refresh = () => { renderCatalogList(pk); renderSearchList(pk, pk.results, pk.lastQ); };
   pk.open = () => { renderCatalogList(pk); loadCatalog().then(() => renderCatalogList(pk)); };
   pk.el.querySelector('.pk-search').addEventListener('input', () => onPickerInput(pk));
-  pk.el.querySelector('.pk-refresh').addEventListener('click', () => { catalogCache = null; renderCatalogList(pk); loadCatalog(true).then(() => refreshPickers()); });
+  // Refresh keeps showing the current list until the new one arrives.
+  pk.el.querySelector('.pk-refresh').addEventListener('click', () => { loadCatalog(true).then(() => refreshPickers()); });
   pk.el.addEventListener('click', e => { const b = e.target.closest('[data-pk-add]'); if (b) pickerAdd(pk, b.dataset.pkAdd); });
   const free = pk.el.querySelector('.pk-free');
   const addFree = () => { pickerAdd(pk, free.value); free.value = ''; free.focus(); };
@@ -1796,15 +2040,27 @@ function mountSharedPicker() {
 // ---- Settings > Profiles pane ----
 
 // profileEdits is a mutable clone of GET /api/profiles; profileSnapshot the
-// untouched copy so saveProfileEdits sends only what changed.
+// untouched copy so saveProfileEdits sends only what changed, and the pane
+// knows when it holds unsaved edits.
 let profileEdits = null;
 let profileSnapshot = null;
 let profileLive = {};
 
-async function loadProfileEdits() {
+const cloneProfiles = (list) => (list || []).map(p => ({ ...p, games: [...(p.games || [])] }));
+const profileRowDirty = (p) => {
+  const o = (profileSnapshot || []).find(x => x.name === p.name);
+  return !o || JSON.stringify(o) !== JSON.stringify(p);
+};
+const profilesDirty = () => !!profileEdits && !!profileSnapshot && JSON.stringify(profileEdits) !== JSON.stringify(profileSnapshot);
+const resetProfileEdits = () => { if (profileSnapshot) profileEdits = cloneProfiles(profileSnapshot); };
+
+// loadProfileEdits reloads GET /api/profiles. keep=true (after adding or
+// removing a profile) keeps the unsaved edits of the other rows.
+async function loadProfileEdits(keep = false) {
   const list = await api.profileConfigs();
-  profileEdits = (list || []).map(p => ({ ...p, games: [...(p.games || [])] }));
-  profileSnapshot = (list || []).map(p => ({ ...p, games: [...(p.games || [])] }));
+  const edited = keep ? (profileEdits || []).filter(profileRowDirty) : [];
+  profileSnapshot = cloneProfiles(list);
+  profileEdits = cloneProfiles(list).map(p => edited.find(x => x.name === p.name) || p);
 }
 
 async function loadProfileLive() {
@@ -1823,6 +2079,7 @@ function arraysEqual(a, b) {
 function platformRuntimeStatus(p) {
   if (!p || !p.enabled) return { cls: 'idle', label: 'off' };
   if (!p.up) {
+    if (p.launchError) return { cls: 'off', label: 'failed to start' };
     if (p.wanted) return { cls: 'warn', label: 'starting' };
     return p.needsLogin ? { cls: 'warn', label: 'needs sign-in' } : { cls: 'idle', label: 'stopped' };
   }
@@ -1854,45 +2111,67 @@ function renderProfilesPane(host) {
   }
   renderProfileRows(host);
   host.querySelector('#prof-save').addEventListener('click', () => saveProfileEdits(host));
-  host.querySelector('#prof-discard').addEventListener('click', () => renderSettingsContent());
+  host.querySelector('#prof-discard').addEventListener('click', () => { resetProfileEdits(); renderProfileRows(host); markDirty(); });
   host.querySelector('#np-add').addEventListener('click', () => addProfileFlow(host));
+  markDirty();
+}
+
+// profileStatusHTML is one Profiles row's live per-platform status line.
+function profileStatusHTML(name, enabled) {
+  const livePlats = profileLive[name] || [];
+  const tw = platformRuntimeStatus(livePlats[0] || { enabled });
+  const kickLive = livePlats[1] || { enabled: false, up: false };
+  const kk = platformRuntimeStatus(kickLive);
+  return `<span><span class="fdot ${tw.cls}"></span>Twitch ${esc(tw.label)}</span>` +
+    (kickLive.enabled || kickLive.up ? `<span><span class="fdot ${kk.cls}"></span>Kick ${esc(kk.label)}</span>` : '');
 }
 
 function profileRowEl(p, onlyOne, host) {
-  const livePlats = profileLive[p.name] || [];
-  const tw = platformRuntimeStatus(livePlats[0] || { enabled: p.enabled });
-  const kickLive = livePlats[1] || { enabled: false, up: false };
-  const kk = platformRuntimeStatus(kickLive);
   const dn = p.displayName || p.name;
-  const row = el(`<div class="row stacked">
+  const row = el(`<div class="row stacked" data-prof="${esc(p.name)}">
     <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
       <input class="input" data-pf="displayName" value="${esc(p.displayName)}" placeholder="${esc(p.name)}" aria-label="Display name for ${esc(p.name)}" style="width:160px">
       <span class="mono muted">${esc(p.name)}</span>
       <div style="flex:1"></div>
-      <label class="inl">${pfBadge('kick')} ${toggleHTML('kickEnabled', p.kickEnabled, 'Kick for ' + dn)}</label>
-      <label class="inl">Enabled ${toggleHTML('enabled', p.enabled, 'Enable ' + dn)}</label>
+      <div class="inl inl-tog">${pfBadge('kick')} ${toggleHTML('kickEnabled', p.kickEnabled, 'Kick for ' + dn)}</div>
+      <div class="inl inl-tog">Enabled ${toggleHTML('enabled', p.enabled, 'Enable ' + dn)}</div>
     </div>
-    <div class="inl-status">
-      <span><span class="fdot ${tw.cls}"></span>Twitch ${esc(tw.label)}</span>
-      ${kickLive.enabled || kickLive.up ? `<span><span class="fdot ${kk.cls}"></span>Kick ${esc(kk.label)}</span>` : ''}
-    </div>
-    <label class="inl">Use the shared games list ${toggleHTML('inheritGames', p.inheritGames, 'Use the shared games list for ' + dn)}</label>
+    <div class="inl-status">${profileStatusHTML(p.name, p.enabled)}</div>
+    <div class="inl inl-tog">Use the shared games list ${toggleHTML('inheritGames', p.inheritGames, 'Use the shared games list for ' + dn)}</div>
     <div class="games-ctl ${p.inheritGames ? 'dim' : ''}" data-pf-games></div>
     <div data-pf-remove style="display:flex;justify-content:flex-end;align-items:center;gap:8px"></div>
   </div>`);
+  // changed: every edit clears this row's games error and repaints the
+  // Save/Discard state and the Profiles dirty dot.
+  const changed = () => {
+    const e = row.querySelector('.field-err');
+    if (e) e.remove();
+    markDirty();
+  };
   row.querySelectorAll('[data-toggle]').forEach(sw => {
     const flip = () => {
       const on = !sw.classList.contains('on');
       sw.classList.toggle('on', on);
       sw.setAttribute('aria-checked', String(on));
       p[sw.dataset.toggle] = on;
-      if (sw.dataset.toggle === 'inheritGames') row.querySelector('[data-pf-games]').classList.toggle('dim', on);
+      if (sw.dataset.toggle === 'inheritGames') {
+        const g = row.querySelector('[data-pf-games]');
+        g.classList.toggle('dim', on);
+        g.inert = on;
+      }
+      changed();
     };
     sw.addEventListener('click', e => { e.preventDefault(); flip(); });
     sw.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } });
+    // The words next to a switch toggle it too.
+    const wrap = sw.closest('.inl-tog');
+    if (wrap) wrap.addEventListener('click', e => { if (!sw.contains(e.target)) flip(); });
   });
-  row.querySelector('[data-pf="displayName"]').addEventListener('input', e => { p.displayName = e.target.value; });
-  renderProfileGamesChips(row.querySelector('[data-pf-games]'), p);
+  // inert: the own-games editor is off (and not reachable) while inheriting.
+  const pfGames = row.querySelector('[data-pf-games]');
+  pfGames.inert = !!p.inheritGames;
+  row.querySelector('[data-pf="displayName"]').addEventListener('input', e => { p.displayName = e.target.value; changed(); });
+  renderProfileGamesChips(row.querySelector('[data-pf-games]'), p, changed);
   attachRemoveControl(row.querySelector('[data-pf-remove]'), p, onlyOne, host);
   return row;
 }
@@ -1929,8 +2208,8 @@ function attachRemoveControl(wrap, p, onlyOne, host) {
     try {
       const r = await api.removeProfile(p.name);
       toast(`Profile removed. Its queue, history and sign-ins are still on disk at ${r.dataDir}.`);
-      await Promise.all([loadProfileEdits(), loadProfileLive()]);
-      if (settingsPane === 'profiles') renderProfileRows(host);
+      await Promise.all([loadProfileEdits(true), loadProfileLive()]);
+      if (settingsPane === 'profiles') { renderProfileRows(host); markDirty(); }
     } catch (e) {
       reset();
       toast(errText(e), 'err');
@@ -1939,26 +2218,62 @@ function attachRemoveControl(wrap, p, onlyOne, host) {
   wrap.append(btn);
 }
 
-// renderProfileGamesChips renders one profile's own games (chips) plus a
-// game picker behind an "Add games" disclosure; the catalog loads when the
-// disclosure first opens.
-function renderProfileGamesChips(container, p) {
+// renderProfileGamesChips renders one profile's own games as an ordered list
+// (the same rows as the shared list: order sets priority) plus a game picker
+// behind an "Add games" disclosure; the catalog loads when it first opens.
+function renderProfileGamesChips(container, p, onChange) {
   if (!container) return;
-  container.innerHTML = `<div class="chips pchips" style="justify-content:flex-start"></div><details class="adv"><summary>Add games</summary><div class="pk-host"></div></details>`;
-  const chips = container.querySelector('.pchips');
+  container.innerHTML = `<div class="glist" data-pglist></div><details class="adv"><summary>Add games</summary><div class="pk-host"></div></details>`;
+  const list = container.querySelector('[data-pglist]');
   const paint = () => {
-    chips.innerHTML = (p.games || []).map((g, i) => `<span class="chip">${esc(g)} <button type="button" class="chip-x" data-rm="${i}" aria-label="Remove ${esc(g)}">&times;</button></span>`).join('') ||
+    const games = p.games || [];
+    const fk = focusKey(list);
+    list.innerHTML = games.map((g, i) => gameRowHTML(g, i, games.length)).join('') ||
       '<span class="muted">No games of its own yet. Add some, or use the shared list.</span>';
-    chips.querySelectorAll('[data-rm]').forEach(x => x.addEventListener('click', () => { p.games.splice(+x.dataset.rm, 1); paint(); pk.refresh(); }));
+    restoreFocus(list, fk);
   };
-  const pk = gamePicker(g => gIndex(p.games, g) >= 0, g => { p.games.push(g); paint(); });
+  // One delegated handler: the rows are rebuilt on every change.
+  list.addEventListener('click', e => {
+    const b = e.target.closest('[data-rm], [data-mv]');
+    if (!b) return;
+    const kb = b === document.activeElement;
+    if (b.dataset.rm !== undefined) {
+      const i = +b.dataset.rm;
+      p.games.splice(i, 1);
+      paint();
+      const rest = list.querySelectorAll('[data-rm]');
+      if (kb && rest.length) rest[Math.min(i, rest.length - 1)].focus();
+      pk.refresh();
+    } else {
+      const i = +b.dataset.mv, j = i + +b.dataset.step;
+      if (j < 0 || j >= p.games.length) return;
+      [p.games[i], p.games[j]] = [p.games[j], p.games[i]];
+      paint();
+    }
+    onChange();
+  });
+  const pk = gamePicker(g => gIndex(p.games, g) >= 0, g => { p.games.push(g); paint(); onChange(); });
   container.querySelector('.pk-host').append(pk.el);
   const det = container.querySelector('details');
   det.addEventListener('toggle', () => { if (det.open) pk.open(); });
   paint();
 }
 
-async function saveProfileEdits(host) {
+// saveProfileEdits saves the changed profiles; returns true on success. A
+// profile switched to its own games list with no games is refused here: the
+// server would store that as "use the shared list" and the toggle would flip
+// back. A row already saved that way (any_game set in config.yaml) is fine.
+async function saveProfileEdits(host = $('#set-content')) {
+  const ownEmpty = (p) => !!p && !p.inheritGames && !(p.games || []).length;
+  const empty = (profileEdits || []).find(p => ownEmpty(p) && !ownEmpty((profileSnapshot || []).find(x => x.name === p.name)));
+  if (empty) {
+    const msg = `Add at least one game for ${empty.displayName || empty.name}, or turn "Use the shared games list" back on.`;
+    const r = host && host.querySelector(`[data-prof="${CSS.escape(empty.name)}"]`);
+    if (r && !r.querySelector('.field-err')) r.querySelector('[data-pf-games]').before(el('<div class="field-err" role="alert"></div>'));
+    if (r) r.querySelector('.field-err').textContent = msg;
+    toast(msg, 'err');
+    return false;
+  }
   try {
     for (const p of profileEdits) {
       const orig = (profileSnapshot || []).find(o => o.name === p.name);
@@ -1972,10 +2287,13 @@ async function saveProfileEdits(host) {
     }
     toast('Saved');
     await Promise.all([loadProfileEdits(), loadProfileLive()]);
-    if (settingsPane === 'profiles') renderProfileRows(host);
+    if (settingsPane === 'profiles' && host) renderProfileRows(host);
+    markDirty();
     refreshAll();
+    return true;
   } catch (e) {
     toast(errText(e), 'err');
+    return false;
   }
 }
 
@@ -1992,13 +2310,18 @@ async function addProfileFlow(host) {
     await api.addProfile(name, dispInp.value.trim());
     toast('Profile added. Press Log in on its Dashboard card to sign in, then Start.');
     nameInp.value = ''; dispInp.value = '';
-    await loadProfileEdits();
-    if (settingsPane === 'profiles') renderProfileRows(host);
-    // Poll briefly so the new row's live status appears.
+    await Promise.all([loadProfileEdits(true), loadProfileLive()]);
+    if (settingsPane === 'profiles') { renderProfileRows(host); markDirty(); }
+    // Poll briefly so the new row's live status appears; only the status
+    // lines change, so typing in a row is never interrupted.
     for (let i = 0; i < 4 && settingsPane === 'profiles'; i++) {
       await sleep(1000);
       await loadProfileLive();
-      if (settingsPane === 'profiles') renderProfileRows(host);
+      if (settingsPane !== 'profiles') break;
+      host.querySelectorAll('[data-prof]').forEach(r => {
+        const p = (profileEdits || []).find(x => x.name === r.dataset.prof);
+        r.querySelector('.inl-status').innerHTML = profileStatusHTML(r.dataset.prof, p ? p.enabled : true);
+      });
     }
   } catch (e) {
     toast(errText(e), 'err');
@@ -2006,21 +2329,19 @@ async function addProfileFlow(host) {
 }
 
 // refreshDiscovery asks every running, unpaused engine for a discovery pass
-// and returns how many were asked.
+// and returns how many accepted the request.
 async function refreshDiscovery() {
-  let n = 0;
+  const calls = [];
   try {
     const profiles = await api.profiles();
     for (const prof of profiles) {
       for (const p of (prof.platforms || [])) {
-        if (p.up && !(p.status && p.status.paused)) {
-          api.engine(p.platform, prof.name).refresh().catch(() => {});
-          n++;
-        }
+        if (p.up && !(p.status && p.status.paused)) calls.push(api.engine(p.platform, prof.name).refresh());
       }
     }
   } catch (_) { /* nothing running */ }
-  return n;
+  const res = await Promise.allSettled(calls);
+  return res.filter(r => r.status === 'fulfilled').length;
 }
 
 // ---- Debugging view ----
@@ -2041,7 +2362,8 @@ async function copyDiagnostics(btn) {
   btn.disabled = true;
   try {
     const text = await api.diagnostics();
-    toast(await copyText(text) ? 'Diagnostics copied. Paste them into your bug report.' : 'Copy failed', 'ok');
+    const ok = await copyText(text);
+    toast(ok ? 'Diagnostics copied. Paste them into your bug report.' : 'Copy failed', ok ? 'ok' : 'err');
   } catch (e) { toast(errText(e), 'err'); }
   btn.disabled = false;
 }
@@ -2135,10 +2457,10 @@ function debugPlatformCard(name, p) {
   if (name === 'twitch') {
     if (disc) discLine = `responses ${disc.gqlResponses} - campaigns ${disc.campaignsParsed} - details ${disc.detailsParsed} - queued ${disc.enqueued}`;
     const token = ((disc && disc.headerKeys) || []).indexOf('client-integrity') !== -1;
-    extra = `<div class="kv"><span class="k">Twitch security token seen</span><span class="v" style="color:${token ? 'var(--ok)' : 'var(--err)'}">${token ? 'yes' : 'no'}</span></div>`;
+    extra = `<div class="kv"><span class="k">Twitch security token seen</span><span class="v" style="color:${token ? 'var(--pill-ok)' : 'var(--pill-err)'}">${token ? 'yes' : 'no'}</span></div>`;
   } else if (disc) {
     discLine = `status ${disc.apiStatus || '-'} - campaigns ${disc.campaignsParsed} - queued ${disc.enqueued}`;
-    if (disc.lastError) extra = `<div class="kv"><span class="k">Last error</span><span class="v" style="color:var(--err)">${esc(disc.lastError)}</span></div>`;
+    if (disc.lastError) extra = `<div class="kv"><span class="k">Last error</span><span class="v" style="color:var(--pill-err)">${esc(disc.lastError)}</span></div>`;
   }
   return `<div class="card mini dbg-card">
     <h3>${pfBadge(name)} ${esc(platLabel(name))}</h3>
@@ -2170,21 +2492,44 @@ async function renderDebugPanel() {
   }
   let cards = debugPlatformCard('twitch', prof.twitch || {});
   if (prof.kick && prof.kick.enabled) cards += debugPlatformCard('kick', prof.kick);
-  host.innerHTML = pills + cards + `<div class="card mini">
-    <div class="kv"><span class="k">Debug folder</span><span class="v mono path" title="${esc(paths.debugDir || '')}">${esc(paths.debugDir || '')}</span></div>
-    <div class="log-head"><div class="caption" style="margin:0">Recent log</div><button class="btn ghost btn-sm" id="dbg-log-copy" type="button">Copy log</button></div>
-    <pre id="dbg-log" class="log-pre" tabindex="0">${esc(logText)}</pre>
-  </div>`;
-  host.querySelectorAll('[data-dbgprof]').forEach(b => b.addEventListener('click', () => {
-    debugProfile = b.dataset.dbgprof;
-    renderDebugPanel();
-  }));
+  // Built once, then only the parts that changed are repainted: the log keeps
+  // its scroll position and any text selection, and focus survives.
+  if (!host.querySelector('#dbg-log')) {
+    host.innerHTML = `<div id="dbg-top"></div><div class="card mini">
+      <div class="kv"><span class="k">Debug folder</span><span class="v mono path" id="dbg-dir"></span></div>
+      <div class="log-head"><div class="caption" style="margin:0">Recent log</div><button class="btn ghost btn-sm" id="dbg-log-copy" type="button">Copy log</button></div>
+      <pre id="dbg-log" class="log-pre" tabindex="0"></pre>
+    </div>`;
+    host.querySelector('#dbg-top').addEventListener('click', e => {
+      const b = e.target.closest('[data-dbgprof]');
+      if (!b) return;
+      debugProfile = b.dataset.dbgprof;
+      renderDebugPanel();
+    });
+    host.querySelector('#dbg-log-copy').addEventListener('click', async () => {
+      const ok = await copyText(host.querySelector('#dbg-log').textContent);
+      toast(ok ? 'Log copied' : 'Copy failed', ok ? 'ok' : 'err');
+    });
+  }
+  const top = host.querySelector('#dbg-top');
+  if (top.dwKey !== pills + cards) {
+    const fk = focusKey(top);
+    top.innerHTML = pills + cards;
+    top.dwKey = pills + cards;
+    restoreFocus(top, fk);
+  }
+  const dir = host.querySelector('#dbg-dir');
+  dir.textContent = paths.debugDir || '';
+  dir.title = paths.debugDir || '';
   const logEl = host.querySelector('#dbg-log');
-  if (logEl) logEl.scrollTop = logEl.scrollHeight;
-  host.querySelector('#dbg-log-copy').addEventListener('click', async () => {
-    const ok = await copyText(logText);
-    toast(ok ? 'Log copied' : 'Copy failed', ok ? 'ok' : 'err');
-  });
+  const sel = window.getSelection();
+  const selecting = !!sel && !sel.isCollapsed && logEl.contains(sel.anchorNode);
+  if (logEl.textContent !== logText && !selecting) {
+    // Follow new lines only when the user is already at (or near) the end.
+    const atEnd = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 20;
+    logEl.textContent = logText;
+    if (atEnd) logEl.scrollTop = logEl.scrollHeight;
+  }
 }
 
 // ---- shell ----
@@ -2208,11 +2553,14 @@ async function go(view) {
   if (isActive('settings') && isDirty()) {
     const c = await confirmLeave();
     if (c === 'cancel') return;
-    if (c === 'save' && !(await saveSettings())) return;
-    if (c === 'discard') discardSettings();
+    if (c === 'save') {
+      if (profilesDirty() && !(await saveProfileEdits())) return;
+      if (cfgDirty() && !(await saveSettings())) return;
+    }
+    if (c === 'discard') { discardSettings(); resetProfileEdits(); }
   }
   switchView(view);
-  $('.app').classList.remove('rail-open');
+  setRail(false);
   if (view === 'queue') renderQueue();
   else if (view === 'history') renderHistory();
   else if (view === 'settings') renderSettings();
@@ -2220,21 +2568,36 @@ async function go(view) {
   else renderDashboard();
 }
 
-// queueBusy: skip the queue poll re-render while the user is mid-drag, has the
-// priority dropdown open, or is keyboard-focused inside the list.
+// queueBusy: skip the queue poll re-render while the user is mid-drag or has
+// just opened the priority dropdown (no choice made yet, at most 10 s). Focus
+// anywhere else in the list survives the re-render (focusKey/restoreFocus).
 function queueBusy() {
   if (dragRow) return true;
   const a = document.activeElement;
-  return !!(a && a.closest('#v-queue') && (a.tagName === 'SELECT' || a.closest('.qrow')));
+  return !!(a && a.id === 'prio' && !prioChanged && Date.now() - prioOpenedAt < 10000);
+}
+
+// setRail opens or closes the narrow-window rail overlay and keeps the menu
+// button's aria-expanded in step.
+function setRail(open) {
+  $('.app').classList.toggle('rail-open', open);
+  const tog = $('#rail-toggle');
+  if (tog) tog.setAttribute('aria-expanded', String(open));
 }
 
 function initShell() {
   document.querySelectorAll('[data-icon]').forEach(n => { n.innerHTML = icon(n.dataset.icon, 14); });
   document.querySelectorAll('.nav').forEach(n => n.addEventListener('click', () => go(n.dataset.view)));
   const tog = $('#rail-toggle');
-  if (tog) tog.addEventListener('click', () => {
-    const open = $('.app').classList.toggle('rail-open');
-    tog.setAttribute('aria-expanded', String(open));
+  if (tog) tog.addEventListener('click', () => setRail(!$('.app').classList.contains('rail-open')));
+  // The open rail closes on Escape or a press anywhere outside it.
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || e.defaultPrevented || modalClose || !$('.app').classList.contains('rail-open')) return;
+    setRail(false);
+    if (tog) tog.focus();
+  });
+  document.addEventListener('mousedown', e => {
+    if ($('.app').classList.contains('rail-open') && !e.target.closest('.rail')) setRail(false);
   });
   // Any "Choose games" link anywhere opens Settings > Games.
   document.addEventListener('click', e => {
@@ -2243,15 +2606,19 @@ function initShell() {
 }
 
 function init() {
+  // The last saved theme until the config arrives (none = follow the OS).
+  applyTheme(LS.get('dw.theme'));
   initShell();
   loadCfg().then(c => {
     cfg = c;
     takeSnapshot();
-    applyTheme(cfg && cfg.theme);
+    applyTheme(cfg && cfg.theme, !api.offline);
     refreshAll();
   }).catch(() => refreshAll());
-  // Live updates: re-poll the active view periodically.
+  // Live updates: re-poll the active view periodically, but not while the
+  // window is hidden (tray-first: that is most of the time).
   setInterval(() => {
+    if (document.hidden) return;
     if (isActive('dashboard')) renderDashboard();
     else {
       if (isActive('queue') && !queueBusy()) renderQueue();
@@ -2261,7 +2628,13 @@ function init() {
     }
     renderFoot();
   }, 5000);
-  setInterval(() => { if (isActive('debug')) renderDebugPanel(); }, 4000);
+  setInterval(() => { if (!document.hidden && isActive('debug')) renderDebugPanel(); }, 4000);
+  // Shown again from the tray: repaint at once instead of waiting for a poll.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    refreshAll();
+    if (isActive('debug')) renderDebugPanel();
+  });
 }
 
 function isActive(view) {

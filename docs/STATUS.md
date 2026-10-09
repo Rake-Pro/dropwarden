@@ -278,7 +278,10 @@ login-mode window in place); `Stop` tears the window down (no watcher -> no
 Chrome); new `Login` brings the window up parked on the login page - the ONE
 launch with no watcher, because logging in needs the browser. The engine action
 route no longer requires a live engine for start/login/stop; only skip/refresh
-keep the "not running" error. `/api/state` reports `needsLogin` while a runtime
+keep the "not running" error. (2026-10-09: a `pause` action joins them - it
+parks a live engine like the tray's Pause, used by Settings "Restart now";
+skip takes an optional JSON body `{dropID}` and answers 400 when that drop is
+no longer the one being watched.) `/api/state` reports `needsLogin` while a runtime
 is DOWN (via `Backend.needsLoginDown` -> `App.NeedsLogin`) so the dashboard can
 offer a Log in button before any Chrome exists. Frontend: a down+enabled
 platform shows Start (+ "Log in" / "Start anyway" when it has never signed in);

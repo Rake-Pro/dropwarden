@@ -10,11 +10,18 @@ light and dark backgrounds:
   clasp   #7a4c14  x 10..14, y 8.6..15, rounded (r 1.2)
   keyhole #ffd685  circle at (12, 11.4), r 1.1
 
-Outputs (commit them; the release workflow consumes them):
+Outputs (commit them; the release workflow and the Go embed consume them):
   build/icons/dropwarden_icon.png  1024x1024 master (macOS icns is built from
                                     it on the CI runner by scripts/bundle.sh)
   build/icons/dropwarden.ico       16/24/32/48/64/128/256 (Windows exe + installer)
-  build/icons/tray.png             44x44 (for future tray use)
+  build/icons/tray.png             44x44 plain tray icon (kept for reference)
+  cmd/dropwarden/icons/tray_<level>.png   44x44 tray/menu-bar icons, one per
+                                    status level (idle, watching, paused,
+                                    attention); the non-idle ones carry a
+                                    coloured dot in the bottom-right corner
+  cmd/dropwarden/icons/dock_<level>.png   512x512, same levels, for the macOS
+                                    Dock icon (application.SetIcon) and the
+                                    About dialog
 
 Run from the repo root: python3 scripts/gen-icons.py
 """
@@ -23,6 +30,7 @@ import os
 from PIL import Image, ImageDraw
 
 OUT = "build/icons"
+EMBED = "cmd/dropwarden/icons"
 SIZE = 1024
 SS = 4  # supersampling factor; drawn at SIZE*SS and downsampled
 
@@ -67,8 +75,36 @@ def draw_master():
     return img.resize((SIZE, SIZE), Image.LANCZOS)
 
 
+# Status levels and their dot colours (the dashboard's ok/warn/err tokens).
+# idle has no dot: the plain chest means "running, nothing to say".
+LEVELS = {
+    "idle": None,
+    "watching": (0x3F, 0xB9, 0x84, 255),
+    "paused": (0xE8, 0xB1, 0x4C, 255),
+    "attention": (0xE5, 0x68, 0x7A, 255),
+}
+
+
+def with_dot(master, color):
+    """Return a copy of the 1024px master with a status dot bottom-right.
+
+    The dot sits over the plate corner with a plate-coloured ring so it stays
+    separated from the chest body at tray sizes (16-22 px rendered).
+    """
+    if color is None:
+        return master
+    img = master.copy()
+    d = ImageDraw.Draw(img)
+    cx = cy = SIZE - 230
+    ring, dot = 200, 160
+    d.ellipse([cx - ring, cy - ring, cx + ring, cy + ring], fill=PLATE)
+    d.ellipse([cx - dot, cy - dot, cx + dot, cy + dot], fill=color)
+    return img
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
+    os.makedirs(EMBED, exist_ok=True)
     master = draw_master()
     master.save(os.path.join(OUT, "dropwarden_icon.png"))
 
@@ -77,8 +113,15 @@ def main():
 
     master.resize((44, 44), Image.LANCZOS).save(os.path.join(OUT, "tray.png"))
 
-    for name in sorted(os.listdir(OUT)):
-        print("wrote", os.path.join(OUT, name), os.path.getsize(os.path.join(OUT, name)), "bytes")
+    for level, color in LEVELS.items():
+        img = with_dot(master, color)
+        img.resize((44, 44), Image.LANCZOS).save(os.path.join(EMBED, f"tray_{level}.png"))
+        img.resize((512, 512), Image.LANCZOS).save(os.path.join(EMBED, f"dock_{level}.png"))
+
+    for out in (OUT, EMBED):
+        for name in sorted(os.listdir(out)):
+            if name.endswith((".png", ".ico")):
+                print("wrote", os.path.join(out, name), os.path.getsize(os.path.join(out, name)), "bytes")
 
 
 if __name__ == "__main__":

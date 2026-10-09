@@ -4,6 +4,79 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.2.10 - 2026-10-09
+
+### Changed
+- Wails v3 3.0.0-beta.17 -> beta.28 (Dependabot), the desktop framework
+  under the dashboard window and tray.
+
+### Fixed
+- macOS: the application menu next to the Apple menu was empty, so Cmd+Q
+  did nothing and the Dock's context menu was the only way to quit. The
+  menu bar now has the standard app menu (About, Hide, Quit), Edit
+  (Cmd+C/V/X/A work inside the dashboard) and Window menus.
+- Closing the dashboard window now hides it on every platform. On Windows
+  and Linux the close button used to end the whole app, tray included.
+- Settings > Profiles: unsaved changes are no longer lost when you switch to
+  another settings page or leave Settings. You are asked to save first, and
+  Save and Discard only light up when something changed. Adding or removing
+  a profile keeps your unsaved changes on the other profiles, and clicking
+  the words next to a switch now flips it.
+- Settings > Profiles: if your profiles cannot be loaded, the page says so
+  and offers Try again, instead of showing made-up sample profiles.
+- A profile with its own games list must have at least one game before it
+  can be saved; it no longer quietly switches back to the shared list. That
+  list can now be reordered like the shared one, and the Queue sorts that
+  profile's games by it.
+- "Restart now" after changing a Chrome setting no longer resumes watching
+  you had paused, and no longer skips a sign-in that is still needed. A
+  paused window that does not come back is left stopped, not watching.
+- Queue: progress and statuses keep updating after you click a row or choose
+  a sort order. Pressing a row and letting go without moving it, or pressing
+  Escape while dragging, no longer changes the order or switches sorting to
+  "Your order". If a sort change fails, the page shows the order really in
+  use. With a platform filter on, an empty list says so and offers Show all.
+- Game picker: when the list of games with drops cannot load, it says so
+  instead of showing "Loading..." forever, and Refresh keeps the old list on
+  screen until the new one arrives. A failed search says so, and an older
+  search answer can no longer replace a newer one.
+- Progress never shows more minutes watched than the drop needs (such as
+  "73 / 60 min").
+- Dashboard buttons ignore a second press while the first one is still
+  working, and Skip drop only skips the drop shown on the card.
+- The Dashboard, Queue, History, Debugging and games lists keep keyboard
+  focus where it was when they refresh or when you move an item. Game lists
+  that are turned off can no longer be changed from the keyboard.
+- Debugging: the log no longer jumps to the bottom or drops your text
+  selection every few seconds.
+- Settings > Profiles shows "failed to start" for a Chrome that could not
+  start, instead of "starting" forever.
+- Easier to read: stronger contrast for small text, buttons, switches, text
+  boxes and the keyboard focus ring in both themes. Scrollbars and drop-down
+  lists follow dark mode. With the theme set to System, the window opens in
+  your computer's light or dark mode right away, without a dark flash first.
+- Layout: at the smallest window size Settings keeps its menu beside the
+  page; History never leaves one card alone on a row; card spacing, corners
+  and headings match across pages; the menu in a narrow window closes with
+  Escape or a click outside it, and scrolls when it is long.
+- Screen readers: the Chrome path and claim fields have names, queue rows
+  are announced as groups, and the sidebar status text is read out when the
+  sidebar is narrow.
+- Plainer wording: error messages in everyday words (including "dropwarden
+  isn't responding" while the app restarts), plainer reasons on queue rows
+  and status cards, the same "Watch time" and "Session success" labels on
+  the Dashboard and History, Up next shows the next drop of each profile
+  when you have several, the Kick setting says it applies when you press
+  Save, and "Copy failed" now shows as an error.
+- The update check interval can no longer be left blank and saved.
+
+### Added
+- Status in the menu bar / tray icon: the chest gets a green dot while a
+  drop is being watched, amber when watching is paused or backing off, red
+  when an account needs you (sign in, or the watcher stopped after repeated
+  errors). On macOS the Dock icon
+  shows the same dot. The icon replaces the old "dropwarden" text label.
+
 ## v0.2.9 - 2026-10-09
 
 ### Changed
