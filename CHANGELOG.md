@@ -4,6 +4,15 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.2.9 - 2026-10-09
+
+### Changed
+- Built with Go 1.27.2, the 2026-10-08 security release (GO-2026-6599 to
+  GO-2026-6617: net/http, crypto/tls, html/template and mime/multipart
+  fixes). The release workflow now pins that exact toolchain instead of the
+  1.27 line, so a runner's cached older patch cannot slip in.
+- modernc.org/sqlite 1.59.0 -> 1.60.1 (Dependabot, reviewed).
+
 ## v0.2.8 - 2026-09-30
 
 ### Fixed

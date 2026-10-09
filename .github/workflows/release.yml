@@ -20,8 +20,9 @@
 # AC_PASSWORD + TEAM_ID to notarize.
 #
 # Go: go.mod's directive is 1.27rc2, which setup-go's go-version-file would
-# resolve to that release candidate, so the toolchain is pinned to the 1.27
-# release line here instead.
+# resolve to that release candidate, so the toolchain is pinned here instead.
+# Exact patch, not "1.27.x": setup-go prefers a runner-cached toolchain that
+# satisfies the range, which can be an older patch missing security fixes.
 name: Release
 
 on:
@@ -42,7 +43,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GO_VERSION: "1.27.x"
+  GO_VERSION: "1.27.2"
   VERSION_PKG: github.com/rake-pro/dropwarden/internal/version.Version
 
 jobs:
