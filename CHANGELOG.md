@@ -4,6 +4,13 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.2.12 - 2026-10-17
+
+### Changed
+- golang.org/x/sys 0.48.0 -> 0.49.0 (Dependabot). Dependency-only release.
+  v0.2.11 was tagged on the same code without a changelog section, so its
+  release run stopped at the notes step and no v0.2.11 release exists.
+
 ## v0.2.10 - 2026-10-09
 
 ### Changed
