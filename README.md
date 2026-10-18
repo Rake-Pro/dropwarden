@@ -274,7 +274,8 @@ language as the sibling GoShareIt app.
 - Queue: grouped by game in your games-list order, pinned drops first. Rows
   that need you carry one button (Link account, Claim on Twitch, Claim on
   Kick, Log in) that opens the page as a background tab in that profile's
-  watcher Chrome.
+  watcher Chrome. In the headless service the page opens in your own browser
+  instead, and Log in opens the remote login view.
 - Debugging: "Copy diagnostics" copies a redacted text bundle (version, host,
   Chrome, update state, config without secrets, per-profile state, last 400
   log lines); "Export diagnostics" writes a zip to the Desktop. Neither

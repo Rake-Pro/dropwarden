@@ -110,6 +110,23 @@ func TestHTTPOpenFallsBackToSystemBrowser(t *testing.T) {
 	}
 }
 
+func TestHTTPOpenRefusedInRemoteMode(t *testing.T) {
+	opened := 0
+	oldSys, oldSess := openSystem, openInSession
+	openSystem = func(string) error { opened++; return nil }
+	openInSession = func(context.Context, browser.Session, string) error { opened++; return nil }
+	t.Cleanup(func() { openSystem, openInSession = oldSys, oldSess })
+
+	b := testBackend(t)
+	b.SetRemote(true)
+	h := NewHTTPHandler(b)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/open", strings.NewReader(`{"profile":"main","platform":"twitch","url":"https://www.twitch.tv/drops/inventory"}`)))
+	if rr.Code != 400 || !strings.Contains(rr.Body.String(), "own browser") || opened != 0 {
+		t.Fatalf("code=%d body=%s opened=%d", rr.Code, strings.TrimSpace(rr.Body.String()), opened)
+	}
+}
+
 func TestQueueAction(t *testing.T) {
 	c := domain.Campaign{AccountLinkURL: "https://www.twitch.tv/link/game"}
 	for _, tc := range []struct {

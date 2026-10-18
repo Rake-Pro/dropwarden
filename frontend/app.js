@@ -1225,6 +1225,14 @@ function wireOpenButton(row, q, profile) {
   if (!b) return;
   b.addEventListener('click', async (e) => {
     e.stopPropagation();
+    // The headless service's Chrome has no screen and the host has no desktop
+    // browser: a sign-in goes through the remote login view, any other page
+    // opens in this browser.
+    if (hostInfo.remote) {
+      if (/^log in$/i.test(String(q.actionLabel || '').trim())) return openRemoteLogin(profile, q.platform);
+      window.open(q.actionURL, '_blank', 'noopener');
+      return;
+    }
     try { await api.open(profile, q.platform, q.actionURL); toast('Opened in Chrome'); }
     catch (err) { toast(errText(err), 'err'); }
   });

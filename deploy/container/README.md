@@ -60,6 +60,9 @@ Nothing here has run on real hardware yet: see the verify-live gates below.
 - One mirror per (profile, platform): a second view gets 409 until the first closes.
 - Closing the view (or the socket) stops the screencast.
 - Nothing in the mirror activates the tab or focuses the window.
+- Queue buttons (Link account, Claim on Twitch, Claim on Kick) open the page in your
+  own browser: the service's Chrome has no screen to show a tab on. Log in opens the
+  remote login view. `POST /api/open` is refused in this mode.
 
 ## Chrome sandbox, GPU, seccomp
 

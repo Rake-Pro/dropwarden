@@ -4,6 +4,15 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.3.2 - 2026-10-18
+
+### Fixed
+- Headless service: the queue's Link account / Claim on Twitch / Claim on Kick
+  buttons opened a background tab in the service's Chrome, which has no
+  screen, and reported "Opened in Chrome". They now open the page in your own
+  browser; Log in opens the remote login view. `POST /api/open` is refused in
+  this mode.
+
 ## v0.3.1 - 2026-10-18
 
 ### Fixed

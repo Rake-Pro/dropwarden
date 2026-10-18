@@ -66,7 +66,9 @@ func (b *Backend) campaignLinkURL(profile, raw string) (*url.URL, bool) {
 
 // OpenURL opens an allowed URL as a new BACKGROUND tab in the profile and
 // platform's watcher Chrome when it is up (the watching tab is never touched
-// and nothing is brought to the front), else in the system browser.
+// and nothing is brought to the front), else in the system browser. The
+// headless service refuses: its Chrome has no screen to show a tab on and
+// there is no desktop browser, so the dashboard opens such links itself.
 func (b *Backend) OpenURL(ctx context.Context, profile, platform, raw string) error {
 	u, err := allowedOpenURL(raw)
 	if err != nil {
@@ -77,6 +79,9 @@ func (b *Backend) OpenURL(ctx context.Context, profile, platform, raw string) er
 		u = link
 	}
 	link := u.String()
+	if b.Remote() {
+		return fmt.Errorf("the headless service has no browser to show %s in: open it in your own browser", link)
+	}
 	if pb := b.Profile(profile); pb != nil {
 		if sess := pb.Session(domain.Platform(platform)); sess != nil && sess.Alive() {
 			tctx, cancel := context.WithTimeout(ctx, openTabTimeout)
