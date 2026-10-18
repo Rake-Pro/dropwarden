@@ -4,6 +4,18 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.3.1 - 2026-10-18
+
+### Fixed
+- Browser fingerprint: rod's default "laptop" device emulation injected a fixed
+  Mac Chrome/114 user agent and `en` language on every page while the real
+  Chrome is a different build on a different OS (`navigator.platform` said so).
+  The viewport emulation stays; the user agent is now the browser's own and the
+  language is `en-US,en`. Seen as Kick's "Too many attempts" on login.
+- Resume mid-cycle left the dashboard saying Paused: Start/Stop now update the
+  published status immediately instead of at the next Idle pass.
+- Headless service: the paused card no longer mentions the tray menu.
+
 ## v0.3.0 - 2026-10-18
 
 ### Added

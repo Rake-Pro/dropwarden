@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/devices"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/rake-pro/dropwarden/internal/config"
 	"github.com/rs/zerolog"
@@ -129,6 +130,18 @@ func LaunchInstance(ctx context.Context, bcfg config.BrowserConfig, profileDir s
 		_ = proc.Kill()
 		return nil, fmt.Errorf("browser: connect to cdp at %s: %w", ws, err)
 	}
+	// rod emulates its "laptop" device on every page it hands out, and that
+	// device carries a fixed Mac Chrome/114 user agent plus an "en" language,
+	// while the real Chrome is a different build on a different OS (and
+	// navigator.platform still says so): an inconsistent fingerprint. Keep the
+	// viewport emulation the watcher is tuned for, but report the browser's
+	// real user agent and language.
+	dev := devices.LaptopWithMDPIScreen.Landscape()
+	if ver, err := br.Version(); err == nil && ver.UserAgent != "" {
+		dev.UserAgent = ver.UserAgent
+	}
+	dev.AcceptLanguage = "en-US,en"
+	br.DefaultDevice(dev)
 
 	page, err := adoptPage(br)
 	if err != nil {

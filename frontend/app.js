@@ -670,7 +670,9 @@ function cardBody(kind, p, st, key) {
     case 'launching': return msg('Starting Chrome...');
     case 'stopped': return msg('Stopped. Press Start to open Chrome and start earning drops.');
     case 'login': return loginBody(p, st, key);
-    case 'paused': return msg('Paused from the tray menu. Chrome stays open but nothing is being watched.');
+    case 'paused': return msg(hostInfo.remote
+      ? 'Paused. Chrome stays open but nothing is being watched. Press Resume to continue.'
+      : 'Paused from the tray menu. Chrome stays open but nothing is being watched.');
     case 'watching': return watchingBody(p, st);
     case 'needs': return msg('A drop needs you. <button class="linkbtn" type="button" data-act="review">Review the queue</button> to see what to do.');
     case 'busy': return msg(esc((BUSY_COPY[st.state] || (() => 'Working...'))(st)));

@@ -15,8 +15,14 @@ func (e *Engine) processCommand(c command) {
 	switch c.kind {
 	case cmdStart:
 		e.paused = false
+		// Mirror the flag into the published status right away: a Start that
+		// lands mid-cycle (cooldown, discovery) otherwise keeps reporting
+		// Paused until the engine next passes through Idle, and the UI shows a
+		// running engine as paused.
+		e.setStatus(func(s *Status) { s.Paused = false })
 	case cmdStop:
 		e.paused = true
+		e.setStatus(func(s *Status) { s.Paused = true })
 	case cmdSkip:
 		e.skipReq = true
 	case cmdRefresh:
