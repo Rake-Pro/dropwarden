@@ -1,0 +1,10 @@
+#!/bin/bash
+# Selkies X11 session autostart (copied to /config/.config/openbox/autostart on
+# first run; delete that copy to pick up a changed default). Runs as user abc on
+# DISPLAY=:1. dropwarden is tray-first and quits only from its own menu, so a
+# plain restart loop is the whole supervisor.
+while true; do
+  /usr/local/bin/dropwarden
+  echo "dropwarden exited ($?), restarting in 10s" >&2
+  sleep 10
+done

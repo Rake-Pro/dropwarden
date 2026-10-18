@@ -1,0 +1,75 @@
+# dropwarden-desktop container image (deploy/container/Dockerfile) -> private
+# GHCR. Tag = the git tag (vX.Y.Z), nothing else: no :latest, no sha tags
+# (fleet semver standard). Runs on the same tag push as release.yml and on
+# demand for a rebuild (base image or Chrome moved) without a new app version.
+name: container
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing vX.Y.Z tag to build (default: the ref the run is dispatched on)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/rake-pro/dropwarden-desktop
+  GO_VERSION: "1.27.2"
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag != '' && inputs.tag || github.ref }}
+
+      - name: Resolve version
+        id: v
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.tag }}" ]; then tag="${{ inputs.tag }}"; else tag="${GITHUB_REF_NAME}"; fi
+          case "$tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "not a vX.Y.Z tag: $tag" >&2; exit 1 ;; esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/container/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ steps.v.outputs.tag }}
+          build-args: |
+            VERSION=${{ steps.v.outputs.version }}
+            GO_VERSION=${{ env.GO_VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Same gate as the other image repos: CRITICAL blocks, HIGH is reported.
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ steps.v.outputs.tag }}
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}

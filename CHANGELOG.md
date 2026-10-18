@@ -4,6 +4,15 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.2.13 - 2026-10-18
+
+### Added
+- `deploy/container/`: dropwarden-desktop container image (Linux GTK3 GUI +
+  Google Chrome stable inside the linuxserver Selkies web desktop) and
+  `.github/workflows/container.yml` building `ghcr.io/rake-pro/dropwarden-desktop:vX.Y.Z`
+  on tag push / dispatch. Prep for running the watcher on the rake.pro cluster's
+  node4; nothing verified on hardware yet (gates listed in deploy/container/README.md).
+
 ## v0.2.12 - 2026-10-17
 
 ### Changed
