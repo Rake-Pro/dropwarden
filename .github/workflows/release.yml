@@ -138,6 +138,7 @@ jobs:
           name: windows
           path: out/*
           if-no-files-found: error
+          retention-days: 1
 
   macos:
     needs: [version]
@@ -249,6 +250,7 @@ jobs:
           name: macos
           path: out/*
           if-no-files-found: error
+          retention-days: 1
 
   linux:
     needs: [version]
@@ -283,6 +285,7 @@ jobs:
           name: linux
           path: out/*
           if-no-files-found: error
+          retention-days: 1
 
   publish:
     needs: [version, windows, macos, linux]
