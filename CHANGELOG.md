@@ -4,6 +4,36 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## v0.3.0 - 2026-10-18
+
+### Added
+- `cmd/dropwarden-serve`: headless service mode. Same runtime as the desktop
+  app (profiles, live reconcile, one Chrome per profile) with no tray or
+  windows; serves the dashboard and API over HTTP (`-listen`, default
+  127.0.0.1:8080), `GET /healthz`, `-chrome-path` (used only when
+  `browser.chrome_path` is empty, never written to the config) and `-config`
+  (same as `DROPWARDEN_CONFIG`). SIGTERM/SIGINT shut down cleanly. The
+  self-updater never runs in this mode. Pure Go, builds with CGO off.
+- Remote login: `GET /api/remote/{profile}/{platform}/ws` mirrors a watcher
+  tab over CDP (JPEG screencast out, mouse/keyboard/paste in), same-origin
+  only, one viewer per window. The dashboard's sign-in cards get an "Open
+  remote login" view with a Login check button when running as the service.
+- `/api/state` `host.remote` (headless service) and `host.updates`
+  (self-updater running). With `updates: false` the dashboard hides the
+  update banner and the Updates pane shows the version only.
+
+### Changed
+- Container image rebased from the Selkies web desktop (GTK GUI) onto the
+  minimal Xvfb + Chrome base `ghcr.io/rake-pro/cluster-chrome`, published as
+  `ghcr.io/rake-pro/dropwarden:<tag>` (was `dropwarden-desktop`), running
+  `dropwarden-serve` on port 8080 with `DROPWARDEN_HOME=/home/chrome/dropwarden`.
+  The Selkies autostart script is gone. Chrome sandbox, GPU and seccomp come
+  from the base image and the pod spec.
+
+### Fixed
+- Keep-awake: a host with no sleep inhibitor (no `systemd-inhibit`, as in the
+  container) now logs one warning instead of one per engine state change.
+
 ## v0.2.13 - 2026-10-18
 
 ### Added

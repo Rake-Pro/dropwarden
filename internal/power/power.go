@@ -33,6 +33,10 @@ type Controller struct {
 	mu     sync.Mutex
 	active bool
 	closed bool
+	// holdFailed latches a failed Hold so a host without an inhibitor
+	// (systemd-inhibit missing in a container) warns once, not on every
+	// engine state change.
+	holdFailed bool
 }
 
 // New builds a controller over the host OS holder. cfg supplies the live
@@ -66,9 +70,13 @@ func (c *Controller) Refresh() {
 	switch {
 	case want && !c.active:
 		if err := c.h.Hold(); err != nil {
-			c.log.Warn().Err(err).Str("mode", mode).Msg("power: could not hold the sleep inhibitor")
+			if !c.holdFailed {
+				c.holdFailed = true
+				c.log.Warn().Err(err).Str("mode", mode).Msg("power: could not hold the sleep inhibitor; not retrying loudly")
+			}
 			return
 		}
+		c.holdFailed = false
 		c.active = true
 		c.log.Info().Str("mode", mode).Msg("power: keeping the system awake")
 	case !want && c.active:

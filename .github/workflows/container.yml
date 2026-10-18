@@ -19,7 +19,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/rake-pro/dropwarden-desktop
+  IMAGE: ghcr.io/rake-pro/dropwarden
   GO_VERSION: "1.27.2"
 
 jobs:

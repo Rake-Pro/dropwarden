@@ -56,6 +56,8 @@ func NewHTTPHandler(b *Backend) http.Handler {
 			// host.os lets the UI grey out settings this OS cannot back
 			// (always_on_bottom is Windows only). chromeFound/chromePath say
 			// whether a browser to launch exists (a stat per state call).
+			// remote marks the headless service (remote login offered);
+			// updates is false when no self-updater runs in this process.
 			"host": hostState(b),
 		})
 	})
@@ -445,6 +447,10 @@ func NewHTTPHandler(b *Backend) http.Handler {
 		writeJSON(w, out)
 	})
 
+	// Remote login: a WebSocket mirroring one (profile, platform) watcher tab
+	// (screencast out, input in). Headless service only; see remote.go.
+	mux.Handle("GET /api/remote/{profile}/{platform}/ws", newRemoteHandler(b))
+
 	// GET /api/profiles lists every profile's raw editable overlay for the
 	// Profiles settings pane (distinct from POST /api/profiles, which adds one).
 	mux.HandleFunc("GET /api/profiles", func(w http.ResponseWriter, r *http.Request) {
@@ -513,13 +519,15 @@ func minutesSpark(h *HistoryService, profile string) []int {
 }
 
 // hostState is /api/state's host object: the OS plus whether the configured
-// or auto-detected Chrome (Edge as a last resort on Windows) exists.
+// or auto-detected Chrome (Edge as a last resort on Windows) exists, and the
+// process mode (headless service, self-updater running).
 func hostState(b *Backend) map[string]any {
 	path, err := browser.FindChrome(b.config().Browser.ChromePath)
 	if err != nil {
 		path = ""
 	}
-	return map[string]any{"os": runtime.GOOS, "chromeFound": err == nil, "chromePath": path, "keepAwake": b.KeepingAwake()}
+	return map[string]any{"os": runtime.GOOS, "chromeFound": err == nil, "chromePath": path, "keepAwake": b.KeepingAwake(),
+		"remote": b.Remote(), "updates": b.updater() != nil}
 }
 
 // profileStates builds the per-profile state array for /api/state, in config

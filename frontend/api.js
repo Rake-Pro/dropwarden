@@ -68,7 +68,7 @@ const SAMPLE = {
   // Mirrors GET /api/update; a pending update so the dashboard banner and the
   // update dialog are designable offline.
   version: '0.1.0',
-  host: { os: 'windows', chromeFound: true, chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' },
+  host: { os: 'windows', chromeFound: true, chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', remote: false, updates: true },
   update: {
     currentVersion: '0.1.0', enabled: true, autoInstall: true, showChangelog: true, intervalHours: 24,
     feedURL: 'https://cdn.rake.pro/releases/dropwarden/latest.json', devBuild: false,

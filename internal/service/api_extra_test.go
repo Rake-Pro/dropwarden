@@ -316,7 +316,7 @@ func TestStateCarriesFrontendFields(t *testing.T) {
 		"autoEnqueueNew", "fallThrough", "volume", "forceLowestQuality", "muteAudio", "startMinimized", "alwaysOnBottom",
 		"chromePath", "kickEnabled", "skipAccountLink", "claimButtonSelector", "claimButtonText", "captureGqlBodies",
 		"updateEnabled", "updateAutoInstall", "updateShowChangelog", "updateFeedURL", "updateIntervalHours")
-	need("host", state["host"].(map[string]any), "os", "chromeFound", "chromePath")
+	need("host", state["host"].(map[string]any), "os", "chromeFound", "chromePath", "remote", "updates")
 	u := state["update"].(map[string]any)
 	need("state.update", u, updateKeys...)
 	if notes, ok := u["installedNotes"].([]any); !ok || notes == nil {

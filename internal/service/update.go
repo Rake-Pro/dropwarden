@@ -96,6 +96,22 @@ func (b *Backend) updater() Updater {
 	return b.upd
 }
 
+// SetRemote marks this process as the headless service (cmd/dropwarden-serve):
+// the dashboard runs in a browser elsewhere, so it offers remote login through
+// the /api/remote mirror instead of pointing at a local Chrome window.
+func (b *Backend) SetRemote(on bool) {
+	b.mu.Lock()
+	b.remote = on
+	b.mu.Unlock()
+}
+
+// Remote reports whether this process is the headless service.
+func (b *Backend) Remote() bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.remote
+}
+
 // Power is the host's sleep inhibitor (internal/power.Controller): Refresh
 // re-evaluates the keep-awake mode against the watch state, Active reports
 // whether the inhibitor is held.

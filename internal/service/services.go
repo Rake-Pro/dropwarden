@@ -154,6 +154,7 @@ type Backend struct {
 	rec      Reconciler
 	upd      Updater
 	pwr      Power
+	remote   bool
 	profiles map[string]*ProfileBackend
 	order    []string
 }

@@ -1,6 +1,9 @@
 package power
 
 import (
+	"bytes"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -55,5 +58,30 @@ func TestControllerFollowsModeAndWatchState(t *testing.T) {
 	c.Refresh()
 	if h.held {
 		t.Fatal("Refresh after Close must stay released")
+	}
+}
+
+type failHolder struct{ calls int }
+
+func (f *failHolder) Hold() error { f.calls++; return errors.New("systemd-inhibit not found") }
+func (f *failHolder) Release()    {}
+
+func TestControllerWarnsOnceWhenHoldFails(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Power.KeepAwake = config.KeepAwakeAlways
+	var buf bytes.Buffer
+	h := &failHolder{}
+	c := NewWith(func() *config.Config { return cfg }, func() bool { return true }, h, zerolog.New(&buf))
+	for range 5 {
+		c.Refresh()
+	}
+	if c.Active() {
+		t.Fatal("a failed hold must not report active")
+	}
+	if h.calls != 5 {
+		t.Fatalf("Hold calls = %d, want 5 (a later inhibitor may appear)", h.calls)
+	}
+	if n := strings.Count(buf.String(), "could not hold"); n != 1 {
+		t.Fatalf("warned %d times, want once:\n%s", n, buf.String())
 	}
 }

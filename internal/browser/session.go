@@ -32,6 +32,11 @@ type tab struct {
 	// sharing it cannot outlive it.
 	owner bool
 
+	// viewW/viewH are the viewport size (CSS px) of the latest screencast
+	// frame, which mirror input coordinates are scaled to (mirror.go).
+	mirrorMu     sync.Mutex
+	viewW, viewH float64
+
 	alive     atomic.Bool
 	closing   atomic.Bool
 	closeOnce sync.Once

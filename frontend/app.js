@@ -22,7 +22,8 @@ let cfg = null;
 // cfgSnapshot is the saved config as JSON: Settings compares cfg against it
 // for dirty tracking, and the Queue orders game sections by its games list.
 let cfgSnapshot = '';
-// hostInfo is /api/state host: { os, chromeFound, chromePath }.
+// hostInfo is /api/state host: { os, chromeFound, chromePath, keepAwake,
+// remote (headless service: offer remote login), updates (self-updater runs) }.
 let hostInfo = {};
 
 // selectedProfile drives the Queue/History profile pill bar: a module-level
@@ -289,7 +290,7 @@ function onUpdate(u) {
     startVersion = u.currentVersion;
   }
   const seq = u.promptSeq || 0;
-  if (lastPromptSeq === null) lastPromptSeq = seq;
+  if (lastPromptSeq === null || hostInfo.updates === false) lastPromptSeq = seq;
   else if (seq !== lastPromptSeq) { lastPromptSeq = seq; showUpdateModal(u); }
   renderUpdateProgress(u);
   syncUpdateBanner(u);
@@ -377,7 +378,7 @@ const hasNotes = (u) => !!(u && u.pending && u.showChangelog !== false && (u.pen
 // updBannerModel decides the dashboard banner copy for an update snapshot.
 function updBannerModel(u) {
   const p = u && u.pending;
-  if (!u || u.devBuild) return { show: false };
+  if (!u || u.devBuild || hostInfo.updates === false) return { show: false };
   if (updBusy(u)) return { show: true, title: `Updating to ${p ? 'v' + p.version : 'the new version'}`, detail: 'dropwarden restarts by itself when this finishes.' };
   if (!p) return { show: false };
   const notes = hasNotes(u);
@@ -528,7 +529,9 @@ function firstRunChecklist(state) {
   const c = state.config || cfg || {};
   const steps = [
     { ok: hostInfo.chromeFound !== false, label: 'Chrome found', act: 'chrome', btn: 'Browser settings' },
-    { ok: !tw.needsLogin, label: 'Sign in to Twitch', act: 'login', btn: 'Log in' },
+    hostInfo.remote && tw.up
+      ? { ok: !tw.needsLogin, label: 'Sign in to Twitch', act: 'remote', btn: 'Open remote login' }
+      : { ok: !tw.needsLogin, label: 'Sign in to Twitch', act: 'login', btn: 'Log in' },
     { ok: !!c.anyGame || (c.games || []).length > 0, label: 'Choose your games', act: 'games', btn: 'Choose games' },
     { ok: noteStarted(state), label: 'Start', act: 'start', btn: 'Start' },
   ];
@@ -547,6 +550,7 @@ function firstRunChecklist(state) {
 async function checklistAction(act, profile) {
   if (act === 'chrome') return openSettings('browser');
   if (act === 'games') return openSettings('games');
+  if (act === 'remote') return openRemoteLogin(profile, 'twitch');
   const a = api.engine('twitch', profile);
   try { await (act === 'login' ? a.login() : a.start()); }
   catch (e) { toast(errText(e), 'err'); }
@@ -647,7 +651,7 @@ function loginBody(p, st, key) {
   const expired = /session expired/i.test(p.reason || st.reason || '');
   const m = loginMsg[key];
   return `<div class="card-msg">
-    <p>${expired ? `Your ${esc(platLabel(p.platform))} session expired. ` : ''}Sign in to ${esc(platLabel(p.platform))} in the Chrome window dropwarden opened, then press I'm signed in.</p>
+    <p>${expired ? `Your ${esc(platLabel(p.platform))} session expired. ` : ''}${hostInfo.remote ? `Press Open remote login and sign in to ${esc(platLabel(p.platform))} there` : `Sign in to ${esc(platLabel(p.platform))} in the Chrome window dropwarden opened`}, then press I'm signed in.</p>
     <div class="login-msg ${m ? esc(m.cls) : ''}" aria-live="polite">${m ? esc(m.text) : ''}${m && m.detail ? `<div class="login-detail muted">Details: ${esc(m.detail)}</div>` : ''}</div>
   </div>`;
 }
@@ -660,7 +664,9 @@ function cardBody(kind, p, st, key) {
     case 'launch': return msg(`Chrome could not start: ${esc(clean(p.launchError))}. Check the path in <button class="linkbtn" type="button" data-act="chrome">Settings &gt; Browser</button>, then press Try again.`);
     case 'login-down': return /session expired/i.test(p.reason || '')
       ? msg(`Your ${plat} session expired. Log in again to keep earning drops.`)
-      : msg(`${plat} is not signed in yet. Press Log in, sign in in the window that opens, then press I'm signed in.`);
+      : msg(hostInfo.remote
+        ? `${plat} is not signed in yet. Press Log in, then sign in through Open remote login.`
+        : `${plat} is not signed in yet. Press Log in, sign in in the window that opens, then press I'm signed in.`);
     case 'launching': return msg('Starting Chrome...');
     case 'stopped': return msg('Stopped. Press Start to open Chrome and start earning drops.');
     case 'login': return loginBody(p, st, key);
@@ -692,8 +698,12 @@ function cardButtons(kind, p, st, key) {
     case 'stopped': return b('start', 'Start', 'primary');
     case 'login': {
       const extra = (loginMsg[key] || {}).unknown ? b('start', 'Start') : '';
-      if (/session expired/i.test(p.reason || st.reason || '')) return b('login', 'Log in', 'primary') + b('check-login', "I'm signed in") + extra + stop;
-      return b('check-login', "I'm signed in", 'primary') + extra + stop;
+      // The headless service has no window on this screen: the mirror is
+      // the way in, so it takes the primary slot.
+      const remote = hostInfo.remote ? b('remote', 'Open remote login', 'primary') : '';
+      const pri = hostInfo.remote ? '' : 'primary';
+      if (/session expired/i.test(p.reason || st.reason || '')) return remote + b('login', 'Log in', pri) + b('check-login', "I'm signed in") + extra + stop;
+      return remote + b('check-login', "I'm signed in", pri) + extra + stop;
     }
     case 'paused': return b('start', 'Resume', 'primary') + stop;
     case 'watching': return b('skip', 'Skip drop') + refresh + stop;
@@ -741,6 +751,155 @@ async function checkLogin(p, profile) {
   }
 }
 
+// ---- remote login (headless service only) ----
+
+// openRemoteLogin mirrors one watcher tab over /api/remote/.../ws: JPEG
+// frames are drawn on a canvas, and mouse and keyboard go back as input
+// events (x/y as fractions of the frame). Printable keys are sent as text
+// (char), so typing works without the remote side knowing the keyboard
+// layout. One mirror per window: a second view is refused by the server.
+let remoteClose = null;
+
+function openRemoteLogin(profile, platform) {
+  if (remoteClose) remoteClose();
+  const name = platLabel(platform);
+  const back = el(`<div class="modal-back remote-back">
+    <div class="remote card" role="dialog" aria-modal="true" aria-label="Remote login: ${esc(name)}">
+      <div class="remote-head">
+        <h3>Sign in to ${esc(name)}</h3>
+        <span class="remote-status muted" aria-live="polite">Connecting...</span>
+        <div class="acts"><button class="btn" type="button" data-r="check">Login check</button><button class="btn" type="button" data-r="close">Close</button></div>
+      </div>
+      <div class="remote-stage"><canvas class="remote-canvas" width="1280" height="720" tabindex="0" aria-label="${esc(name)} browser window. Click it to control the window."></canvas></div>
+      <p class="muted remote-hint">Click the picture to control the window and type to enter text. Ctrl+V pastes text from this computer.</p>
+    </div>
+  </div>`);
+  const status = $('.remote-status', back);
+  const canvas = $('canvas', back);
+  const g = canvas.getContext('2d');
+  const setStatus = (t) => { status.textContent = t; };
+
+  const dpr = window.devicePixelRatio || 1;
+  const maxW = Math.round(Math.min(3840, Math.max(320, window.innerWidth * dpr)));
+  const maxH = Math.round(Math.min(2160, Math.max(240, window.innerHeight * dpr)));
+  const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${scheme}//${location.host}/api/remote/${encodeURIComponent(profile)}/${encodeURIComponent(platform)}/ws?maxWidth=${maxW}&maxHeight=${maxH}`);
+  ws.binaryType = 'blob';
+  let opened = false, closed = false, frames = 0, meta = null;
+  const send = (m) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); };
+
+  // Decode one frame at a time and keep only the newest waiting one, so a
+  // slow machine skips frames instead of falling behind.
+  let decoding = false, waiting = null;
+  const draw = async (blob) => {
+    if (decoding) { waiting = blob; return; }
+    decoding = true;
+    try {
+      const bmp = await createImageBitmap(blob);
+      if (canvas.width !== bmp.width || canvas.height !== bmp.height) { canvas.width = bmp.width; canvas.height = bmp.height; }
+      g.drawImage(bmp, 0, 0);
+      bmp.close();
+      if (!frames++) setStatus('Connected' + (meta ? ` (${meta.width} x ${meta.height})` : ''));
+    } catch (_) { /* skip a frame that failed to decode */ }
+    decoding = false;
+    if (waiting) { const b = waiting; waiting = null; draw(b); }
+  };
+  ws.onopen = () => { opened = true; setStatus('Connected. Waiting for the window to draw...'); };
+  ws.onmessage = (e) => {
+    if (typeof e.data !== 'string') { draw(e.data); return; }
+    try { const m = JSON.parse(e.data); if (m.type === 'meta') meta = m; } catch (_) { /* ignore */ }
+  };
+  ws.onclose = () => {
+    if (closed) return;
+    setStatus(opened
+      ? 'Disconnected: the window closed or restarted. Close this and open it again.'
+      : "Couldn't connect: the window may not be running, or it is already open in another remote login view.");
+  };
+
+  const pos = (e) => { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }; };
+  const mods = (e) => (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
+  // Moves are coalesced to one per animation frame and flushed before any
+  // press or release, so the remote side never sees them out of order.
+  let move = null;
+  const flushMove = () => { if (move) { send(move); move = null; } };
+  canvas.addEventListener('mousemove', e => {
+    const first = !move;
+    move = { type: 'mousemove', ...pos(e), buttons: e.buttons, modifiers: mods(e) };
+    if (first) requestAnimationFrame(flushMove);
+  });
+  const press = (type) => (e) => {
+    e.preventDefault();
+    if (type === 'mousedown') canvas.focus();
+    flushMove();
+    send({ type, ...pos(e), button: e.button, buttons: e.buttons, modifiers: mods(e) });
+  };
+  canvas.addEventListener('mousedown', press('mousedown'));
+  canvas.addEventListener('mouseup', press('mouseup'));
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? canvas.clientHeight : 1;
+    send({ type: 'wheel', ...pos(e), deltaX: e.deltaX * k, deltaY: e.deltaY * k, modifiers: mods(e) });
+  }, { passive: false });
+
+  const altGr = (e) => !!(e.getModifierState && e.getModifierState('AltGraph'));
+  const printable = (e) => e.key.length === 1 && (altGr(e) || (!e.ctrlKey && !e.metaKey));
+  const isPaste = (e) => (e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V');
+  const keyMsg = (type, e) => ({ type, key: e.key, code: e.code, keyCode: e.keyCode, modifiers: mods(e) });
+  canvas.addEventListener('keydown', e => {
+    if (isPaste(e)) return; // the paste listener sends the clipboard text
+    e.preventDefault();
+    if (printable(e)) send({ type: 'char', text: e.key });
+    else send(keyMsg('keydown', e));
+  });
+  canvas.addEventListener('keyup', e => {
+    if (isPaste(e) || printable(e)) return;
+    e.preventDefault();
+    send(keyMsg('keyup', e));
+  });
+  const onPaste = (e) => {
+    if (document.activeElement !== canvas) return;
+    const t = e.clipboardData && e.clipboardData.getData('text');
+    if (t) { e.preventDefault(); send({ type: 'char', text: t }); }
+  };
+  document.addEventListener('paste', onPaste);
+  // Escape belongs to the remote page while the canvas has focus; anywhere
+  // else in the view it closes the view.
+  const onKey = (e) => { if (e.key === 'Escape' && document.activeElement !== canvas) { e.preventDefault(); close(); } };
+  back.addEventListener('keydown', onKey);
+
+  const prev = document.activeElement;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    ws.close();
+    document.removeEventListener('paste', onPaste);
+    back.remove();
+    if (remoteClose === close) remoteClose = null;
+    if (prev && prev.isConnected && prev.focus) prev.focus();
+    refreshAll();
+  };
+  $('[data-r="close"]', back).addEventListener('click', close);
+  $('[data-r="check"]', back).addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    setStatus('Checking the sign-in...');
+    try {
+      const r = await api.loginCheck(profile, platform);
+      if (r.loggedIn === true) { setStatus('Signed in. The watcher starts now; you can close this.'); refreshAll(); }
+      else if (r.loggedIn === false) setStatus('Not signed in yet. Finish signing in, then check again.');
+      else setStatus(`dropwarden can't confirm the ${name} sign-in by itself${r.detail ? ' (' + r.detail + ')' : ''}. If you are signed in, close this and press Start.`);
+    } catch (err) {
+      setStatus('Check failed: ' + errText(err));
+    }
+    btn.disabled = false;
+  });
+
+  document.body.append(back);
+  remoteClose = close;
+  canvas.focus();
+}
+
 const ENGINE_DONE = { skip: 'Skipped to the next drop', refresh: 'Checking for new drops', stop: 'Stopped' };
 
 // cardAction runs one card button. A second press while the first request is
@@ -749,6 +908,7 @@ const ENGINE_DONE = { skip: 'Skipped to the next drop', refresh: 'Checking for n
 async function cardAction(act, p, profile, card) {
   if (act === 'chrome') return openSettings('browser');
   if (act === 'review') { selectedProfile = profile; return go('queue'); }
+  if (act === 'remote') return openRemoteLogin(profile, p.platform);
   const key = profile + '/' + p.platform;
   if (cardBusy.has(key)) return;
   const a = api.engine(p.platform, profile);
@@ -1578,6 +1738,9 @@ function refreshUpdStatus(u) {
 }
 
 function updatesPaneHTML() {
+  if (hostInfo.updates === false) {
+    return group('Version', row('Current version', 'This install is updated by replacing its container image, so the built-in updater is off.', `<span class="mono">v${esc(appVersion)}</span>`));
+  }
   const u = updState || {};
   const dev = !!u.devBuild;
   const dis = dev || api.offline ? 'disabled' : '';

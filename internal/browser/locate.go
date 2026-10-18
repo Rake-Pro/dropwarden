@@ -9,12 +9,22 @@ import (
 	"strings"
 )
 
+// FallbackChromePath stands in for a blank browser.chrome_path: the headless
+// service sets it once from its -chrome-path flag before anything launches, so
+// the container's Chrome wrapper is used without being written into the
+// user's config (a configured chrome_path still wins).
+var FallbackChromePath string
+
 // FindChrome resolves the Chrome executable to launch. A non-empty override
-// (config browser.chrome_path) wins outright and must point at an existing
-// executable file; otherwise the well-known per-OS install locations are probed
-// before falling back to PATH. The error names every location that was tried so
-// a user with an unusual install knows exactly what to put in chrome_path.
+// (config browser.chrome_path, else FallbackChromePath) wins outright and must
+// point at an existing executable file; otherwise the well-known per-OS
+// install locations are probed before falling back to PATH. The error names
+// every location that was tried so a user with an unusual install knows
+// exactly what to put in chrome_path.
 func FindChrome(override string) (string, error) {
+	if override == "" {
+		override = FallbackChromePath
+	}
 	if override != "" {
 		if err := executableAt(override); err != nil {
 			return "", fmt.Errorf("browser: chrome_path %s: %w", override, err)
