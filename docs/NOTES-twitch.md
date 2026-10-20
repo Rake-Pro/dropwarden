@@ -59,7 +59,7 @@ DevTools on a live channel / the inventory page and fix as needed:
 - Drops indicator: chat callout / drops icon in the chat input bar.
 - Inventory claim button: config `claim.inventory_button_selector` +
   `claim.inventory_button_text`, default `button:has([data-a-target=
-  "tw-core-button-label-text"])` + "Claim Now" (from the owner's real markup,
+  "tw-core-button-label-text"])` + "Claim Now" (from the live page markup,
   2026-09-26; the label div is Twitch's generic core-button label, so text
   decides). Each fallback run dumps `debug/inventory-buttons.json`.
 - Directory channel cards (for any-channel campaigns) and the `?filter=drops`

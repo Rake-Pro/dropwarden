@@ -251,7 +251,7 @@ const jsDirectoryChannels = `(() => {
 })()`
 
 // jsLoggedIn reports whether the Twitch session appears authenticated by probing
-// for the logged-in user avatar / absence of the login button. // verify live.
+// for the logged-in user avatar / absence of the login button.
 const jsLoggedIn = `(() => {
   const login = document.querySelector("button[data-a-target='login-button']");
   const avatar = document.querySelector("button[data-a-target='user-menu-toggle'], img.tw-image-avatar");
@@ -314,7 +314,7 @@ const jsLoadMore = `(() => {
 })()`
 
 // jsMarkClaimButton returns JS that finds the claim button, scrolls it into
-// view and tags it data-dw-claim="1" so the session's human-like CDP click can
+// view and tags it data-dw-claim="1" so the session's CDP pointer click can
 // target it by attribute (Session.Click only takes a CSS selector, and the
 // button is only distinguishable by its label text). Labels are compared with
 // whitespace collapsed and case folded, in tiers, enabled buttons first:

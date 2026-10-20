@@ -22,7 +22,7 @@ logged in, and keeps crediting while backgrounded.
    - Set Twitch to its dark theme once (it persists in the profile).
    - Re-run `login`; it should report logged-in immediately (session persisted).
 3. In that Chrome, open DevTools console and confirm:
-   - `navigator.webdriver === false`
+   - the campaigns page populates (the page works under DevTools control)
    - `document.querySelector('video')` exists on a channel page,
      `video.volume` is ~0.01, `video.muted === false`.
 4. **The Chrome 145 background test (critical).** Open a channel, then alt-tab

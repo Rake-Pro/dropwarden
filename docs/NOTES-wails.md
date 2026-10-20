@@ -2,7 +2,7 @@
 
 > SUPERSEDED 2026-08-30: the "Linux is a stub" paragraph below predates the
 > GTK3 backend. Linux now builds the real GUI via `-tags gtk3` (GTK3 +
-> webkit2gtk-4.1), not a stub - see README.md and docs/STATUS.md. Left as-is
+> webkit2gtk-4.1), not a stub - see README.md. Left as-is
 > for history; do not treat it as current.
 
 Verified against `github.com/wailsapp/wails/v3 v3.0.0-beta.14` via `go doc`. The

@@ -1,4 +1,4 @@
-/* dropwarden frontend styles. Dark-first, GoShareIt token palette, with a light
+/* dropwarden frontend styles. Dark-first token palette, with a light
    override so the theme setting (dark|light|system) works. Tokens are defined on
    :root (dark by default here since the app is dark-first) and overridden for
    an explicit light choice or a light OS default. */

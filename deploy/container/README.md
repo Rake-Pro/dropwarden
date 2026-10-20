@@ -14,7 +14,7 @@ Nothing here has run on real hardware yet: see the verify-live gates below.
 | CLI | `cmd/dropwarden-cli`, same flags | `doctor`, `report` etc. via `kubectl exec` |
 | Build | `golang:1.27.2-trixie` stage | Pure Go: sqlite is `modernc.org/sqlite` |
 
-- Image name: `ghcr.io/rake-pro/dropwarden:vX.Y.Z` (private GHCR), built by
+- Image name: `ghcr.io/rake-pro/dropwarden:vX.Y.Z`, built by
   `.github/workflows/release.yml` for every release (tag = git tag), `ci.yml` for every dev push (`dev-<sha>`, plus a floating `dev`), `container.yml` on dispatch to rebuild an existing tag.
 - The base's `USER` and `ENTRYPOINT` are kept; the image only adds the two binaries and `CMD`.
 - The self-updater is off in serve mode: the image is the update. `/api/state`
@@ -73,13 +73,13 @@ Nothing here has run on real hardware yet: see the verify-live gates below.
   Chrome's namespace setup). `browser.extra_flags: ["--no-sandbox"]` in config.yaml is
   the last resort.
 - GPU: pass the render node (`/dev/dri/renderD*`) as the base image documents; without it
-  Chrome's WebGL renderer is SwiftShader, a fingerprint change.
+  Chrome's WebGL renderer is SwiftShader, a software renderer.
 
 ## Verify-live gates (owed before trusting any drop to it)
 
 | # | Gate | Where to look |
 | --- | --- | --- |
-| 1 | `navigator.webdriver === false` in the dedicated Chrome | no in-app check yet: a one-off CDP eval inside the pod (the mirror shows page content only, no address bar or DevTools) |
+| 1 | Pages load and run normally under DevTools control | no in-app check yet: a one-off CDP eval inside the pod (the mirror shows page content only, no address bar or DevTools) |
 | 2 | WebGL renderer names the real GPU driver, not SwiftShader | same: a one-off CDP eval (`WEBGL_debug_renderer_info`) inside the pod |
 | 3 | Campaigns page populated after login | dashboard Queue, Debugging page |
 | 4 | First `claim: gql` line in the log | container stderr |

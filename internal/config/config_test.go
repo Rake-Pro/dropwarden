@@ -181,9 +181,9 @@ func TestExplicitProfilesBlockParses(t *testing.T) {
 	slot := 1
 	kickOn := true
 	cfg.Profiles = append(cfg.Profiles, ProfileConfig{
-		Name:        "greg",
+		Name:        "alice",
 		Enabled:     true,
-		DisplayName: "Greg",
+		DisplayName: "Alice",
 		Kick:        ProfileKickConfig{Enabled: &kickOn},
 		WindowSlot:  &slot,
 	})
@@ -201,14 +201,14 @@ func TestExplicitProfilesBlockParses(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 	if len(got.Profiles) != 2 {
-		t.Fatalf("expected 2 profiles (main + greg), got %d", len(got.Profiles))
+		t.Fatalf("expected 2 profiles (main + alice), got %d", len(got.Profiles))
 	}
-	p := got.Profile("greg")
+	p := got.Profile("alice")
 	if p == nil {
-		t.Fatal("greg profile missing after round trip")
+		t.Fatal("alice profile missing after round trip")
 	}
-	if p.DisplayName != "Greg" || p.Kick.Enabled == nil || !*p.Kick.Enabled || p.WindowSlot == nil || *p.WindowSlot != 1 {
-		t.Fatalf("greg profile fields lost round trip: %+v", p)
+	if p.DisplayName != "Alice" || p.Kick.Enabled == nil || !*p.Kick.Enabled || p.WindowSlot == nil || *p.WindowSlot != 1 {
+		t.Fatalf("alice profile fields lost round trip: %+v", p)
 	}
 }
 
@@ -217,28 +217,28 @@ func TestProfilePathsForAddedProfile(t *testing.T) {
 	t.Setenv("DROPWARDEN_HOME", home)
 
 	cfg, _ := StarterDefaults()
-	cfg.Profiles = append(cfg.Profiles, ProfileConfig{Name: "greg", Enabled: true})
+	cfg.Profiles = append(cfg.Profiles, ProfileConfig{Name: "alice", Enabled: true})
 
 	root, err := Dir()
 	if err != nil {
 		t.Fatalf("Dir: %v", err)
 	}
-	pp, err := cfg.ProfilePaths("greg")
+	pp, err := cfg.ProfilePaths("alice")
 	if err != nil {
 		t.Fatalf("ProfilePaths: %v", err)
 	}
-	wantBase := filepath.Join(root, "profiles", "greg")
+	wantBase := filepath.Join(root, "profiles", "alice")
 	if pp.DB != filepath.Join(wantBase, "dropwarden.db") {
-		t.Fatalf("greg DB path = %q, want under %q", pp.DB, wantBase)
+		t.Fatalf("alice DB path = %q, want under %q", pp.DB, wantBase)
 	}
 	if pp.ChromeProfile != filepath.Join(wantBase, "chrome-profile") {
-		t.Fatalf("greg chrome-profile path = %q", pp.ChromeProfile)
+		t.Fatalf("alice chrome-profile path = %q", pp.ChromeProfile)
 	}
 	if pp.ChromeProfileKick != filepath.Join(wantBase, "chrome-profile-kick") {
-		t.Fatalf("greg chrome-profile-kick path = %q", pp.ChromeProfileKick)
+		t.Fatalf("alice chrome-profile-kick path = %q", pp.ChromeProfileKick)
 	}
 	if pp.Debug != filepath.Join(wantBase, "debug") {
-		t.Fatalf("greg debug path = %q", pp.Debug)
+		t.Fatalf("alice debug path = %q", pp.Debug)
 	}
 
 	if _, err := cfg.ProfilePaths("nope"); err == nil {
@@ -252,11 +252,11 @@ func TestProfileNameValidation(t *testing.T) {
 		p1   string
 		p2   string
 	}{
-		{"uppercase rejected", "Greg", ""},
-		{"space rejected", "greg smith", ""},
+		{"uppercase rejected", "Alice", ""},
+		{"space rejected", "alice smith", ""},
 		{"empty rejected", "", ""},
 		{"too long rejected", strings.Repeat("a", 25), ""},
-		{"duplicate rejected", "greg", "greg"},
+		{"duplicate rejected", "alice", "alice"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -273,7 +273,7 @@ func TestProfileNameValidation(t *testing.T) {
 
 	// Valid slug boundaries accepted.
 	cfg, _ := StarterDefaults()
-	cfg.Profiles = append(cfg.Profiles, ProfileConfig{Name: "greg-2", Enabled: true, AnyGame: boolPtr(true)})
+	cfg.Profiles = append(cfg.Profiles, ProfileConfig{Name: "alice-2", Enabled: true, AnyGame: boolPtr(true)})
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("valid slug rejected: %v", err)
 	}

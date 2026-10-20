@@ -309,32 +309,32 @@ func TestReconcileAddedProfileStartsFreshAndPaused(t *testing.T) {
 	h.app.ReconcileSync()
 
 	added := clone(cfg)
-	added.Profiles = append(added.Profiles, config.ProfileConfig{Name: "greg", Enabled: true})
+	added.Profiles = append(added.Profiles, config.ProfileConfig{Name: "alice", Enabled: true})
 	// A brand-new profile's Chrome dir has never been used, so its runtime
 	// comes up needing a login.
 	h.mu.Lock()
-	h.fresh[pair{"greg", domain.PlatformTwitch}] = true
+	h.fresh[pair{"alice", domain.PlatformTwitch}] = true
 	h.mu.Unlock()
 	h.setConfig(added)
 	h.app.ReconcileSync()
 
-	if h.startCount("greg", domain.PlatformTwitch) != 1 {
+	if h.startCount("alice", domain.PlatformTwitch) != 1 {
 		t.Fatal("an added profile must start without an app restart")
 	}
-	if h.app.Profile("greg") == nil {
+	if h.app.Profile("alice") == nil {
 		t.Fatal("an added profile must get a runtime slot and a store")
 	}
 	h.binder.mu.Lock()
-	var addedGreg int
+	var addedAlice int
 	for _, n := range h.binder.added {
-		if n == "greg" {
-			addedGreg++
+		if n == "alice" {
+			addedAlice++
 		}
 	}
-	needsLogin := h.binder.needsLogin[pair{"greg", domain.PlatformTwitch}]
+	needsLogin := h.binder.needsLogin[pair{"alice", domain.PlatformTwitch}]
 	h.binder.mu.Unlock()
-	if addedGreg != 1 {
-		t.Fatalf("the binder should have been told about greg exactly once, got %d", addedGreg)
+	if addedAlice != 1 {
+		t.Fatalf("the binder should have been told about alice exactly once, got %d", addedAlice)
 	}
 	if !needsLogin {
 		t.Fatal("a fresh chrome profile must be published as needing a login")

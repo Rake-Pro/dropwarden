@@ -1,5 +1,5 @@
 // Package config defines dropwarden's on-disk YAML configuration, its defaults,
-// and validation. The load path mirrors GoShareIt: read -> applyDefaults ->
+// and validation. The load path is read -> applyDefaults ->
 // validate, with an atomic validate-into-temp-then-rename save.
 package config
 
@@ -185,7 +185,7 @@ type WatcherConfig struct {
 	// 0 = default.
 	MaxSelectAttempts int `yaml:"max_select_attempts"`
 
-	// TimingJitter keeps the watcher's cadence human (no exact fixed
+	// TimingJitter adds random variation to the watcher's timers (no exact fixed
 	// intervals): a covered delay D becomes D * (1 + timing_jitter * (2*r-1)),
 	// r in [0,1), i.e. +/- that fraction. 0 disables it (exact legacy
 	// intervals); valid range is [0, 0.5]. Unlike the other *Jitter fields
@@ -393,11 +393,13 @@ func (c *Config) KeepAwakeMode() string {
 }
 
 // DefaultUpdateFeedURL is the release manifest the updater reads by default
-// (stable channel); DefaultDevUpdateFeedURL is the dev channel's, written by
-// CI for every dev-branch build.
+// (stable channel): the latest.json asset of the newest GitHub release, which
+// GitHub resolves without prereleases. DefaultDevUpdateFeedURL is the dev
+// channel's: the dev-latest.json asset of the rolling "dev" prerelease that CI
+// republishes for every dev-branch build.
 const (
-	DefaultUpdateFeedURL    = "https://cdn.rake.pro/releases/dropwarden/latest.json"
-	DefaultDevUpdateFeedURL = "https://cdn.rake.pro/releases/dropwarden/dev-latest.json"
+	DefaultUpdateFeedURL    = "https://github.com/Rake-Pro/dropwarden/releases/latest/download/latest.json"
+	DefaultDevUpdateFeedURL = "https://github.com/Rake-Pro/dropwarden/releases/download/dev/dev-latest.json"
 )
 
 // UpdateEnabled reports whether background update checks run (default true).

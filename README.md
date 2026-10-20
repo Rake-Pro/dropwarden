@@ -10,7 +10,9 @@ eligible live stream, in the background, at low quality, tracks the minutes
 and the items, claims what completes, and keeps a record so you never lose
 your place. The stream plays for real. Streamers running a campaign get a
 viewer who is there for the drop, which is the deal they signed up for when
-they enabled drops. It deliberately does not spoof watching via the API.
+they enabled drops. It only earns watch time by actually playing the stream.
+
+Licensed under the MIT License (see `LICENSE`).
 
 ## What it does and does not do
 
@@ -26,7 +28,8 @@ Does
   stays playing and unmuted, because a muted player stops earning drops.
 - Reads the same drop and campaign data the Twitch page shows you.
 - Claims with the same request the page sends when you press Claim.
-- Keeps the pace of a person: one action at a time, with natural timing.
+- Performs one action at a time, spaced out so it stays well below normal
+  browsing rates.
 
 Does not
 
@@ -34,16 +37,14 @@ Does not
   unminimized; ads play like they would for anyone with the tab open.
 - Run more than one account per person, inflate viewer counts, or block ads.
 - Store or type your password. You sign in to Twitch yourself, once.
-- Spoof watch time through an API. If the stream is not playing, nothing
-  is credited.
+- Credit time any way other than playing the stream. If it is not playing,
+  nothing is credited.
 
 ## Before you use it
 
-Twitch and Kick terms restrict automated access to their services, and this
-tool is automation. Enforcement to date has been against user accounts, not
-tools: accounts have been flagged or temporarily banned. Use it on an account
-you are prepared to lose that way. dropwarden is not affiliated with Twitch
-or Kick.
+Twitch and Kick terms restrict automated access to their services. You use
+dropwarden at your own risk, on your own account. dropwarden is not
+affiliated with Twitch or Kick.
 
 ## How it works
 
@@ -128,24 +129,23 @@ top down, falling through past drops with no live channel:
   stores or types a password.
 - The player runs at 1% volume, never muted: Chrome 145+ pauses a muted video
   when its tab is backgrounded, which would silently stop drop credit.
-- A single pacer rate-limits every synthetic action with jitter; there is no
-  rapid-fire anything.
+- Actions are spaced by a single pacer with randomized delays to keep request
+  volume low.
 - Claims use the web client's own `ClaimDropRewards` mutation from the page
-  context with the page's captured headers (older builds shipped it OFF over
-  bot-block reports; the owner re-enabled it as the primary path in v0.1.4).
+  context with the page's captured headers.
   The sweep is capped at 10 claims per pass, 2-4 s apart.
 - The window is launched unfocused and dimmed. (A periodic few-pixel burn-in
-  shift is configured and plumbed but not yet wired to a timer - see the
-  STATUS.md backlog.)
-- `watcher.timing_jitter` (default 0.2) desyncs periodic watcher actions
-  (progress poll, player reassert, session rotation) by +/- that fraction so
-  they do not land on an exact fixed interval every time; 0 disables it.
+  shift is configured and plumbed but not yet wired to a timer; tracked in
+  the GitHub issues.)
+- `watcher.timing_jitter` (default 0.2) adds random variation to periodic
+  watcher timers (progress poll, player reassert, session rotation) of
+  +/- that fraction; 0 disables it.
 
 ## Install
 
 Releases are built by `.github/workflows/release.yml` from a `vX.Y.Z` tag and
-published on the GitHub release and on the downloads host
-(`https://cdn.rake.pro/releases/dropwarden/<tag>/`).
+published as GitHub release assets
+(`https://github.com/Rake-Pro/dropwarden/releases`).
 
 ### Prerequisites
 
@@ -201,7 +201,7 @@ published on the GitHub release and on the downloads host
 | `enabled` | `true` | Background checks on/off. The manual check always works. |
 | `auto_install` | `true` | Install a found update without asking (deferred while watching). |
 | `show_changelog` | `true` | Offer the release notes on the dashboard banner. |
-| `feed_url` | `https://cdn.rake.pro/releases/dropwarden/latest.json` | Release manifest. Empty disables update checks. |
+| `feed_url` | `https://github.com/Rake-Pro/dropwarden/releases/latest/download/latest.json` | Release manifest. Empty disables update checks. |
 | `interval_hours` | `24` | Hours between background checks (must be > 0). |
 
 ### Keeping the PC awake
@@ -284,7 +284,7 @@ wails3 dev
 ```
 
 The dashboard, queue, history, and settings screens follow the same visual
-language as the sibling GoShareIt app.
+language as the project's other desktop app.
 
 ### Using the app
 
@@ -318,7 +318,7 @@ language as the sibling GoShareIt app.
 > default backend there needs GTK4 + WebKitGTK, which most distros (and this
 > container) do not have, so the gtk3 tag is the portable path. It cross-
 > compiles and passes `task check`; running it on real Linux hardware is still
-> verify-live until the thin-client machine exists. Plain `go build ./...`
+> verify-live until it has been run on real Linux hardware. Plain `go build ./...`
 > (no tag) still needs the GTK4 stack on Linux; use the gtk3 tag or `task
 > build-linux`.
 
@@ -347,10 +347,10 @@ backend behind it, it falls back to sample data for design review.
 
 ## Development notes
 
-> Status: the Twitch-facing selectors, GraphQL field names, and localStorage
-> keys are marked "verify live" and must be confirmed on a real, logged-in
-> machine (see `TESTING.md` and `docs/NOTES-twitch.md`); none of that can be
-> exercised from a headless CI box. Windows is the primary target; macOS and
+> Status: some Twitch-facing selectors, GraphQL field names, and localStorage
+> keys are marked "verify live" in the source; they can only be confirmed on a
+> real, logged-in machine (see `TESTING.md` and `docs/NOTES-twitch.md`), not in
+> headless CI. Windows is the primary target; macOS and
 > Linux are secondary. The GUI is built with Wails v3.
 
 ## GoLand
@@ -370,40 +370,43 @@ CI:
 
 - `.github/workflows/govulncheck.yml` - weekly + per-push vulnerability scan.
 - `.github/workflows/release.yml` - tag-triggered release builds (below).
-- Tests and `task check` run locally; there is no per-push test workflow.
+- `.github/workflows/ci.yml` - lint + test on every push to `dev`, plus the
+  container image and desktop dev builds (see Releasing).
+- `task check` runs the same checks locally.
 
 ### Releasing
 
 - Branches: `dev` is where work lands (default branch); `main` is the release
   line. Every push to `dev` runs CI: lint + test, the container image
-  `ghcr.io/rake-pro/dropwarden:dev-<sha>` (what GitOps pins for node4), and
+  `ghcr.io/rake-pro/dropwarden:dev-<sha>` (plus a floating `dev`), and
   the desktop builds for the dev update channel.
 - Promotion: the Sync to main workflow opens "Merge dev to main" whenever dev
   is ahead. Merging it (merge commit) mints the next tag - patch by default,
   `release:minor` / `release:major` labels change the bump - and the Release
   workflow builds from the tag in the same run: desktop assets (desktop.yml),
-  the container image `:vX.Y.Z`, the GitHub release, `latest.json`, and the
-  upload to the downloads host when `DOWNLOADS_UPLOAD_TOKEN` is set.
+  the container image `:vX.Y.Z`, the GitHub release with `latest.json`
+  attached, and an optional mirror to a downloads host.
 - By hand: `git tag v0.1.0 && git push --tags`, or run Release
   (workflow_dispatch) with `version` = an existing tag; `container`
   (workflow_dispatch) rebuilds an existing tag's image.
-- Update channels (Settings > Updates): Stable reads
-  `<base>/dropwarden/latest.json`; Dev reads `<base>/dropwarden/dev-latest.json`,
-  which CI writes for every dev push with assets under
-  `<base>/dropwarden/dev-<sha>/`. Dev versions are `X.Y.(Z+1)-dev.N.<sha>`:
-  above the last release, below the next. Container installs have no updater
-  (new image = new version) and no Updates pane.
+- Update channels (Settings > Updates): Stable reads the `latest.json` asset
+  of the newest release (`releases/latest/download/latest.json`; GitHub skips
+  prereleases). Dev reads `releases/download/dev/dev-latest.json`: CI
+  republishes one rolling `dev` prerelease with the assets of every dev push.
+  Dev versions are `X.Y.(Z+1)-dev.N.<sha>`: above the last release, below the
+  next. Container installs have no updater (new image = new version) and no
+  Updates pane.
 - Repo settings the workflows read:
 
 | Name | Kind | Purpose |
 | --- | --- | --- |
-| `DOWNLOADS_BASE_URL` | variable | Downloads host base; default `https://cdn.rake.pro/releases`. |
-| `DEV_DESKTOP_CHANNEL` | variable | `false` skips the desktop builds and dev-latest.json on dev pushes (saves Windows/macOS runner minutes); images and checks still run. |
-| `DOWNLOADS_UPLOAD_TOKEN` | secret | Enables the "Publish to downloads host" step. |
+| `DEV_DESKTOP_CHANNEL` | variable | `false` skips the desktop builds and the `dev` prerelease on dev pushes (saves Windows/macOS runner minutes); images and checks still run. |
+| `DOWNLOADS_BASE_URL`, `DOWNLOADS_UPLOAD_TOKEN` | variable, secret | Optional mirror: when both are set, release assets and `latest.json` are also PUT to a downloads host (see below). Unset = GitHub only. |
 | `MACOS_CERT_P12`, `MACOS_CERT_P12_PASSWORD`, `DEVELOPER_ID_APP` | secrets | Developer ID signing (optional). |
 | `AC_APPLE_ID`, `AC_PASSWORD`, `TEAM_ID` | secrets | Notarization (optional, needs signing). |
 
-- Downloads host contract (the "Publish to downloads host" step):
+- Optional mirror contract (the "Mirror to downloads host" step; the
+  mirrored `latest.json` still points at the GitHub asset URLs):
 
 | Request | Path | Body |
 | --- | --- | --- |
@@ -421,7 +424,7 @@ CI:
   "notes": "markdown body (the GitHub release notes)",
   "assets": [
     {"name": "dropwarden_0.1.0_windows_amd64.zip",
-     "url": "https://cdn.rake.pro/releases/dropwarden/v0.1.0/dropwarden_0.1.0_windows_amd64.zip",
+     "url": "https://github.com/Rake-Pro/dropwarden/releases/download/v0.1.0/dropwarden_0.1.0_windows_amd64.zip",
      "sha256": "<hex>", "size": 12345}
   ]
 }

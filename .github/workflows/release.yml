@@ -6,9 +6,10 @@
 #
 # The run builds and packages dropwarden for Windows, macOS and Linux
 # (desktop.yml), builds the container image, attaches the desktop assets to a
-# GitHub Release, writes the updater manifest (latest.json), and - when
-# DOWNLOADS_UPLOAD_TOKEN is set - publishes the lot to the downloads host the
-# in-app updater reads (internal/update). Asset names must stay in sync with
+# GitHub Release and writes the updater manifest (latest.json) next to them;
+# the in-app updater (internal/update) reads releases/latest/download/latest.json.
+# When DOWNLOADS_BASE_URL and DOWNLOADS_UPLOAD_TOKEN are set the assets are
+# also mirrored to a downloads host. Asset names must stay in sync with
 # update.AssetName().
 #
 # Artifact matrix:
@@ -104,7 +105,7 @@ jobs:
             echo "minted ${tag} at ${GITHUB_SHA}"
           fi
           # vX.Y.Z publishes everywhere; vX.Y.Z-rc.N is a GitHub-only
-          # pre-release (no cdn upload, so installed apps never see it).
+          # pre-release (releases/latest skips it, so installed apps never see it).
           if ! [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
             echo "tag '${tag}' is not vX.Y.Z or vX.Y.Z-rc.N" >&2
             exit 1
@@ -186,7 +187,7 @@ jobs:
       TAG: ${{ needs.version.outputs.tag }}
       VERSION: ${{ needs.version.outputs.version }}
       PRERELEASE: ${{ needs.version.outputs.prerelease }}
-      DOWNLOADS_BASE_URL: ${{ vars.DOWNLOADS_BASE_URL || 'https://cdn.rake.pro/releases' }}
+      DOWNLOADS_BASE_URL: ${{ vars.DOWNLOADS_BASE_URL }}
       DOWNLOADS_UPLOAD_TOKEN: ${{ secrets.DOWNLOADS_UPLOAD_TOKEN }}
     steps:
       # The workflow's own ref, not the tag: CHANGELOG.md and the scripts are
@@ -238,33 +239,18 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import datetime, hashlib, json, os, urllib.request
-          base = os.environ["DOWNLOADS_BASE_URL"].rstrip("/")
+          import datetime, hashlib, json, os
+          base = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download"
           tag, version = os.environ["TAG"], os.environ["VERSION"]
-          token = os.environ.get("DOWNLOADS_UPLOAD_TOKEN", "")
           notes = open(os.path.join(os.environ["RUNNER_TEMP"], "notes.md"), encoding="utf-8").read().strip()
-          def hosted(url):
-              if not token:
-                  return None
-              try:
-                  with urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": "Bearer " + token}), timeout=120) as r:
-                      return r.read()
-              except Exception:
-                  return None
           assets = []
           for name in sorted(os.listdir("assets")):
               if name == "latest.json":
                   continue
-              data = None
-              if name != "checksums.txt":
-                  data = hosted(f"{base}/dropwarden/{tag}/{name}")
-                  if data is not None:
-                      print(f"{name}: hashing the hosted copy")
-              if data is None:
-                  data = open(os.path.join("assets", name), "rb").read()
+              data = open(os.path.join("assets", name), "rb").read()
               assets.append({
                   "name": name,
-                  "url": f"{base}/dropwarden/{tag}/{name}",
+                  "url": f"{base}/{tag}/{name}",
                   "sha256": hashlib.sha256(data).hexdigest(),
                   "size": len(data),
               })
@@ -283,11 +269,12 @@ jobs:
           cat assets/latest.json
           gh release upload "$TAG" assets/latest.json --repo "$GITHUB_REPOSITORY" --clobber
 
-      # Contract for the receiving service: PUT with a Bearer token, layout
-      # <base>/dropwarden/<tag>/<asset> plus <base>/dropwarden/latest.json.
-      # latest.json goes last so the feed never names files not yet uploaded.
-      - name: Publish to downloads host
-        if: env.DOWNLOADS_UPLOAD_TOKEN != '' && needs.version.outputs.prerelease != 'true'
+      # Optional mirror. Contract for the receiving service: PUT with a Bearer
+      # token, layout <base>/dropwarden/<tag>/<asset> plus
+      # <base>/dropwarden/latest.json (the manifest still names the GitHub asset
+      # URLs). latest.json goes last so the feed never names files not yet there.
+      - name: Mirror to downloads host
+        if: env.DOWNLOADS_UPLOAD_TOKEN != '' && env.DOWNLOADS_BASE_URL != '' && needs.version.outputs.prerelease != 'true'
         run: |
           set -euo pipefail
           base="${DOWNLOADS_BASE_URL%/}"

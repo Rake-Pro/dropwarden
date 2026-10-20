@@ -340,7 +340,7 @@ function updProgressText(u) {
     }
     case 'verifying': return 'Verifying...';
     case 'installing': return 'Installing...';
-    case 'handing_off': case 'restarting': return 'Restarting dropwarden...';
+    case 'handing_off': case 'restarting': return 'Restarting Dropwarden...';
     default: return '';
   }
 }
@@ -377,12 +377,12 @@ const hasNotes = (u) => !!(u && u.pending && u.showChangelog !== false && (u.pen
 function updBannerModel(u) {
   const p = u && u.pending;
   if (!u || u.devBuild || hostInfo.updates === false) return { show: false };
-  if (updBusy(u)) return { show: true, title: `Updating to ${p ? 'v' + p.version : 'the new version'}`, detail: 'dropwarden restarts by itself when this finishes.' };
+  if (updBusy(u)) return { show: true, title: `Updating to ${p ? 'v' + p.version : 'the new version'}`, detail: 'Dropwarden restarts by itself when this finishes.' };
   if (!p) return { show: false };
   const notes = hasNotes(u);
   if (failedPending(u)) return { show: true, err: true, title: `Couldn't install v${p.version}`, detail: clean(u.failMessage) || 'The install did not finish.', notes, install: 'Retry install' };
   if (u.deferredReason) return { show: true, title: `v${p.version} is ready`, detail: `It installs automatically when the current watch ends (${u.deferredReason}).`, notes, install: 'Install now' };
-  return { show: true, title: `dropwarden v${p.version} is available`, detail: `You are on v${u.currentVersion}.`, notes, install: 'Install now' };
+  return { show: true, title: `Dropwarden v${p.version} is available`, detail: `You are on v${u.currentVersion}.`, notes, install: 'Install now' };
 }
 
 // The dashboard update banner is ONE persistent node: renderDashboard re-appends
@@ -460,10 +460,10 @@ function updModalContent(u) {
       btns: `<button class="btn primary" type="button" data-m="install" data-autofocus ${off}>${failed ? 'Retry install' : 'Install now'}</button><button class="btn" type="button" data-m="close">Later</button>`,
     };
   }
-  if (u.status === 'checking' || u.phase === 'checking') return { title: 'Checking for updates', body: '<p class="m-body">dropwarden is checking for a new version.</p>', btns: closeBtn('Close') };
-  if (u.status === 'none_published') return { title: 'No releases published yet', body: '<p class="m-body">There is nothing to install yet. dropwarden checks again automatically.</p>', btns: closeBtn('Close') };
+  if (u.status === 'checking' || u.phase === 'checking') return { title: 'Checking for updates', body: '<p class="m-body">Dropwarden is checking for a new version.</p>', btns: closeBtn('Close') };
+  if (u.status === 'none_published') return { title: 'No releases published yet', body: '<p class="m-body">There is nothing to install yet. Dropwarden checks again automatically.</p>', btns: closeBtn('Close') };
   if (u.status === 'error') return { title: "Couldn't check for updates", body: `<p class="m-body">${esc(clean(u.lastError) || 'The update check failed.')}</p>`, btns: closeBtn('Close') };
-  return { title: "You're up to date", body: `<p class="m-body">dropwarden v${esc(u.currentVersion)} is the latest version.</p>`, btns: closeBtn('Close') };
+  return { title: "You're up to date", body: `<p class="m-body">Dropwarden v${esc(u.currentVersion)} is the latest version.</p>`, btns: closeBtn('Close') };
 }
 
 function showUpdateModal(u) {
@@ -649,7 +649,7 @@ function loginBody(p, st, key) {
   const expired = /session expired/i.test(p.reason || st.reason || '');
   const m = loginMsg[key];
   return `<div class="card-msg">
-    <p>${expired ? `Your ${esc(platLabel(p.platform))} session expired. ` : ''}${hostInfo.remote ? `Press Open remote login and sign in to ${esc(platLabel(p.platform))} there` : `Sign in to ${esc(platLabel(p.platform))} in the Chrome window dropwarden opened`}, then press I'm signed in.</p>
+    <p>${expired ? `Your ${esc(platLabel(p.platform))} session expired. ` : ''}${hostInfo.remote ? `Press Open remote login and sign in to ${esc(platLabel(p.platform))} there` : `Sign in to ${esc(platLabel(p.platform))} in the Chrome window Dropwarden opened`}, then press I'm signed in.</p>
     <div class="login-msg ${m ? esc(m.cls) : ''}" aria-live="polite">${m ? esc(m.text) : ''}${m && m.detail ? `<div class="login-detail muted">Details: ${esc(m.detail)}</div>` : ''}</div>
   </div>`;
 }
@@ -745,7 +745,7 @@ async function checkLogin(p, profile) {
     const r = await api.loginCheck(profile, p.platform);
     if (r.loggedIn === true) loginMsg[key] = { text: 'Signed in. Starting the watcher...', cls: 'ok' };
     else if (r.loggedIn === false) loginMsg[key] = { text: 'Not signed in yet. Finish signing in, then press I\'m signed in again.', cls: 'warn' };
-    else loginMsg[key] = { text: `dropwarden can't confirm the ${platLabel(p.platform)} sign-in by itself. If you are signed in, press Start.`, cls: '', unknown: true, detail: r.detail || '' };
+    else loginMsg[key] = { text: `Dropwarden can't confirm the ${platLabel(p.platform)} sign-in by itself. If you are signed in, press Start.`, cls: '', unknown: true, detail: r.detail || '' };
   } catch (e) {
     loginMsg[key] = { text: 'Check failed: ' + errText(e), cls: 'err' };
   }
@@ -888,7 +888,7 @@ function openRemoteLogin(profile, platform) {
       const r = await api.loginCheck(profile, platform);
       if (r.loggedIn === true) { setStatus('Signed in. The watcher starts now; you can close this.'); refreshAll(); }
       else if (r.loggedIn === false) setStatus('Not signed in yet. Finish signing in, then check again.');
-      else setStatus(`dropwarden can't confirm the ${name} sign-in by itself${r.detail ? ' (' + r.detail + ')' : ''}. If you are signed in, close this and press Start.`);
+      else setStatus(`Dropwarden can't confirm the ${name} sign-in by itself${r.detail ? ' (' + r.detail + ')' : ''}. If you are signed in, close this and press Start.`);
     } catch (err) {
       setStatus('Check failed: ' + errText(err));
     }
@@ -1694,13 +1694,13 @@ function gamesPaneHTML() {
     row('Within a game, order by', 'How drops of the same game are picked. Pinned drops and the games list order always come first.',
       '<select class="popup" data-field="priorityMode" data-scope="profile" aria-label="Within a game, order by"><option value="top_down">Your order</option><option value="ending_soonest">Ending soonest</option><option value="closest_to_complete">Closest to complete</option><option value="shortest_first">Shortest first</option></select>') +
     ptoggleRow('autoEnqueueNew', 'Add new drops automatically', 'Newly found drops for your games join the queue.') +
-    ptoggleRow('fallThrough', 'Watch the next drop when the top one has no live channel', 'dropwarden goes back to the top drop as soon as it has a live channel. Off = wait for the top drop.') +
+    ptoggleRow('fallThrough', 'Watch the next drop when the top one has no live channel', 'Dropwarden goes back to the top drop as soon as it has a live channel. Off = wait for the top drop.') +
     ptoggleRow('preferChannelSpecific', 'Streamer-specific drops first', 'Within a game, drops tied to particular streamers are watched before any-channel drops, which those streamers credit as well.'));
 }
 
 function platformsPaneHTML() {
   const claimFields =
-    row('Claim button selector (inventory page)', 'Used only when a normal claim fails: dropwarden opens the Twitch inventory page and clicks the first element matching this CSS selector whose label matches the text below. Empty = only save the page\'s buttons to the debug folder.',
+    row('Claim button selector (inventory page)', 'Used only when a normal claim fails: Dropwarden opens the Twitch inventory page and clicks the first element matching this CSS selector whose label matches the text below. Empty = only save the page\'s buttons to the debug folder.',
       `<input class="input mono" type="text" data-field="claimButtonSelector" value="${esc(cfg.claimButtonSelector)}" placeholder="empty = save buttons only, no click" aria-label="Claim button selector" style="width:100%">`, true) +
     row('Claim button text', 'Whole label, not case-sensitive.',
       `<input class="input mono" type="text" data-field="claimButtonText" value="${esc(cfg.claimButtonText)}" placeholder="Claim Now" aria-label="Claim button text" style="width:100%">`, true);
@@ -1741,7 +1741,7 @@ function appPaneHTML() {
   return version + group('Appearance',
     row('Theme', 'System follows your OS light or dark setting.', '<select class="popup" data-field="theme" aria-label="Theme"><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select>')) +
   group('Power',
-    row('Keep the computer awake', 'Stops the PC from idle-sleeping. Monitors still turn off on your normal schedule. With nothing to watch the PC sleeps as usual; nothing here wakes it back up.', '<select class="popup" data-field="keepAwake" aria-label="Keep the computer awake"><option value="while_watching">While watching a drop</option><option value="always">Always, while dropwarden runs</option><option value="never">Never</option></select>'));
+    row('Keep the computer awake', 'Stops the PC from idle-sleeping. Monitors still turn off on your normal schedule. With nothing to watch the PC sleeps as usual; nothing here wakes it back up.', '<select class="popup" data-field="keepAwake" aria-label="Keep the computer awake"><option value="while_watching">While watching a drop</option><option value="always">Always, while Dropwarden runs</option><option value="never">Never</option></select>'));
 }
 
 function updStatusHTML(u) {
@@ -1784,7 +1784,7 @@ function updatesPaneHTML() {
     row('Release channel', 'Stable follows tagged releases. Dev follows every build of the dev branch: newest features first, rough edges included. Switching back to Stable keeps the dev build until the next release.',
       `<select class="popup" data-field="updateChannel" aria-label="Release channel" ${dis}><option value="stable">Stable</option><option value="dev">Dev</option></select>`) +
     toggleRow('updateEnabled', 'Check automatically', 'Shortly after start, then on the interval below.', dev) +
-    toggleRow('updateAutoInstall', 'Install automatically', 'Waits until the current watch ends, installs, and restarts dropwarden.', dev) +
+    toggleRow('updateAutoInstall', 'Install automatically', 'Waits until the current watch ends, installs, and restarts Dropwarden.', dev) +
     toggleRow('updateShowChangelog', "Show what's new", 'Offer the release notes when an update is found.', dev),
     advanced('Advanced',
       row('Check interval', 'Hours between automatic checks.', `<input class="input" type="number" min="1" step="1" value="${esc(cfg.updateIntervalHours)}" data-field="updateIntervalHours" style="width:96px" aria-label="Check interval in hours" ${dis}>`) +
@@ -2555,7 +2555,7 @@ async function flipDumpToggle(sw) {
 
 function debugShellEl() {
   const shell = el(`<div>
-    <div><h2 class="title">Debugging</h2><p class="sub">What dropwarden is doing right now. Diagnostics include settings and recent log lines, never passwords or sign-in tokens.</p></div>
+    <div><h2 class="title">Debugging</h2><p class="sub">What Dropwarden is doing right now. Diagnostics include settings and recent log lines, never passwords or sign-in tokens.</p></div>
     <div class="foot-btns dbg-main">
       <button class="btn primary" id="dbg-diag" type="button">Copy diagnostics</button>
       <button class="btn" id="dbg-export-btn" type="button">Export diagnostics</button>

@@ -56,7 +56,7 @@ watcher:
   offline_blacklist_ttl: 15m
   wait_for_top: false           # false = fall through to the next available drop
   max_select_attempts: 6
-  timing_jitter: 0.2            # +/- fraction on periodic watcher delays (bot-detection avoidance: desynchronizes periodic actions); 0 disables, max 0.5
+  timing_jitter: 0.2            # +/- fraction on periodic watcher delays (random variation on periodic timers); 0 disables, max 0.5
 
 claim:
   # Claiming: the DropsPage_ClaimDropRewards GraphQL mutation (sent from the
@@ -141,7 +141,7 @@ update:
   enabled: true                # background checks: ~30s after start, then every interval_hours (dev builds never auto-check)
   auto_install: true           # install a found update right away, or as soon as no watch is in progress
   show_changelog: true         # offer "What's new" release notes on the dashboard banner
-  feed_url: "https://cdn.rake.pro/releases/dropwarden/latest.json"   # release manifest; "" disables update checks
+  feed_url: "https://github.com/Rake-Pro/dropwarden/releases/latest/download/latest.json"   # release manifest; "" disables update checks
   interval_hours: 24
 
 # No profiles block = a single implicit profile named "main" rooted at this
@@ -152,12 +152,12 @@ update:
 # stays the DEFAULT for every profile unless overridden below.
 #
 # profiles:
-#   - name: greg                 # lowercase slug, [a-z0-9-]{1,24}
+#   - name: alice                 # lowercase slug, [a-z0-9-]{1,24}
 #     dir: .                     # "." roots this profile at the app dir itself
 #                                 # (only the legacy/main profile should do this);
 #                                 # omitted => profiles/<name>/ under the app dir
 #     enabled: true
-#     display_name: Greg         # optional; UI label, defaults to name
+#     display_name: Alice         # optional; UI label, defaults to name
 #     games:                     # optional; omitted => inherit root games/any_game
 #       - Rust
 #       - Once Human
@@ -165,9 +165,9 @@ update:
 #     kick:
 #       enabled: true            # optional; nil => inherit root kick.enabled
 #     window_slot: 0             # optional tiling row; defaults to list position
-#   - name: mel
+#   - name: bob
 #     enabled: true
-#     display_name: Mel
+#     display_name: Bob
 #     kick:
 #       enabled: false
 #     window_slot: 1

@@ -2,9 +2,9 @@
 
 Goal: ONE app instance managing drops for several people at once. A PROFILE is
 one person and bundles their platform logins (one Twitch + one Kick account).
-Target deployment is the shared Linux thin client (N100 class), but the design
+Target deployment is a shared low-power Linux machine, but the design
 is platform-neutral and must keep working single-profile on the Mac/Windows dev
-machines. Decisions below were locked with the owner on 2026-08-30: in-app
+machines. Decisions below were made on 2026-08-30: in-app
 multi-profile (not instance-per-person), unified dashboard, standalone Wails
 app (GTK3 on Linux).
 
@@ -18,7 +18,7 @@ app (GTK3 on Linux).
 - Per-profile DB (NOT a profile column) is the load-bearing choice: the store,
   queue, selection, stats, and migration code stay byte-for-byte untouched.
   Campaign-catalog duplication across profiles is trivial cost.
-- Up to N x 2 engines / Chrome windows. Sizing note for the thin client:
+- Up to N x 2 engines / Chrome windows. Sizing note for a shared Linux machine:
   2 profiles x 2 platforms = 4 Chromes at 160p ~= 2.5-3 GB RAM, light CPU.
 
 ## Directory layout + legacy migration (zero file moves)
@@ -55,10 +55,10 @@ sections are the app's and shared.
 
 ```yaml
 profiles:
-  - name: greg
+  - name: alice
     dir: .                 # legacy-rooted; omitted => profiles/<name>/
     enabled: true
-    display_name: Greg     # optional; UI label, defaults to name
+    display_name: Alice     # optional; UI label, defaults to name
     games: [...]           # the profile's own list; [] = nothing picked yet
     any_game: false
     queue:
@@ -135,7 +135,7 @@ engine/disco handles + startupKick flag per profile), plus `Order []string`.
 {
   "config": {...},
   "profiles": [
-    { "name": "greg", "displayName": "Greg", "enabled": true,
+    { "name": "alice", "displayName": "Alice", "enabled": true,
       "platforms": [ {"platform":"twitch","enabled":true,"up":true,
                       "pendingRestart":false,"status":{...}}, ... ],
       "queue": [...], "claims": [...], "stats": {...}, "spark": [...] }
@@ -179,7 +179,7 @@ engine/disco handles + startupKick flag per profile), plus `Order []string`.
   when there is more than one. APP: Player, Browser, App, Updates, Profiles
   (manage: display name, enabled, status, remove, add). One Save/Discard
   covers cfg and every profile's edits.
-- Footer: one row per (profile, platform): "Greg - Twitch running". With one
+- Footer: one row per (profile, platform): "Alice - Twitch running". With one
   profile the label collapses to today's platform-only text.
 - Preview SAMPLE data: two profiles so the unified layout is designable
   offline.
@@ -189,7 +189,7 @@ engine/disco handles + startupKick flag per profile), plus `Order []string`.
 Generalize `trayPlatform` -> `trayEngine{profile, platform}`: build items for
 every configured (profile, platform) pair at startup, `SetHidden` tracking
 engine presence each tick exactly like the 2026-08-30 kick pattern. Labels:
-"Pause Greg's Twitch watching" etc.; with one profile, labels collapse to the
+"Pause Alice's Twitch watching" etc.; with one profile, labels collapse to the
 current platform-only wording. Tooltip: one segment per running engine.
 
 ## Explicitly out of scope (v1)
@@ -198,10 +198,10 @@ current platform-only wording. Tooltip: one segment per running engine.
   watchdog tuning;
   any auth between profiles (household-trusted UI); store merges between
   layouts; per-profile priority mode.
-- OPEN QUESTION (owner, undecided): optional `--listen <addr>` serve mode
+- OPEN QUESTION (undecided): optional `--listen <addr>` serve mode
   exposing the same mux over plain HTTP alongside the Wails window, so a
   profile's owner can manage their queue from their own device via
-  gpm+Authentik. Without it, remote management = RustDesk to the box. The
+  an authenticating reverse proxy. Without it, remote management = remote desktop to the box. The
   mux already serves both roles; this is a ~20-line flag if wanted.
 
 ## Phases
@@ -217,11 +217,10 @@ current platform-only wording. Tooltip: one segment per running engine.
   settings pane, footer/tray labels, SAMPLE data. DONE (2026-08-30, code in
   working tree, uncommitted).
 - Phase 3 - polish + live: window tiling defaults, discovery stagger, Mac
-  test pass (two profiles on the Mac = the full thin-client shape minus GTK),
-  docs/STATUS update. CODE DONE (2026-08-31, working tree, uncommitted): both
-  window tiling and the 90s discovery stagger are wired and unit-tested (see
-  STATUS.md). Mac test pass is the one item still PENDING - it needs a real
-  display and is not doable in-container.
+  test pass (two profiles on the Mac = the full shared-machine shape minus
+  GTK). CODE DONE (2026-08-31): both window tiling and the 90s discovery
+  stagger are wired and unit-tested. The Mac test pass is still pending; it
+  needs a real display.
 - Phase 4 - LIVE LIFECYCLE (2026-08-31, added after phases 0-3): profile and
   kick toggles no longer wait for a restart. `internal/app/reconcile.go` diffs
   the desired set (enabled profiles x effective kick) against running runtimes
@@ -230,7 +229,7 @@ current platform-only wording. Tooltip: one segment per running engine.
   view follows. A (profile, platform) launched against a fresh/empty Chrome
   user-data dir starts PAUSED and is published with `needsLogin: true` (this is
   what a first-time Kick enable hits). New routes: `/api/profiles/remove`,
-  `/api/profiles/login-check`. See docs/STATUS.md for the full entry.
+  `/api/profiles/login-check`.
 
 ## Risks / notes
 
@@ -241,5 +240,5 @@ current platform-only wording. Tooltip: one segment per running engine.
 - Shared config file + per-profile saves: the 2026-08-30 save-on-copy +
   validate-before-commit pattern already covers concurrent-ish edits; keep
   every profile mutation flowing through the same SettingsService path.
-- Wails GTK runtime on Linux remains verify-live until the thin client
-  exists; nothing in this design depends on it (all testable on macOS).
+- Wails GTK runtime on Linux remains verify-live until it has been run on real
+  Linux hardware; nothing in this design depends on it (all testable on macOS).

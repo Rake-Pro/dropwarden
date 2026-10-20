@@ -1,5 +1,5 @@
 // Package logging configures the global zerolog logger with a console writer
-// and an optional size-capped file, mirroring the GoShareIt setup.
+// and an optional size-capped file.
 package logging
 
 import (

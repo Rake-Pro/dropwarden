@@ -109,7 +109,7 @@ func (e *Engine) jittered(base, jitter time.Duration) time.Duration {
 	return base + time.Duration(e.deps.Rand()*float64(jitter))
 }
 
-// fuzzed applies watcher.timing_jitter to a delay so the cadence stays human:
+// fuzzed applies watcher.timing_jitter to a delay to add random variation:
 // the result is d * (1 + timing_jitter * (2*rand-1)), i.e. +/- that fraction,
 // never an exact periodic interval. A non-positive d passes
 // through unchanged (nothing to desync), and timing_jitter <= 0 (the default

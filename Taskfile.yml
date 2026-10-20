@@ -4,8 +4,8 @@ version: "3"
 # and Linux. On Windows/macOS `wails3 dev` gives HMR. Linux uses Wails' GTK3
 # backend (build tag gtk3 -> GTK3 + webkit2gtk-4.1, the most portable stack);
 # the gtk3 tag is inert on other platforms, so every Go command passes it.
-# In claude-container the GTK dev stack lives in a user sysroot: source
-# ~/tools/wails-sysroot.env first (real Linux machines just install
+# When the GTK dev stack lives in a user sysroot (containerized builds), source
+# the sysroot env file first (real Linux machines just install
 # libgtk-3-dev libwebkit2gtk-4.1-dev libx11-dev). The CLI harness
 # (cmd/dropwarden-cli) runs everywhere with no cgo.
 
@@ -85,10 +85,9 @@ tasks:
           echo "forbidden focus-stealing call found: bringToFront"; exit 1
         fi
       # Tab activation is allowed in EXACTLY ONE audited call site:
-      # internal/browser/window.go, the shared-window coordinator. Owner
+      # internal/browser/window.go, the shared-window coordinator. Design
       # decision 2026-08-30 accepts it as the proof-of-concept mechanism for
-      # one-Chrome-window-per-profile; docs/STATUS.md carries the
-      # release-blocking backlog item to replace it. The ban stands everywhere
+      # one-Chrome-window-per-profile; the GitHub issues track replacing it. The ban stands everywhere
       # else - do not widen this exemption.
       - |
         if grep -rn --include=*.go -E "\.Activate\(" internal/browser internal/twitch internal/watcher \

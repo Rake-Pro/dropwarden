@@ -37,7 +37,7 @@ Kick-side selector/endpoint is verify-live until exercised on a real machine.
   developer/fulfillment-only (GET/PATCH /public/v1/drops/claims). No viewer
   campaign/progress API. Not useful to us.
 - Unofficial: `https://web.kick.com/api/v1/drops/campaigns` lists active
-  campaigns - used by HyperBeats/KickDropsMiner from an authenticated browser
+  campaigns - readable from an authenticated browser
   session. Single-source and undocumented; treat as bonus, design around PAGE
   scraping + page-context fetch (our Twitch header-replay pattern) first.
 - Watch-time credit protocol: UNKNOWN (no confirmed heartbeat endpoint in any
@@ -45,15 +45,10 @@ Kick-side selector/endpoint is verify-live until exercised on a real machine.
   and read progress from the inventory/stream page rather than trying to
   replay telemetry. Chat/events ride Pusher websockets; video is HLS via
   live-video.net.
-- Cloudflare: Kick-specific detection details are thin, but the working
-  community miner (KickDropsMiner) drives a REAL Chrome with persisted
-  login cookies - exactly our architecture (dedicated instance, real profile,
-  no --headless / --enable-automation, human-like clicks). Expect friction,
-  not a wall. nodriver/undetected-chromedriver tricks exist as fallback
-  hardening if CDP fingerprinting bites.
-- Muted/background: KickDropsMiner ships mute + hidden-player modes and
-  credits still accrue in practice (anecdotal but consistent with Twitch).
-  Our sink-level --mute-audio on a second dedicated instance carries over.
+- Cloudflare: Kick sits behind Cloudflare; the working approach is a real
+  Chrome with a persisted login, same as on Twitch.
+- Muted/background: credits are reported to accrue in practice (anecdotal but
+  consistent with Twitch). Our sink-level --mute-audio on a second dedicated instance carries over.
 
 ## Why the codebase is ready for this (audited 2026-08-27)
 
@@ -115,12 +110,10 @@ Phase 3 - claim + link:
 
 - Everything DOM-shaped on Kick is a verify-live guess; expect a live-debug
   pass like Twitch's (op names, selectors, timing).
-- Cloudflare may challenge on automation-adjacent signals; mitigation is the
-  same posture that got Twitch working plus the KickDropsMiner precedent.
 - Watch-credit sensitivity to refreshes means our recovery ladder must be
   gentler; if Kick progress stalls, prefer waiting over reloading.
-- ToS: kick.com/kick-drops-terms was not fetchable (403); automation policy
-  unverified. Same personal-use posture as the Twitch side.
+- ToS: kick.com/kick-drops-terms was not fetchable (403); terms not
+  reviewed; same personal-use stance as Twitch.
 
 ## Login probe (implemented 2026-08-31, endpoint verify-live)
 

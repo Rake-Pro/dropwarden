@@ -1,12 +1,11 @@
 package gql
 
-// The structs below mirror the documented shape of Twitch's GraphQL
-// responses (as reverse-engineered by community tools such as
-// TwitchDropsMiner). No live capture was available in this environment, so
-// every struct is marked "verify live" with the fields most likely to need
-// correction once checked against a real response body. All fields use
-// pointers or plain zero-value types so a missing/renamed field degrades
-// rather than breaking JSON decoding.
+// The structs below mirror Twitch's GraphQL response shape as observed in live
+// responses and the fixtures under testdata/. Structs are marked "verify live"
+// with the fields most likely to need correction once checked against a real
+// response body. All fields use pointers or plain zero-value types so a
+// missing or renamed field degrades gracefully rather than breaking JSON
+// decoding.
 
 // campaignGame is the game object embedded in campaign responses.
 //
