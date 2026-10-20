@@ -23,7 +23,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: stable
+          # go.mod's exact version (stable can resolve to a runner-cached older
+          # patch, which then refuses go.mod); check-latest downloads it.
+          go-version-file: go.mod
           check-latest: true
           cache: true
 
