@@ -6,8 +6,10 @@
 #
 # The run builds and packages dropwarden for Windows, macOS and Linux
 # (desktop.yml), builds the container image, attaches the desktop assets to a
-# GitHub Release and writes the updater manifest (latest.json) next to them;
-# the in-app updater (internal/update) reads releases/latest/download/latest.json.
+# GitHub Release together with the updater manifest (latest.json); the
+# in-app updater (internal/update) reads releases/latest/download/latest.json.
+# Release notes are the tag's CHANGELOG.md section, or "## Unreleased" when
+# the tag was minted at merge time and has no section of its own yet.
 # When DOWNLOADS_BASE_URL and DOWNLOADS_UPLOAD_TOKEN are set the assets are
 # also mirrored to a downloads host. Asset names must stay in sync with
 # update.AssetName().
@@ -211,30 +213,37 @@ jobs:
       - name: Release notes from CHANGELOG.md
         run: python3 scripts/changelog-notes.py "$TAG" > "$RUNNER_TEMP/notes.md"
 
+      # A re-run for a tag that is already published must not replace its
+      # assets: a rebuild is not byte-identical, and an install that cached the
+      # earlier latest.json would fail the sha256 check and skip the version.
+      # The hosted bytes win; only assets the release does not have yet are new.
+      - name: Keep already-published assets
+        id: existing
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+               --jq '.assets[].name' > "$RUNNER_TEMP/hosted.txt" 2>/dev/null; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+          for f in assets/*; do
+            name=$(basename "$f")
+            if grep -qxF "$name" "$RUNNER_TEMP/hosted.txt"; then
+              echo "$name is already published; using the hosted bytes"
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --output "$f" --clobber
+            fi
+          done
+
       - name: Checksums
         run: |
           cd assets
           sha256sum * > checksums.txt
           cat checksums.txt
 
-      - name: Create or update release
-        run: |
-          set -euo pipefail
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --clobber
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/notes.md"
-          else
-            pre=""
-            [ "${PRERELEASE}" = "true" ] && pre="--prerelease"
-            gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" $pre \
-              --title "dropwarden $TAG" --notes-file "$RUNNER_TEMP/notes.md"
-          fi
-
-      # Updater manifest: every asset with its absolute URL on the downloads
-      # host, sha256 and size, plus the release notes. A versioned asset the
-      # host already serves is immutable there (a re-run's rebuild is not
-      # byte-identical), so the manifest hashes the HOSTED bytes for those,
-      # or the feed would name a sha256 the updater can never verify.
+      # Updater manifest: every asset with its GitHub release URL, sha256 and
+      # size, plus the release notes. Written before the release is created so
+      # it is attached in the same publish.
       - name: Write latest.json
         run: |
           set -euo pipefail
@@ -267,7 +276,35 @@ jobs:
               f.write("\n")
           PY
           cat assets/latest.json
-          gh release upload "$TAG" assets/latest.json --repo "$GITHUB_REPOSITORY" --clobber
+
+      # A new release is a draft until every file, latest.json included, is
+      # attached, then published: releases/latest never points at a release
+      # the updater cannot read. An existing release gets only the files it
+      # lacks, plus fresh checksums.txt, latest.json and notes.
+      - name: Create or update release
+        env:
+          EXISTS: ${{ steps.existing.outputs.exists }}
+        run: |
+          set -euo pipefail
+          if [ "${EXISTS}" = "true" ]; then
+            files=()
+            for f in assets/*; do
+              name=$(basename "$f")
+              case "$name" in
+                latest.json|checksums.txt) files+=("$f") ;;
+                *) grep -qxF "$name" "$RUNNER_TEMP/hosted.txt" || files+=("$f") ;;
+              esac
+            done
+            gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            # --draft=false also publishes a draft a failed earlier run left behind.
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            pre=""
+            [ "${PRERELEASE}" = "true" ] && pre="--prerelease"
+            gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --draft $pre \
+              --title "dropwarden $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          fi
 
       # Optional mirror. Contract for the receiving service: PUT with a Bearer
       # token, layout <base>/dropwarden/<tag>/<asset> plus

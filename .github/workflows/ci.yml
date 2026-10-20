@@ -1,6 +1,7 @@
 # CI for the dev branch: lint + test, the dev-branch container image (dev-<sha>)
 # and, for the desktop dev update channel, the desktop builds published as a
-# rolling "dev" GitHub prerelease with a dev-latest.json manifest. No paths
+# dev-<sha> GitHub prerelease each, with the dev-latest.json manifest on the
+# "dev-latest" prerelease. No paths
 # filters: the "build" check is required on
 # dev -> main promotion PRs, so it must exist on every dev SHA.
 #
@@ -137,11 +138,16 @@ jobs:
       version: ${{ needs.version.outputs.version }}
     secrets: inherit
 
-  # Dev channel feed: assets under <base>/dropwarden/dev-<sha>/ and the
-  # manifest dev-latest.json on one rolling "dev" prerelease: each push deletes
-  # and recreates it at the new SHA, so the dev feed is
-  # releases/download/dev/dev-latest.json and releases/latest never sees it.
-  # Created with GITHUB_TOKEN, so the tag does not trigger release.yml.
+  # Dev channel feed: each dev build is its own dev-<sha> prerelease holding
+  # the assets, so a manifest an install already fetched stays downloadable
+  # after later pushes. dev-latest.json lives on one persistent "dev-latest"
+  # prerelease and is re-uploaded there (the release itself is never
+  # recreated; --clobber swaps the one file, a far smaller gap), so the dev
+  # feed is releases/download/dev-latest/dev-latest.json. All prereleases, so
+  # releases/latest never sees them. Tag names (dev-<sha>, dev-latest) never
+  # collide with a branch and do not match release.yml's v* trigger; they are
+  # created with GITHUB_TOKEN anyway. Builds older than the newest 10 are
+  # deleted with their tags.
   publish-dev:
     needs: [version, desktop]
     if: github.event_name == 'push' && vars.DEV_DESKTOP_CHANNEL != 'false'
@@ -176,13 +182,27 @@ jobs:
           print(f"Dev build from `{subject}`.\n\n{body}".strip())
           PY
 
+      # A re-run for the same SHA keeps the published bytes (a rebuild is not
+      # byte-identical, and a cached manifest names the first sha256).
+      - name: Keep already-published assets
+        id: existing
+        run: |
+          set -euo pipefail
+          if gh release view "dev-${SHA}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "dev-${SHA} is already published; using the hosted bytes"
+            gh release download "dev-${SHA}" --repo "$GITHUB_REPOSITORY" --dir assets --clobber
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Write dev-latest.json
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import datetime, hashlib, json, os
-          base = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/dev"
           version, sha = os.environ["VERSION"], os.environ["SHA"]
+          base = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/dev-{sha}"
           notes = open(os.path.join(os.environ["RUNNER_TEMP"], "notes.md"), encoding="utf-8").read().strip()
           assets = []
           for name in sorted(os.listdir("assets")):
@@ -197,12 +217,34 @@ jobs:
           PY
           cat dev-latest.json
 
-      # Recreate the rolling prerelease at this SHA. The brief gap between
-      # delete and create reads as "no release published yet" to dev installs.
-      - name: Publish the dev prerelease
+      - name: Publish the dev build
+        env:
+          EXISTS: ${{ steps.existing.outputs.exists }}
         run: |
           set -euo pipefail
-          gh release delete dev --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
-          gh release create dev assets/* dev-latest.json --repo "$GITHUB_REPOSITORY" \
-            --prerelease --target "$SHA" --title "Dev build ${VERSION}" \
-            --notes-file "$RUNNER_TEMP/notes.md"
+          if [ "${EXISTS}" != "true" ]; then
+            gh release create "dev-${SHA}" assets/* --repo "$GITHUB_REPOSITORY" \
+              --prerelease --target "$GITHUB_SHA" --title "Dev build ${VERSION}" \
+              --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+          title="Dev channel (latest: ${VERSION})"
+          if gh release view dev-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload dev-latest dev-latest.json --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit dev-latest --repo "$GITHUB_REPOSITORY" --title "$title" \
+              --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create dev-latest dev-latest.json --repo "$GITHUB_REPOSITORY" \
+              --prerelease --target "$GITHUB_SHA" --title "$title" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+
+      # Keep the newest 10 dev-<sha> builds (a dev install re-reads the feed
+      # every interval_hours, 24 by default, so a cached manifest stays valid).
+      - name: Prune old dev builds
+        run: |
+          set -euo pipefail
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | test("^dev-[0-9a-f]{7}$"))] | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' |
+          while read -r tag; do
+            echo "deleting ${tag}"
+            gh release delete "${tag}" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+          done

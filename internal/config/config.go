@@ -395,12 +395,28 @@ func (c *Config) KeepAwakeMode() string {
 // DefaultUpdateFeedURL is the release manifest the updater reads by default
 // (stable channel): the latest.json asset of the newest GitHub release, which
 // GitHub resolves without prereleases. DefaultDevUpdateFeedURL is the dev
-// channel's: the dev-latest.json asset of the rolling "dev" prerelease that CI
-// republishes for every dev-branch build.
+// channel's: the dev-latest.json asset of the "dev-latest" prerelease that CI
+// updates for every dev-branch build (the assets themselves live on a
+// dev-<sha> prerelease per build, so a cached manifest stays downloadable).
 const (
 	DefaultUpdateFeedURL    = "https://github.com/Rake-Pro/dropwarden/releases/latest/download/latest.json"
-	DefaultDevUpdateFeedURL = "https://github.com/Rake-Pro/dropwarden/releases/download/dev/dev-latest.json"
+	DefaultDevUpdateFeedURL = "https://github.com/Rake-Pro/dropwarden/releases/download/dev-latest/dev-latest.json"
+
+	// LegacyUpdateFeedURL is the feed every install before v0.3.4 had written
+	// into config.yaml explicitly (the starter template pinned it). It reads
+	// as "not pinned" on load so those installs follow the channel default.
+	LegacyUpdateFeedURL = "https://cdn.rake.pro/releases/dropwarden/latest.json"
 )
+
+// IsDefaultFeedURL reports whether feed is one of the channel defaults or
+// the legacy default: a feed the user never chose, so it is not a pin.
+func IsDefaultFeedURL(feed string) bool {
+	switch strings.TrimSpace(feed) {
+	case DefaultUpdateFeedURL, DefaultDevUpdateFeedURL, LegacyUpdateFeedURL:
+		return true
+	}
+	return false
+}
 
 // UpdateEnabled reports whether background update checks run (default true).
 func (c *Config) UpdateEnabled() bool { return boolOr(c.Update.Enabled, true) }

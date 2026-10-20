@@ -1998,6 +1998,9 @@ async function saveSettings() {
   try {
     if (cfgDirty()) {
       await api.saveConfig(cfg);
+      // Re-read what was saved: the server resolves derived fields (the
+      // channel's feed URL), so the form never echoes a stale value back.
+      cfg = await loadCfg();
       takeSnapshot();
     }
     for (const p of changed) {

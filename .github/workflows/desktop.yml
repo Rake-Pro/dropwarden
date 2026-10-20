@@ -9,10 +9,10 @@
 # MACOS_CERT_P12_PASSWORD + DEVELOPER_ID_APP to sign; AC_APPLE_ID +
 # AC_PASSWORD + TEAM_ID to notarize. Callers pass `secrets: inherit`.
 #
-# Go: go.mod's directive is 1.27rc2, which setup-go's go-version-file would
-# resolve to that release candidate, so the toolchain is pinned here instead.
-# Exact patch, not "1.27.x": setup-go prefers a runner-cached toolchain that
-# satisfies the range, which can be an older patch missing security fixes.
+# Go: the toolchain is pinned here to the exact patch in go.mod, not read
+# through go-version-file or given as "1.27.x": setup-go prefers a
+# runner-cached toolchain that satisfies a range, which can be an older patch
+# missing security fixes. Bump GO_VERSION together with go.mod.
 name: Desktop builds
 
 on:

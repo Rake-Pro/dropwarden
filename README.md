@@ -385,22 +385,29 @@ CI:
   `release:minor` / `release:major` labels change the bump - and the Release
   workflow builds from the tag in the same run: desktop assets (desktop.yml),
   the container image `:vX.Y.Z`, the GitHub release with `latest.json`
-  attached, and an optional mirror to a downloads host.
+  attached (created as a draft, published once every file is up), and an
+  optional mirror to a downloads host. Release notes are the tag's
+  `## vX.Y.Z` section of CHANGELOG.md, or `## Unreleased` when the version
+  was only decided at merge time; stamp the heading afterwards at leisure.
+  Re-running Release for a published tag keeps the assets already hosted
+  (a rebuild is not byte-identical) and only adds missing files.
 - By hand: `git tag v0.1.0 && git push --tags`, or run Release
   (workflow_dispatch) with `version` = an existing tag; `container`
   (workflow_dispatch) rebuilds an existing tag's image.
 - Update channels (Settings > Updates): Stable reads the `latest.json` asset
   of the newest release (`releases/latest/download/latest.json`; GitHub skips
-  prereleases). Dev reads `releases/download/dev/dev-latest.json`: CI
-  republishes one rolling `dev` prerelease with the assets of every dev push.
+  prereleases). Dev reads `releases/download/dev-latest/dev-latest.json`: CI
+  publishes every dev push as its own `dev-<sha>` prerelease (the newest 10
+  are kept) and replaces the manifest on the `dev-latest` prerelease in place.
   Dev versions are `X.Y.(Z+1)-dev.N.<sha>`: above the last release, below the
-  next. Container installs have no updater (new image = new version) and no
-  Updates pane.
+  next. A `feed_url` pinned in config.yaml wins over the channel; the old
+  default feed URL is treated as not pinned on load. Container installs have
+  no updater (new image = new version) and no Updates pane.
 - Repo settings the workflows read:
 
 | Name | Kind | Purpose |
 | --- | --- | --- |
-| `DEV_DESKTOP_CHANNEL` | variable | `false` skips the desktop builds and the `dev` prerelease on dev pushes (saves Windows/macOS runner minutes); images and checks still run. |
+| `DEV_DESKTOP_CHANNEL` | variable | `false` skips the desktop builds and the dev prereleases on dev pushes (saves Windows/macOS runner minutes); images and checks still run. |
 | `DOWNLOADS_BASE_URL`, `DOWNLOADS_UPLOAD_TOKEN` | variable, secret | Optional mirror: when both are set, release assets and `latest.json` are also PUT to a downloads host (see below). Unset = GitHub only. |
 | `MACOS_CERT_P12`, `MACOS_CERT_P12_PASSWORD`, `DEVELOPER_ID_APP` | secrets | Developer ID signing (optional). |
 | `AC_APPLE_ID`, `AC_PASSWORD`, `TEAM_ID` | secrets | Notarization (optional, needs signing). |

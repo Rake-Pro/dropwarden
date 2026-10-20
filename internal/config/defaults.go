@@ -72,12 +72,22 @@ func (c *Config) applyDefaults() {
 
 	c.migrateBakedWindowOrigins()
 
+	// The stored-credentials mode was removed in v0.3.4; a config still naming
+	// it runs as manual rather than refusing to start.
+	if c.Auth.Mode == "stored" {
+		c.Auth.Mode = ""
+	}
 	setString(&c.Auth.Mode, "manual")
 
 	setString(&c.Logging.Level, "info")
 	setInt(&c.Logging.MaxSizeMB, 5)
 
 	setInt(&c.Update.IntervalHours, 24)
+	// A feed_url equal to a default was never a choice: the pre-v0.3.4 starter
+	// template wrote the legacy URL explicitly. Unpin it so the channel decides.
+	if c.Update.FeedURL != nil && IsDefaultFeedURL(*c.Update.FeedURL) {
+		c.Update.FeedURL = nil
+	}
 
 	// No profiles block = legacy single-profile install: synthesize the one
 	// implicit profile rooted at the app dir itself. This gets written back

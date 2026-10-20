@@ -15,18 +15,23 @@ and are grouped by day and theme on `main`.
   current build until then. `update.channel` in config.yaml; a pinned
   `feed_url` still wins.
 - Repo flow: `dev` is the working branch, `main` the release line; merging the
-  automated "Merge dev to main" PR mints the next tag and releases it. Dev
-  pushes publish `ghcr.io/rake-pro/dropwarden:dev-<sha>` images.
+  automated "Merge dev to main" PR mints the next tag and releases it, with
+  the `## Unreleased` changelog section as the notes until the version
+  heading is stamped. Dev pushes publish
+  `ghcr.io/rake-pro/dropwarden:dev-<sha>` images.
 
 ### Changed
 - Updates are served from GitHub Releases. The stable feed is the
   `latest.json` asset of the newest release
-  (`releases/latest/download/latest.json`); the dev feed is `dev-latest.json`
-  on a rolling `dev` prerelease that CI republishes for every dev push. Asset
-  URLs in both manifests point at GitHub. Mirroring to a downloads host is
-  optional (`DOWNLOADS_BASE_URL` variable + `DOWNLOADS_UPLOAD_TOKEN` secret);
-  installs on the old default feed pick up the new location through that
-  mirror once.
+  (`releases/latest/download/latest.json`), attached before the release goes
+  live; the dev feed is `dev-latest.json` on the `dev-latest` prerelease,
+  replaced in place for every dev push, with each build's assets on their
+  own `dev-<sha>` prerelease (the newest 10 are kept). Asset URLs in both
+  manifests point at GitHub. Mirroring to a downloads host is optional
+  (`DOWNLOADS_BASE_URL` variable + `DOWNLOADS_UPLOAD_TOKEN` secret). A
+  config.yaml whose `feed_url` is the old default (every install before this
+  version wrote it explicitly) is read as "not pinned", so it follows the
+  channel and the new location; a custom feed_url is kept.
 - Container installs have no Updates pane at all (the image is the version);
   the version shows on Settings > App.
 - README leads with the purpose and a "what it does and does not do" list,
@@ -42,7 +47,7 @@ and are grouped by day and theme on `main`.
 - docs/STATUS.md (operator handoff log).
 - The stored-credentials sign-in mode (`auth.stored`, shipped off and
   unsupported). `auth.mode` is `manual` only: you sign in yourself, once. A
-  config still naming `stored` is refused with a clear message.
+  config still naming `stored` loads as `manual`.
 
 ## v0.3.3 - 2026-10-20
 

@@ -201,6 +201,17 @@ func TestSettingsUpdateChannelSwitchesTheFeed(t *testing.T) {
 	if got.UpdateChannel() != config.UpdateChannelStable || got.Update.FeedURL != nil || got.UpdateFeedURL() != config.DefaultUpdateFeedURL {
 		t.Fatalf("stable channel: channel=%q pinned=%v feed=%q", got.UpdateChannel(), got.Update.FeedURL, got.UpdateFeedURL())
 	}
+	// A stale echo: the pane kept the dev feed from before the switch and
+	// saves another pane without reloading. It must not become a pin.
+	dto = s.Load()
+	dto.UpdateFeedURL = ptr(config.DefaultDevUpdateFeedURL)
+	if err := s.Save(dto); err != nil {
+		t.Fatal(err)
+	}
+	got = b.config()
+	if got.Update.FeedURL != nil || got.UpdateFeedURL() != config.DefaultUpdateFeedURL {
+		t.Fatalf("stale dev echo pinned: pinned=%v feed=%q", got.Update.FeedURL, got.UpdateFeedURL())
+	}
 	// A real custom feed still pins.
 	dto = s.Load()
 	dto.UpdateFeedURL = ptr("https://example.com/dw/latest.json")

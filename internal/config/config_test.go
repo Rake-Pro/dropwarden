@@ -52,7 +52,7 @@ func TestValidateRejectsBadPriorityAndStall(t *testing.T) {
 		{"bad theme", func(c *Config) { c.Theme = "neon" }},
 		{"bad keep_awake", func(c *Config) { c.Power.KeepAwake = "sometimes" }},
 		{"bad claim strategy", func(c *Config) { c.Claim.Strategy = "spam" }},
-		{"stored credentials mode removed", func(c *Config) { c.Auth.Mode = "stored" }},
+		{"unknown auth mode", func(c *Config) { c.Auth.Mode = "magic" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -771,5 +771,38 @@ func TestUpdateChannelPicksTheFeed(t *testing.T) {
 	legacy, err := parse([]byte("update:\n  interval_hours: 12\n"))
 	if err != nil || legacy.UpdateChannel() != UpdateChannelStable {
 		t.Fatalf("legacy: %v %q", err, legacy.UpdateChannel())
+	}
+}
+
+func TestStoredAuthModeCoercesToManual(t *testing.T) {
+	// Removed in v0.3.4: a config that still names it must load, not refuse
+	// to start.
+	cfg, err := parse([]byte("auth:\n  mode: stored\n  stored:\n    enabled: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Auth.Mode != "manual" {
+		t.Fatalf("auth.mode = %q, want manual", cfg.Auth.Mode)
+	}
+}
+
+func TestLegacyFeedURLUnpinsOnLoad(t *testing.T) {
+	// Every pre-v0.3.4 install has the old default written explicitly; it
+	// must follow the channel, not stay pinned to a feed nobody publishes.
+	for _, feed := range []string{LegacyUpdateFeedURL, DefaultUpdateFeedURL, DefaultDevUpdateFeedURL} {
+		cfg, err := parse([]byte("update:\n  channel: dev\n  feed_url: \"" + feed + "\"\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Update.FeedURL != nil || cfg.UpdateFeedURL() != DefaultDevUpdateFeedURL {
+			t.Errorf("%s: pinned=%v feed=%q, want the dev default", feed, cfg.Update.FeedURL, cfg.UpdateFeedURL())
+		}
+	}
+	cfg, err := parse([]byte("update:\n  feed_url: \"https://example.com/dw/latest.json\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UpdateFeedURL() != "https://example.com/dw/latest.json" {
+		t.Fatalf("custom feed lost: %q", cfg.UpdateFeedURL())
 	}
 }

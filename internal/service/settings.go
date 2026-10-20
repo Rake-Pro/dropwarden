@@ -292,9 +292,9 @@ func applyConfigDTO(c *config.Config, d ConfigDTO) {
 	setUpdate(&c.Update.AutoInstall, d.UpdateAutoInstall, c.UpdateAutoInstall())
 	setUpdate(&c.Update.ShowChangelog, d.UpdateShowChangelog, c.UpdateShowChangelog())
 	// The channel decides the default feed, and the pane echoes the RESOLVED
-	// feed back, so a feed equal to either channel's default is "not pinned":
-	// switching channels must not pin the old channel's URL.
-	prevDefault := config.DefaultFeedURLFor(c.UpdateChannel())
+	// feed back (possibly a stale one from before an earlier save in the same
+	// visit), so a feed equal to ANY default is "not pinned": switching
+	// channels must never pin a default URL.
 	if d.UpdateChannel != nil {
 		if ch := strings.TrimSpace(*d.UpdateChannel); ch == config.UpdateChannelDev {
 			c.Update.Channel = config.UpdateChannelDev
@@ -304,7 +304,7 @@ func applyConfigDTO(c *config.Config, d ConfigDTO) {
 	}
 	if d.UpdateFeedURL != nil {
 		feed := strings.TrimSpace(*d.UpdateFeedURL)
-		if feed == prevDefault || feed == config.DefaultFeedURLFor(c.UpdateChannel()) {
+		if config.IsDefaultFeedURL(feed) {
 			c.Update.FeedURL = nil
 		} else {
 			c.Update.FeedURL = ptr(feed)
