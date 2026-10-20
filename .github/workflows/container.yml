@@ -1,18 +1,15 @@
-# dropwarden-desktop container image (deploy/container/Dockerfile) -> private
-# GHCR. Tag = the git tag (vX.Y.Z), nothing else: no :latest, no sha tags
-# (fleet semver standard). Runs on the same tag push as release.yml and on
-# demand for a rebuild (base image or Chrome moved) without a new app version.
+# Rebuild the container image for an EXISTING vX.Y.Z tag on demand (base
+# image or Chrome moved, no new app version). Release builds come from
+# release.yml (tag = git tag only, no :latest); dev images (dev-<sha>) from
+# ci.yml.
 name: container
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing vX.Y.Z tag to build (default: the ref the run is dispatched on)"
-        required: false
-        default: ""
+        description: "Existing vX.Y.Z tag to build"
+        required: true
 
 permissions:
   contents: read
@@ -20,7 +17,7 @@ permissions:
 
 env:
   IMAGE: ghcr.io/rake-pro/dropwarden
-  GO_VERSION: "1.27.2"
+  GO_VERSION: "1.27.3"
 
 jobs:
   image:
@@ -29,13 +26,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag != '' && inputs.tag || github.ref }}
+          ref: refs/tags/${{ inputs.tag }}
 
       - name: Resolve version
         id: v
         run: |
           set -euo pipefail
-          if [ -n "${{ inputs.tag }}" ]; then tag="${{ inputs.tag }}"; else tag="${GITHUB_REF_NAME}"; fi
+          tag="${{ inputs.tag }}"
           case "$tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "not a vX.Y.Z tag: $tag" >&2; exit 1 ;; esac
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"

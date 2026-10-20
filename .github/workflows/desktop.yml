@@ -1,0 +1,250 @@
+# Desktop builds (Windows, macOS, Linux) for one ref, as a reusable workflow:
+# release.yml calls it for a tagged release, ci.yml for every dev-branch build
+# (the dev update channel). Artifacts windows/macos/linux land in the CALLER's
+# run, where its publish job picks them up. Asset names must stay in sync with
+# update.AssetName().
+#
+# macOS signing/notarization are gated on secrets and skipped cleanly when
+# absent (ad-hoc signature instead): MACOS_CERT_P12 (base64 .p12) +
+# MACOS_CERT_P12_PASSWORD + DEVELOPER_ID_APP to sign; AC_APPLE_ID +
+# AC_PASSWORD + TEAM_ID to notarize. Callers pass `secrets: inherit`.
+#
+# Go: the toolchain is pinned here to the exact patch in go.mod, not read
+# through go-version-file or given as "1.27.x": setup-go prefers a
+# runner-cached toolchain that satisfies a range, which can be an older patch
+# missing security fixes. Bump GO_VERSION together with go.mod.
+name: Desktop builds
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to build (refs/tags/vX.Y.Z, or a commit sha)"
+        required: true
+        type: string
+      version:
+        description: "Version stamped into the binaries and asset names (no leading v)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.27.3"
+  VERSION_PKG: github.com/rake-pro/dropwarden/internal/version.Version
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Icon + manifest resource for dropwarden.exe, with the Wails CLI pinned
+      # to the go.mod version. *.syso is gitignored.
+      - name: Generate Windows resources (syso)
+        shell: bash
+        run: |
+          go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.28 generate syso \
+            -arch amd64 -icon build/icons/dropwarden.ico \
+            -manifest build/windows/wails.exe.manifest \
+            -out cmd/dropwarden/rsrc_windows_amd64.syso
+
+      - name: Build (CGO off)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/windows
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags production \
+            -ldflags "-H windowsgui -X ${VERSION_PKG}=${VERSION}" \
+            -o dist/windows/dropwarden.exe ./cmd/dropwarden
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+            -ldflags "-X ${VERSION_PKG}=${VERSION}" \
+            -o dist/windows/dropwarden-cli.exe ./cmd/dropwarden-cli
+
+      - name: Package zip (updater feed)
+        shell: bash
+        run: |
+          mkdir -p out
+          7z a -tzip "out/dropwarden_${VERSION}_windows_amd64.zip" ./dist/windows/dropwarden.exe ./dist/windows/dropwarden-cli.exe
+
+      # pwsh, not bash: git-bash rewrites /D... /O... switches as POSIX paths.
+      # iscc ships preinstalled on the runner image; choco only as fallback.
+      - name: Build Inno Setup installer
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+          }
+          iscc "/DAppVersion=$env:VERSION" "/DBinDir=$PWD\dist\windows" /Oout build\windows\dropwarden.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: out/*
+          if-no-files-found: error
+          retention-days: 1
+
+  macos:
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build universal binaries (arm64 + amd64 + lipo)
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for arch in arm64 amd64; do
+            CGO_ENABLED=1 GOOS=darwin GOARCH=$arch go build -tags production \
+              -ldflags "-X ${VERSION_PKG}=${VERSION}" -o "dist/dropwarden-$arch" ./cmd/dropwarden
+            CGO_ENABLED=1 GOOS=darwin GOARCH=$arch go build \
+              -ldflags "-X ${VERSION_PKG}=${VERSION}" -o "dist/dropwarden-cli-$arch" ./cmd/dropwarden-cli
+          done
+          lipo -create -output dist/dropwarden dist/dropwarden-arm64 dist/dropwarden-amd64
+          lipo -create -output dist/dropwarden-cli dist/dropwarden-cli-arm64 dist/dropwarden-cli-amd64
+
+      - name: Assemble dropwarden.app
+        run: VERSION="${VERSION}" BIN=dist/dropwarden CLI_BIN=dist/dropwarden-cli APP=dist/dropwarden.app scripts/bundle.sh
+
+      - name: Check signing secrets
+        id: secrets
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          AC_APPLE_ID: ${{ secrets.AC_APPLE_ID }}
+        run: |
+          echo "sign=$([ -n "$MACOS_CERT_P12" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "notarize=$([ -n "$AC_APPLE_ID" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Sign (Developer ID)
+        if: steps.secrets.outputs.sign == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_P12_PASSWORD: ${{ secrets.MACOS_CERT_P12_PASSWORD }}
+          DEVELOPER_ID_APP: ${{ secrets.DEVELOPER_ID_APP }}
+        run: |
+          set -euo pipefail
+          echo "$MACOS_CERT_P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security import "$RUNNER_TEMP/cert.p12" -k build.keychain -P "$MACOS_CERT_P12_PASSWORD" -T /usr/bin/codesign
+          # Developer ID intermediates: a Keychain-exported p12 carries only
+          # the leaf + key, and the runner keychain cannot chain it without them.
+          curl -fsSL -o "$RUNNER_TEMP/devid_g1.cer" https://www.apple.com/certificateauthority/DeveloperIDCA.cer
+          curl -fsSL -o "$RUNNER_TEMP/devid_g2.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security import "$RUNNER_TEMP/devid_g1.cer" -k build.keychain
+          security import "$RUNNER_TEMP/devid_g2.cer" -k build.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP"/devid_g*.cer
+          # Sign by identity hash (the build keychain holds exactly one), so
+          # formatting drift in DEVELOPER_ID_APP cannot break the match.
+          identity=$(security find-identity -v -p codesigning build.keychain | awk '/^ *1\)/{print $2; exit}')
+          if [ -z "$identity" ]; then
+            echo "sign: no valid codesigning identity (DEVELOPER_ID_APP=${DEVELOPER_ID_APP})" >&2
+            exit 1
+          fi
+          # Inner binary first, then the bundle (hardened runtime for notarization).
+          codesign --force --options runtime --timestamp -s "$identity" dist/dropwarden.app/Contents/MacOS/dropwarden-cli
+          codesign --force --options runtime --timestamp -s "$identity" dist/dropwarden.app
+          codesign --verify --strict --verbose=2 dist/dropwarden.app
+
+      # No cert secrets: ad-hoc sign the WHOLE bundle so it carries one
+      # consistent identity (Apple Silicon refuses to run unsigned arm64 code).
+      - name: Ad-hoc sign (fallback)
+        if: steps.secrets.outputs.sign != 'true'
+        run: codesign --force --deep -s - dist/dropwarden.app
+
+      - name: Notarize and staple
+        if: steps.secrets.outputs.sign == 'true' && steps.secrets.outputs.notarize == 'true'
+        env:
+          AC_APPLE_ID: ${{ secrets.AC_APPLE_ID }}
+          AC_PASSWORD: ${{ secrets.AC_PASSWORD }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          ditto -c -k --keepParent dist/dropwarden.app "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --apple-id "$AC_APPLE_ID" --team-id "$TEAM_ID" --password "$AC_PASSWORD" --wait
+          xcrun stapler staple dist/dropwarden.app
+
+      - name: Package dmg + zip
+        run: |
+          set -euo pipefail
+          mkdir -p out dmg
+          ditto -c -k --keepParent dist/dropwarden.app "out/dropwarden_${VERSION}_darwin_universal.zip"
+          # dmg with an /Applications link for drag-to-install.
+          cp -R dist/dropwarden.app dmg/
+          ln -s /Applications dmg/Applications
+          # HFS+ and a retry: on recent macOS runners hdiutil's APFS size
+          # estimate intermittently fails with "No space left on device".
+          for i in 1 2 3 4 5; do
+            if hdiutil create -volname dropwarden -srcfolder dmg -ov -format UDZO -fs HFS+ \
+              "out/dropwarden_${VERSION}_darwin_universal.dmg"; then break; fi
+            [ "$i" = 5 ] && exit 1
+            echo "hdiutil failed (attempt $i), retrying"; sleep 5
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: out/*
+          if-no-files-found: error
+          retention-days: 1
+
+  linux:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install GTK/webkit dev headers
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libx11-dev
+
+      - name: Build and package
+        run: |
+          set -euo pipefail
+          mkdir -p dist out
+          go build -tags "gtk3 production" -ldflags "-X ${VERSION_PKG}=${VERSION}" -o dist/dropwarden ./cmd/dropwarden
+          go build -tags "gtk3 production" -ldflags "-X ${VERSION_PKG}=${VERSION}" -o dist/dropwarden-cli ./cmd/dropwarden-cli
+          tar -C dist -czf "out/dropwarden_${VERSION}_linux_amd64.tar.gz" dropwarden dropwarden-cli
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: out/*
+          if-no-files-found: error
+          retention-days: 1
+

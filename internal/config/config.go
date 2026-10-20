@@ -1,5 +1,5 @@
 // Package config defines dropwarden's on-disk YAML configuration, its defaults,
-// and validation. The load path mirrors GoShareIt: read -> applyDefaults ->
+// and validation. The load path is read -> applyDefaults ->
 // validate, with an atomic validate-into-temp-then-rename save.
 package config
 
@@ -185,8 +185,8 @@ type WatcherConfig struct {
 	// 0 = default.
 	MaxSelectAttempts int `yaml:"max_select_attempts"`
 
-	// TimingJitter desynchronizes periodic watcher actions for bot-detection
-	// avoidance: a covered delay D becomes D * (1 + timing_jitter * (2*r-1)),
+	// TimingJitter adds random variation to the watcher's timers (no exact fixed
+	// intervals): a covered delay D becomes D * (1 + timing_jitter * (2*r-1)),
 	// r in [0,1), i.e. +/- that fraction. 0 disables it (exact legacy
 	// intervals); valid range is [0, 0.5]. Unlike the other *Jitter fields
 	// above (each already covering one specific site), this one is a single
@@ -313,18 +313,13 @@ type PlayerConfig struct {
 	ReassertInterval   time.Duration `yaml:"reassert_interval"`
 }
 
+// AuthConfig: the only mode is manual. You sign in to Twitch (and Kick)
+// yourself, once, in the dropwarden-driven Chrome; the app never stores or
+// types a password. A stored-credentials mode existed (shipped off) and was
+// removed: typing credentials into the real login form is the behavior that
+// gets accounts locked.
 type AuthConfig struct {
-	Mode   string            `yaml:"mode"` // manual|stored
-	Stored StoredCredentials `yaml:"stored"`
-}
-
-// StoredCredentials is implemented but ships disabled: typing credentials into
-// the real login form is exactly the behavior that has triggered login blocks
-// and lockouts for other drop bots.
-type StoredCredentials struct {
-	Enabled      bool   `yaml:"enabled"`
-	Username     string `yaml:"username"`
-	PasswordFile string `yaml:"password_file"` // 0600 file; never inline
+	Mode string `yaml:"mode"` // manual
 }
 
 type LoggingConfig struct {
@@ -347,8 +342,33 @@ type UpdateConfig struct {
 	Enabled       *bool   `yaml:"enabled,omitempty"`        // nil => true: background checks
 	AutoInstall   *bool   `yaml:"auto_install,omitempty"`   // nil => true: install found updates when no watch is in progress
 	ShowChangelog *bool   `yaml:"show_changelog,omitempty"` // nil => true: offer release notes in the dashboard
-	FeedURL       *string `yaml:"feed_url,omitempty"`       // nil => DefaultUpdateFeedURL; "" disables checking
+	Channel       string  `yaml:"channel,omitempty"`        // stable (default) | dev: which feed the default feed_url points at
+	FeedURL       *string `yaml:"feed_url,omitempty"`       // nil => the channel's default feed; "" disables checking
 	IntervalHours int     `yaml:"interval_hours"`           // background check period; 0 => 24
+}
+
+// Update channels. Stable follows tagged releases (vX.Y.Z); dev follows every
+// build of the dev branch (X.Y.Z-dev.N.<sha>, published by CI).
+const (
+	UpdateChannelStable = "stable"
+	UpdateChannelDev    = "dev"
+)
+
+// UpdateChannel returns the effective channel ("" reads as stable).
+func (c *Config) UpdateChannel() string {
+	if c.Update.Channel == UpdateChannelDev {
+		return UpdateChannelDev
+	}
+	return UpdateChannelStable
+}
+
+// DefaultFeedURLFor returns the manifest URL a channel reads when no feed_url
+// is pinned.
+func DefaultFeedURLFor(channel string) string {
+	if channel == UpdateChannelDev {
+		return DefaultDevUpdateFeedURL
+	}
+	return DefaultUpdateFeedURL
 }
 
 // PowerConfig controls the OS sleep inhibitor. Display sleep is never
@@ -372,8 +392,31 @@ func (c *Config) KeepAwakeMode() string {
 	return c.Power.KeepAwake
 }
 
-// DefaultUpdateFeedURL is the release manifest the updater reads by default.
-const DefaultUpdateFeedURL = "https://cdn.rake.pro/releases/dropwarden/latest.json"
+// DefaultUpdateFeedURL is the release manifest the updater reads by default
+// (stable channel): the latest.json asset of the newest GitHub release, which
+// GitHub resolves without prereleases. DefaultDevUpdateFeedURL is the dev
+// channel's: the dev-latest.json asset of the "dev-latest" prerelease that CI
+// updates for every dev-branch build (the assets themselves live on a
+// dev-<sha> prerelease per build, so a cached manifest stays downloadable).
+const (
+	DefaultUpdateFeedURL    = "https://github.com/Rake-Pro/dropwarden/releases/latest/download/latest.json"
+	DefaultDevUpdateFeedURL = "https://github.com/Rake-Pro/dropwarden/releases/download/dev-latest/dev-latest.json"
+
+	// LegacyUpdateFeedURL is the feed every install before v0.3.4 had written
+	// into config.yaml explicitly (the starter template pinned it). It reads
+	// as "not pinned" on load so those installs follow the channel default.
+	LegacyUpdateFeedURL = "https://cdn.rake.pro/releases/dropwarden/latest.json"
+)
+
+// IsDefaultFeedURL reports whether feed is one of the channel defaults or
+// the legacy default: a feed the user never chose, so it is not a pin.
+func IsDefaultFeedURL(feed string) bool {
+	switch strings.TrimSpace(feed) {
+	case DefaultUpdateFeedURL, DefaultDevUpdateFeedURL, LegacyUpdateFeedURL:
+		return true
+	}
+	return false
+}
 
 // UpdateEnabled reports whether background update checks run (default true).
 func (c *Config) UpdateEnabled() bool { return boolOr(c.Update.Enabled, true) }
@@ -386,10 +429,11 @@ func (c *Config) UpdateAutoInstall() bool { return boolOr(c.Update.AutoInstall, 
 // of a pending update (default true).
 func (c *Config) UpdateShowChangelog() bool { return boolOr(c.Update.ShowChangelog, true) }
 
-// UpdateFeedURL returns the manifest URL; "" means checking is disabled.
+// UpdateFeedURL returns the manifest URL: a pinned feed_url, else the
+// channel's default; "" means checking is disabled.
 func (c *Config) UpdateFeedURL() string {
 	if c.Update.FeedURL == nil {
-		return DefaultUpdateFeedURL
+		return DefaultFeedURLFor(c.UpdateChannel())
 	}
 	return strings.TrimSpace(*c.Update.FeedURL)
 }

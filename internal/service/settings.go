@@ -239,13 +239,13 @@ func toConfigDTO(c *config.Config) ConfigDTO {
 		ClaimButtonSelector: ptr(c.ClaimInventorySelector()),
 		ClaimButtonText:     ptr(c.Claim.InventoryButtonText),
 		AuthMode:            c.Auth.Mode,
-		StoredEnabled:       c.Auth.Stored.Enabled,
 		LogLevel:            c.Logging.Level,
 		CaptureGQLBodies:    c.Logging.CaptureGQLBodies,
 
 		UpdateEnabled:       ptr(c.UpdateEnabled()),
 		UpdateAutoInstall:   ptr(c.UpdateAutoInstall()),
 		UpdateShowChangelog: ptr(c.UpdateShowChangelog()),
+		UpdateChannel:       ptr(c.UpdateChannel()),
 		UpdateFeedURL:       ptr(c.UpdateFeedURL()),
 		UpdateIntervalHours: ptr(c.Update.IntervalHours),
 
@@ -282,7 +282,6 @@ func applyConfigDTO(c *config.Config, d ConfigDTO) {
 		}
 	}
 	c.Auth.Mode = d.AuthMode
-	c.Auth.Stored.Enabled = d.StoredEnabled
 	c.Logging.Level = d.LogLevel
 	c.Logging.CaptureGQLBodies = d.CaptureGQLBodies
 	// Fresh pointers, never the DTO's own: the copy must not alias the request.
@@ -292,9 +291,24 @@ func applyConfigDTO(c *config.Config, d ConfigDTO) {
 	setUpdate(&c.Update.Enabled, d.UpdateEnabled, c.UpdateEnabled())
 	setUpdate(&c.Update.AutoInstall, d.UpdateAutoInstall, c.UpdateAutoInstall())
 	setUpdate(&c.Update.ShowChangelog, d.UpdateShowChangelog, c.UpdateShowChangelog())
+	// The channel decides the default feed, and the pane echoes the RESOLVED
+	// feed back (possibly a stale one from before an earlier save in the same
+	// visit), so a feed equal to ANY default is "not pinned": switching
+	// channels must never pin a default URL.
+	if d.UpdateChannel != nil {
+		if ch := strings.TrimSpace(*d.UpdateChannel); ch == config.UpdateChannelDev {
+			c.Update.Channel = config.UpdateChannelDev
+		} else {
+			c.Update.Channel = ""
+		}
+	}
 	if d.UpdateFeedURL != nil {
 		feed := strings.TrimSpace(*d.UpdateFeedURL)
-		setUpdate(&c.Update.FeedURL, &feed, c.UpdateFeedURL())
+		if config.IsDefaultFeedURL(feed) {
+			c.Update.FeedURL = nil
+		} else {
+			c.Update.FeedURL = ptr(feed)
+		}
 	}
 	if d.UpdateIntervalHours != nil {
 		c.Update.IntervalHours = *d.UpdateIntervalHours

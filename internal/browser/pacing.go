@@ -73,7 +73,7 @@ var pacingRules = map[ActionClass]pacingRule{
 // Navigation ceiling: no more than navCeiling navigations in any navWindow.
 // This is a backstop on top of the per-class minimum, so a burst of retries
 // (stall recovery, raid chasing, channel churn) cannot add up to a request rate
-// that no human produces.
+// well above normal browsing.
 const (
 	navCeiling = 12
 	navWindow  = 10 * time.Minute

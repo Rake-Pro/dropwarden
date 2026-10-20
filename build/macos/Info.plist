@@ -18,10 +18,10 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>dropwarden</string>
+	<string>Dropwarden</string>
 
 	<key>CFBundleDisplayName</key>
-	<string>dropwarden</string>
+	<string>Dropwarden</string>
 
 	<key>CFBundleIdentifier</key>
 	<string>__BUNDLE_ID__</string>

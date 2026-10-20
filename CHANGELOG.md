@@ -6,6 +6,61 @@ and are grouped by day and theme on `main`.
 
 ## Unreleased
 
+### Added
+- MIT license (`LICENSE`).
+- Update channels (Settings > Updates > Release channel): Stable follows tagged
+  releases as before; Dev follows every build of the dev branch, published as
+  `X.Y.(Z+1)-dev.N.<sha>` with its own `dev-latest.json` feed. A dev build
+  moves to the release when it ships; switching back to Stable keeps the
+  current build until then. `update.channel` in config.yaml; a pinned
+  `feed_url` still wins.
+- Repo flow: `dev` is the working branch, `main` the release line; merging the
+  automated "Merge dev to main" PR mints the next tag and releases it, with
+  the `## Unreleased` changelog section as the notes until the version
+  heading is stamped. Dev pushes publish
+  `ghcr.io/rake-pro/dropwarden:dev-<sha>` images.
+
+### Changed
+- Updates are served from GitHub Releases. The stable feed is the
+  `latest.json` asset of the newest release
+  (`releases/latest/download/latest.json`), attached before the release goes
+  live; the dev feed is `dev-latest.json` on the `dev-latest` prerelease,
+  replaced in place for every dev push, with each build's assets on their
+  own `dev-<sha>` prerelease (the newest 10 are kept). Asset URLs in both
+  manifests point at GitHub. Mirroring to a downloads host is optional
+  (`DOWNLOADS_BASE_URL` variable + `DOWNLOADS_UPLOAD_TOKEN` secret). A
+  config.yaml whose `feed_url` is the old default (every install before this
+  version wrote it explicitly) is read as "not pinned", so it follows the
+  channel and the new location; a custom feed_url is kept.
+- Container installs have no Updates pane at all (the image is the version);
+  the version shows on Settings > App.
+- README leads with the purpose and a "what it does and does not do" list,
+  and says plainly that the platforms' terms restrict automated access.
+  The "Safety posture" section is now "How it behaves".
+- Docs and comments describe purpose and behaviour plainly; operator handoff
+  notes moved out of the repo; backlog moved to GitHub issues.
+- The app is written "Dropwarden" in the UI: window title, tray, update and
+  status messages, installer and macOS bundle names. Binary, image, path and
+  config names stay lowercase.
+- Debugging page: the profile switcher is labelled and sits above the
+  profile's cards; Advanced (troubleshooting) moved to the bottom. Dashboard
+  cards wrap the platform and LIVE badges under a long channel name instead
+  of cutting the name short; the queue's status column fits "Waiting on
+  earlier drop".
+- Phone-width layout: History stat tiles wrap to three or two per row,
+  banners put their buttons on their own line, and a wide control (select,
+  input) drops under its label instead of squeezing it.
+- Built with Go 1.27.3.
+
+### Removed
+- docs/STATUS.md (operator handoff log) and BACKLOG.md (open work is GitHub
+  issues).
+- The stored-credentials sign-in mode (`auth.stored`, shipped off and
+  unsupported). `auth.mode` is `manual` only: you sign in yourself, once. A
+  config still naming `stored` loads as `manual`.
+
+## v0.3.3 - 2026-10-20
+
 ### Changed
 - Profiles own their settings. Each profile now has its own games list, Any
   game, queue order, auto-enqueue, fall-through, streamer-specific-first,
@@ -42,11 +97,10 @@ and are grouped by day and theme on `main`.
 ## v0.3.1 - 2026-10-18
 
 ### Fixed
-- Browser fingerprint: rod's default "laptop" device emulation injected a fixed
-  Mac Chrome/114 user agent and `en` language on every page while the real
-  Chrome is a different build on a different OS (`navigator.platform` said so).
-  The viewport emulation stays; the user agent is now the browser's own and the
-  language is `en-US,en`. Seen as Kick's "Too many attempts" on login.
+- Browser identity: the emulated device reported a fixed user agent that did
+  not match the installed Chrome; it now reports the browser's own user agent
+  (and the language is `en-US,en`). The viewport emulation stays. Seen as
+  Kick's "Too many attempts" on login.
 - Resume mid-cycle left the dashboard saying Paused: Start/Stop now update the
   published status immediately instead of at the next Idle pass.
 - Headless service: the paused card no longer mentions the tray menu.
@@ -87,8 +141,7 @@ and are grouped by day and theme on `main`.
 - `deploy/container/`: dropwarden-desktop container image (Linux GTK3 GUI +
   Google Chrome stable inside the linuxserver Selkies web desktop) and
   `.github/workflows/container.yml` building `ghcr.io/rake-pro/dropwarden-desktop:vX.Y.Z`
-  on tag push / dispatch. Prep for running the watcher on the rake.pro cluster's
-  node4; nothing verified on hardware yet (gates listed in deploy/container/README.md).
+  on tag push / dispatch. Prep for running the watcher as a headless container; nothing verified on hardware yet (gates listed in deploy/container/README.md).
 
 ## v0.2.12 - 2026-10-17
 
@@ -195,7 +248,8 @@ and are grouped by day and theme on `main`.
   claim ids, every completed drop parked on "claim it manually"): v0.2.2
   dropped `--disable-blink-features=AutomationControlled`, and a Chrome
   launched for remote debugging reports `navigator.webdriver === true`
-  without it, which Twitch's bot check keys on. The flag is back, and the
+  without it, and Twitch's integrity check then rejects the page's own
+  queries. The flag is restored, and the
   "unsupported command-line flag" bar it triggers is suppressed with
   `--test-type` instead of by removing the flag.
 - Twitch integrity rejections are handled instead of read as "no
@@ -261,8 +315,7 @@ and are grouped by day and theme on `main`.
 ### Fixed
 - Chrome no longer shows the "unsupported command-line flag" bar on every
   launch: `--disable-blink-features=AutomationControlled` is dropped. Without
-  `--enable-automation` the automation tell it suppressed never existed, and
-  the bar itself was one.
+  `--enable-automation` the bar itself was a visible nuisance.
 
 ## v0.2.1 - 2026-09-26
 
@@ -421,7 +474,7 @@ and are grouped by day and theme on `main`.
 
 ### Added
 - Self-updater (`internal/update`): checks a release manifest (`latest.json`,
-  default `https://cdn.rake.pro/releases/dropwarden/latest.json`) ~30 s after
+  at the default feed URL) ~30 s after
   start and every `update.interval_hours`, verifies the download's sha256
   against the manifest (fails closed), and installs through
   `dropwarden-cli update-apply`, which restarts the old version on any
@@ -495,7 +548,7 @@ and are grouped by day and theme on `main`.
   plain cookies; logged in = `data.session_id` present AND an auth token found
   in the browser; full attempt detail surfaced in the UI card. (`20fc458`)
 - `watcher.timing_jitter` (default 0.2 in the starter config, range [0, 0.5])
-  fuzzes progress-poll, player-reassert, and max-session-rotation cadence;
+  adds random variation to progress-poll, player-reassert and max-session-rotation timers;
   30-90s random stagger when starting an engine within 2 minutes of another.
   (`a348d58`)
 - Progress-poll instrumentation: one info line per poll (session_found /
@@ -567,7 +620,7 @@ and are grouped by day and theme on `main`.
   campaigns endpoint via page-context fetch, second Chrome profile, KICK
   badges, `/api/kick/*` controls (later unified). No proactive refresh and
   long stall windows - Kick's FAQ says refreshes hurt credit. All selectors
-  verify-live; first-run dump protocol in `docs/STATUS.md`. (`4679aed`)
+  verify-live; (`4679aed`)
 - Self-healing browser session (`browser.Managed`): supervises the CDP event
   stream and relaunches Chrome with capped backoff forever, swapping the
   session in place - found after a 90-minute dead-socket retry loop.
@@ -585,7 +638,7 @@ and are grouped by day and theme on `main`.
 
 ### Added
 - MVP: tray-first Twitch drops watcher driving one real, unfocused Chrome via
-  go-rod CDP (not API-spoofed). CLI harness (`cmd/dropwarden-cli`: doctor /
+  go-rod CDP (not API-driven). CLI harness (`cmd/dropwarden-cli`: doctor /
   login / discover / inventory / watch / report) + Wails v3 GUI; frontend talks
   to Go via `/api/*` JSON on the Wails asset origin, no generated bindings.
   (`16fa27e`, `f955376`)
@@ -616,8 +669,8 @@ and are grouped by day and theme on `main`.
 - Discovery made real against live Twitch: actual GQL op name is
   `ViewerDropsDashboard`; Twitch batches GraphQL (positional array responses
   split in `twitch/capture.go`); campaign details/ACL fetched via page-context
-  GQL replaying captured auth + integrity headers (defeats
-  IntegrityCheckFailed). (`3412401`..`aa83f4f`)
+  GQL replaying captured auth + integrity headers (resolves
+  IntegrityCheckFailed responses). (`3412401`..`aa83f4f`)
 - Eligibility is time-window based, not status-string based; list upsert no
   longer clobbers detailed ACL/slug; selection falls through to the next
   available drop. (`353fdde`..`428c1fa`)

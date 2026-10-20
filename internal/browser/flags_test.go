@@ -43,7 +43,7 @@ func TestChromeFlagsRequired(t *testing.T) {
 }
 
 // The absent flags matter as much as the present ones: --enable-automation and
-// --headless are bot tells, --mute-audio is strictly opt-in via
+// --headless are intentionally omitted, --mute-audio is strictly opt-in via
 // browser.mute_audio, --no-sandbox is an unnecessary security downgrade, and
 // --disable-blink-features triggers Chrome's unsupported-flag bar.
 func TestChromeFlagsForbidden(t *testing.T) {

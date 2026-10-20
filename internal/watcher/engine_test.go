@@ -336,10 +336,10 @@ func TestCooldownPreservesEngineIdentity(t *testing.T) {
 	e := New(Deps{
 		Store: st, Ctrl: newFakeController(), Pages: &fakePager{}, Disco: &fakeDisco{},
 		Cfg: cfg, Emit: newRecordingEmitter(), Log: zerolog.Nop(),
-		Platform: domain.PlatformKick, ChannelHost: "kick.com", Profile: "greg",
+		Platform: domain.PlatformKick, ChannelHost: "kick.com", Profile: "alice",
 		Rand: func() float64 { return 0.5 },
 	})
-	if got := e.Status(); got.Profile != "greg" || got.Platform != "kick" {
+	if got := e.Status(); got.Profile != "alice" || got.Platform != "kick" {
 		t.Fatalf("engine identity not stamped at New: %+v", got)
 	}
 	e.setStatus(func(s *Status) { s.DropName = "Tier 1"; s.Current = 42 })
@@ -350,7 +350,7 @@ func TestCooldownPreservesEngineIdentity(t *testing.T) {
 	cancel()
 	e.runCooldown(ctx)
 	got := e.Status()
-	if got.Profile != "greg" || got.Platform != "kick" {
+	if got.Profile != "alice" || got.Platform != "kick" {
 		t.Fatalf("cooldown reset wiped engine identity: %+v", got)
 	}
 	if got.DropName != "" || got.Current != 0 {

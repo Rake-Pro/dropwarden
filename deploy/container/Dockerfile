@@ -10,7 +10,7 @@
 #     uid 1000 with home /home/chrome, and /usr/local/bin/chrome-gpu
 #     (google-chrome-stable with the GPU flags). Chrome's sandbox, GPU device
 #     and seccomp come from the base image and the pod spec, not from here.
-ARG GO_VERSION=1.27.2
+ARG GO_VERSION=1.27.3
 
 FROM golang:${GO_VERSION}-trixie AS build
 WORKDIR /src

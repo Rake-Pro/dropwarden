@@ -119,7 +119,7 @@ func main() {
 func newDashboardWindow(wapp *application.App, startHidden bool) *application.WebviewWindow {
 	win := wapp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "dashboard",
-		Title:            "dropwarden",
+		Title:            "Dropwarden",
 		Width:            1000,
 		Height:           700,
 		MinWidth:         720,

@@ -14,9 +14,9 @@ import (
 //     element decoding while the window is covered or off to the side. Without
 //     them Chrome throttles the tab and drop progress stops accruing.
 //   - The omissions matter as much as the inclusions. --enable-automation and
-//     --headless are the two loudest bot tells on the platform, and --no-sandbox
-//     is a gratuitous security downgrade for a browser that loads untrusted
-//     pages.
+//     --headless are omitted: the watcher needs a normal windowed Chrome that
+//     plays video. --no-sandbox is also omitted, a gratuitous security
+//     downgrade for a browser that loads untrusted pages.
 //   - --disable-blink-features=AutomationControlled is REQUIRED. A Chrome
 //     launched with --remote-debugging-port alone still reports
 //     navigator.webdriver === true (live 2026-09-26: v0.2.2 dropped the flag
@@ -28,7 +28,7 @@ import (
 //
 // --mute-audio is OPT-IN (browser.mute_audio): it silences the dedicated
 // instance at the audio sink while the player element itself stays unmuted at
-// 1%, so the page cannot tell. The design-phase concern that Chrome pauses
+// 1%, so the player element's state is unchanged. The design-phase concern that Chrome pauses
 // inaudible background media has not been observed live; if it does happen, the
 // frozen-video and stall watchdogs catch and recover it, and the toggle turns
 // it back off.

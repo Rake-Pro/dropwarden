@@ -72,12 +72,22 @@ func (c *Config) applyDefaults() {
 
 	c.migrateBakedWindowOrigins()
 
+	// The stored-credentials mode was removed in v0.3.4; a config still naming
+	// it runs as manual rather than refusing to start.
+	if c.Auth.Mode == "stored" {
+		c.Auth.Mode = ""
+	}
 	setString(&c.Auth.Mode, "manual")
 
 	setString(&c.Logging.Level, "info")
 	setInt(&c.Logging.MaxSizeMB, 5)
 
 	setInt(&c.Update.IntervalHours, 24)
+	// A feed_url equal to a default was never a choice: the pre-v0.3.4 starter
+	// template wrote the legacy URL explicitly. Unpin it so the channel decides.
+	if c.Update.FeedURL != nil && IsDefaultFeedURL(*c.Update.FeedURL) {
+		c.Update.FeedURL = nil
+	}
 
 	// No profiles block = legacy single-profile install: synthesize the one
 	// implicit profile rooted at the app dir itself. This gets written back
@@ -161,13 +171,8 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("config: claim.strategy %q must be in_page|in_page_then_gql", c.Claim.Strategy)
 	}
-	switch c.Auth.Mode {
-	case "manual", "stored":
-	default:
-		return fmt.Errorf("config: auth.mode %q must be manual|stored", c.Auth.Mode)
-	}
-	if c.Auth.Mode == "stored" && !c.Auth.Stored.Enabled {
-		return fmt.Errorf("config: auth.mode is stored but auth.stored.enabled is false")
+	if c.Auth.Mode != "manual" {
+		return fmt.Errorf("config: auth.mode %q must be manual (stored credentials are not supported)", c.Auth.Mode)
 	}
 	if v := c.Browser.Player.Volume; v <= 0 || v > 1 {
 		return fmt.Errorf("config: browser.player.volume %v must be in (0,1]; 0 (mute) pauses background video on Chrome 145+", v)
@@ -199,6 +204,11 @@ func (c *Config) validate() error {
 	}
 	if _, err := zerologLevel(c.Logging.Level); err != nil {
 		return err
+	}
+	switch c.Update.Channel {
+	case "", UpdateChannelStable, UpdateChannelDev:
+	default:
+		return fmt.Errorf("config: update.channel %q must be stable|dev", c.Update.Channel)
 	}
 	if c.Update.IntervalHours <= 0 {
 		return fmt.Errorf("config: update.interval_hours %d must be greater than 0", c.Update.IntervalHours)

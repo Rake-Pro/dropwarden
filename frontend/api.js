@@ -62,9 +62,9 @@ const SAMPLE = {
   config: {
     theme: 'dark', volume: 0.01, forceLowestQuality: true,
     neverFocus: true, alwaysOnBottom: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, claimStrategy: 'in_page',
-    allowGqlFallback: false, claimButtonSelector: 'button:has([data-a-target="tw-core-button-label-text"])', claimButtonText: 'Claim Now', authMode: 'manual', storedEnabled: false, logLevel: 'info', captureGqlBodies: false,
-    updateEnabled: true, updateAutoInstall: true, updateShowChangelog: true,
-    updateFeedURL: 'https://cdn.rake.pro/releases/dropwarden/latest.json', updateIntervalHours: 24,
+    allowGqlFallback: false, claimButtonSelector: 'button:has([data-a-target="tw-core-button-label-text"])', claimButtonText: 'Claim Now', authMode: 'manual', logLevel: 'info', captureGqlBodies: false,
+    updateEnabled: true, updateAutoInstall: true, updateShowChangelog: true, updateChannel: 'stable',
+    updateFeedURL: 'https://github.com/Rake-Pro/dropwarden/releases/latest/download/latest.json', updateIntervalHours: 24,
   },
   // Mirrors GET /api/update; a pending update so the dashboard banner and the
   // update dialog are designable offline.
@@ -72,7 +72,7 @@ const SAMPLE = {
   host: { os: 'windows', chromeFound: true, chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', remote: false, updates: true },
   update: {
     currentVersion: '0.1.0', enabled: true, autoInstall: true, showChangelog: true, intervalHours: 24,
-    feedURL: 'https://cdn.rake.pro/releases/dropwarden/latest.json', devBuild: false,
+    feedURL: 'https://github.com/Rake-Pro/dropwarden/releases/latest/download/latest.json', devBuild: false,
     status: 'available', phase: 'idle', percent: -1, bytesDone: 0, bytesTotal: 0,
     pending: { version: '0.2.0', notes: [
       { text: 'v0.2.0  (2026-10-01)', heading: true },
@@ -164,7 +164,7 @@ async function fetchState() {
 
 // A fetch that never reached the backend throws the browser's own TypeError
 // ("Failed to fetch", "Load failed"); actions show this instead.
-const NOT_RESPONDING = "dropwarden isn't responding. Try again in a moment.";
+const NOT_RESPONDING = "Dropwarden isn't responding. Try again in a moment.";
 
 async function post(path, body) {
   let r;

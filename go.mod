@@ -1,6 +1,6 @@
 module github.com/rake-pro/dropwarden
 
-go 1.27rc2
+go 1.27.3
 
 require (
 	github.com/go-rod/rod v0.116.2

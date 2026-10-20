@@ -747,7 +747,6 @@ var configFieldByKey = []struct{ key, field string }{
 	{"browser.burnin.dim_opacity", "dimOpacity"},
 	{"queue.priority_mode", "priorityMode"},
 	{"claim.strategy", "claimStrategy"},
-	{"auth.stored.enabled", "storedEnabled"},
 	{"auth.mode", "authMode"},
 	{"logging.level", "logLevel"},
 	{"update.interval_hours", "updateIntervalHours"},

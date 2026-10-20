@@ -14,7 +14,7 @@
 
 [Setup]
 AppId={{F3E61A3D-3F07-416B-A214-18437844DC06}
-AppName=dropwarden
+AppName=Dropwarden
 AppVersion={#AppVersion}
 AppPublisher=Rake-Pro
 DefaultDirName={autopf}\dropwarden
@@ -30,18 +30,18 @@ WizardStyle=modern
 CloseApplications=yes
 
 [Tasks]
-Name: "startup"; Description: "Start dropwarden when you log in"; Flags: unchecked
+Name: "startup"; Description: "Start Dropwarden when you log in"; Flags: unchecked
 
 [Files]
 Source: "{#BinDir}\dropwarden.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\dropwarden-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\dropwarden"; Filename: "{app}\dropwarden.exe"
-Name: "{userstartup}\dropwarden"; Filename: "{app}\dropwarden.exe"; Tasks: startup
+Name: "{autoprograms}\Dropwarden"; Filename: "{app}\dropwarden.exe"
+Name: "{userstartup}\Dropwarden"; Filename: "{app}\dropwarden.exe"; Tasks: startup
 
 [Run]
-Filename: "{app}\dropwarden.exe"; Description: "Launch dropwarden"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\dropwarden.exe"; Description: "Launch Dropwarden"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 ; Executables the in-app updater moved aside (removed on the next start
@@ -69,11 +69,11 @@ begin
   if State = 0 then
     Exit;
   if State = 2 then
-    Msg := 'Smart App Control is in evaluation mode on this PC. Once Windows switches it on, it will block this copy of dropwarden and its updates.'
+    Msg := 'Smart App Control is in evaluation mode on this PC. Once Windows switches it on, it will block this copy of Dropwarden and its updates.'
   else
-    Msg := 'Smart App Control is turned on on this PC. It will block this copy of dropwarden and its updates.';
+    Msg := 'Smart App Control is turned on on this PC. It will block this copy of Dropwarden and its updates.';
   Msg := Msg + ' This download is not code-signed, and Smart App Control has no per-app exception.' + #13#10#13#10 +
-    'To run dropwarden, turn Smart App Control off: Windows Security > App & browser control > ' +
+    'To run Dropwarden, turn Smart App Control off: Windows Security > App & browser control > ' +
     'Smart App Control settings > Off.' + #13#10#13#10 +
     'Yes = open Windows Security and continue setup' + #13#10 +
     'No = continue setup without opening it';

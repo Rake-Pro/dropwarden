@@ -1,7 +1,7 @@
 <title>dropwarden</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  /* dropwarden mocks - dark-committed, GoShareIt token palette.
+  /* dropwarden mocks - dark-committed token palette.
      Single visual world (dark-first desktop app); all colors painted explicitly. */
   :root {
     --bg-window:   #1e1e1e;
@@ -285,7 +285,7 @@
   <div class="intro">
     <div>
       <h1><span class="logo">💧</span> dropwarden</h1>
-      <p>MVP interface mocks. A tray-first watcher that drives one real Chrome window to collect Twitch drops. Settings borrow the GoShareIt visual language; the drop-progress bar uses Twitch purple, everything else the shared blue accent.</p>
+      <p>MVP interface mocks. A tray-first watcher that drives one real Chrome window to collect Twitch drops. Settings use a shared visual language; the drop-progress bar uses Twitch purple, everything else the shared blue accent.</p>
     </div>
     <div class="meta">
       <div><b>Review target</b> · layout, hierarchy, wording</div>
@@ -512,8 +512,8 @@
               <div class="group">
                 <div class="caption">Account</div>
                 <div class="card rows">
-                  <div class="row"><div class="lab"><div class="l">Login</div><div class="h">Logged in as <b style="color:var(--text-secondary)">greg</b> · session saved in the profile.</div></div><div class="ctl"><button class="btn">Re-open login</button></div></div>
-                  <div class="row"><div class="lab"><div class="l">Store credentials</div><div class="h">Off. Typing credentials trips Twitch bot checks; manual login is safer.</div></div><div class="ctl"><div class="switch off"><i></i></div></div></div>
+                  <div class="row"><div class="lab"><div class="l">Login</div><div class="h">Logged in as <b style="color:var(--text-secondary)">alice</b> · session saved in the profile.</div></div><div class="ctl"><button class="btn">Re-open login</button></div></div>
+                  <div class="row"><div class="lab"><div class="l">Store credentials</div><div class="h">Off. You sign in yourself; dropwarden never stores credentials.</div></div><div class="ctl"><div class="switch off"><i></i></div></div></div>
                 </div>
                 <div class="warnnote">⚠ Stored credentials are disabled by design and unsupported. Leave off unless a manual login flow stops working.</div>
               </div>
@@ -525,7 +525,7 @@
   </div>
 
   <div class="footnote">
-    <b>What to react to:</b> screen layout, what belongs on the dashboard vs. behind a tab, the wording of statuses and settings, and how the queue communicates each state (pending / active / blocked / needs-action / claimed). <b>Styling</b> follows GoShareIt so the two apps feel related. Toggle the <b>Tray menu</b>, <b>Watcher window</b>, and <b>Needs action / Error</b> states above to see those surfaces. Not yet designed: onboarding/first-run and the light theme.
+    <b>What to react to:</b> screen layout, what belongs on the dashboard vs. behind a tab, the wording of statuses and settings, and how the queue communicates each state (pending / active / blocked / needs-action / claimed). <b>Styling</b> uses the shared dark token palette. Toggle the <b>Tray menu</b>, <b>Watcher window</b>, and <b>Needs action / Error</b> states above to see those surfaces. Not yet designed: onboarding/first-run and the light theme.
   </div>
 </div>
 

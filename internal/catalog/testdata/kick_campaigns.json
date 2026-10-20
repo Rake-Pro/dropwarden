@@ -87,12 +87,12 @@
     {
      "banner_picture_url": "",
      "description": "",
-     "id": 110848661,
-     "slug": "valorant",
+     "id": 1,
+     "slug": "streamer-one",
      "user": {
-      "id": 112091414,
-      "profile_picture": "https://files.kick.com/images/user/112091414/profile_image/conversion/79d1997e-3e7b-48ea-a3c1-2240e3b5575b-medium.webp",
-      "username": "Valorant"
+      "id": 1,
+      "profile_picture": "https://example.com/avatar/1.png",
+      "username": "streamer-one"
      }
     }
    ],
@@ -138,14 +138,14 @@
    },
    "channels": [
     {
-     "banner_picture_url": "https://files.kick.com/images/channel/52932/banner_image/4770a238-b195-4921-af05-4ca20985944b",
-     "description": "Twitch.tv/KingSolracc \n\nLet's see where this goes..",
-     "id": 52932,
-     "slug": "solrac",
+     "banner_picture_url": "https://example.com/banner/2.png",
+     "description": "Example channel",
+     "id": 2,
+     "slug": "streamer-two",
      "user": {
-      "id": 53361,
-      "profile_picture": "https://files.kick.com/images/user/53361/profile_image/conversion/7ebaedf1-dd9f-424c-9048-52f968c58669-medium.webp",
-      "username": "solrac"
+      "id": 2,
+      "profile_picture": "https://example.com/avatar/2.png",
+      "username": "streamer-two"
      }
     }
    ],
@@ -153,7 +153,7 @@
    "created_at": "2026-09-22T06:32:12.346342Z",
    "ends_at": "2026-10-23T00:00:00Z",
    "id": "01M33X16REN5T9AG051EFYM047",
-   "name": "DEDsafio 4 Minecraft",
+   "name": "Example Drop Event",
    "organization": {
     "email_notification": false,
     "id": "01KMEZECC7J84MM299GH89Y8W4",

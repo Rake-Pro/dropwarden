@@ -42,7 +42,7 @@ type Session interface {
 	// a timeout here is how the watcher detects an unresponsive renderer.
 	Eval(ctx context.Context, js string, out any) error
 
-	// Click performs a human-like click on the first element matching selector:
+	// Click performs a click with scroll, hover dwell and a pointer dispatch inside the element box on the first element matching selector:
 	// scroll into view, a short hover dwell, then a real mouse dispatch at a
 	// random point inside the element box. It reports false (no error) when no
 	// element matches, so callers can treat "absent" as an ordinary outcome.

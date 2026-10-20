@@ -18,8 +18,8 @@ import (
 // status line plus its action items. Items stay hidden until that engine
 // attaches, so a profile or platform that never comes up adds no clutter.
 type trayEngine struct {
-	prefix   string // status-line prefix: "Twitch", "Greg - Kick"
-	who      string // action wording: "Twitch", "Greg's Kick"
+	prefix   string // status-line prefix: "Twitch", "Alice - Kick"
+	who      string // action wording: "Twitch", "Alice's Kick"
 	profile  string
 	platform domain.Platform
 	status   *application.MenuItem
@@ -40,7 +40,7 @@ func buildTray(wapp *application.App, win *application.WebviewWindow, backend *s
 	// Icon, not a text label: the chest is the app's mark in the menu bar /
 	// tray, and its corner dot is the status indicator (see updateTrayStatus).
 	tray.SetIcon(icons.Tray(icons.Idle))
-	tray.SetTooltip("dropwarden")
+	tray.SetTooltip("Dropwarden")
 
 	menu := application.NewMenu()
 
@@ -112,7 +112,7 @@ func buildTray(wapp *application.App, win *application.WebviewWindow, backend *s
 	// a click opens the dashboard's update dialog, never a silent install.
 	updates.attach(menu.Add("Check for Updates"))
 	menu.AddSeparator()
-	menu.Add("Quit dropwarden").OnClick(func(*application.Context) { wapp.Quit() })
+	menu.Add("Quit Dropwarden").OnClick(func(*application.Context) { wapp.Quit() })
 
 	tray.SetMenu(menu)
 	tray.AttachWindow(win)
@@ -203,7 +203,7 @@ func updateTrayStatus(wapp *application.App, tray *application.SystemTray, backe
 		if tip == "" {
 			tip = "starting"
 		}
-		tray.SetTooltip("dropwarden - " + tip)
+		tray.SetTooltip("Dropwarden - " + tip)
 		if l := trayLevel(states); l != level {
 			level = l
 			tray.SetIcon(icons.Tray(level))

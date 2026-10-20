@@ -173,32 +173,32 @@ func TestHTTPStateListsUnstartedProfile(t *testing.T) {
 	// A profile added since startup: configured, but this process opened no
 	// store or engine for it.
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, jsonReq("POST", "/api/profiles", `{"name":"greg","displayName":"Greg"}`))
+	h.ServeHTTP(rr, jsonReq("POST", "/api/profiles", `{"name":"alice","displayName":"Alice"}`))
 	if rr.Code != 200 {
 		t.Fatalf("add profile code=%d body=%s", rr.Code, rr.Body.String())
 	}
 
 	state := getState(t, h)
 	if len(state.Profiles) != 2 {
-		t.Fatalf("expected main + greg in state, got %+v", state.Profiles)
+		t.Fatalf("expected main + alice in state, got %+v", state.Profiles)
 	}
-	greg := state.Profiles[1]
-	if greg.Name != "greg" || greg.DisplayName != "Greg" {
-		t.Fatalf("unexpected added profile: %+v", greg)
+	alice := state.Profiles[1]
+	if alice.Name != "alice" || alice.DisplayName != "Alice" {
+		t.Fatalf("unexpected added profile: %+v", alice)
 	}
 	// Enabled + not up is the whole story now: the reconciler (absent in this
 	// test backend) is what brings the runtime up, and the UI reads the pair.
-	if !greg.Enabled || greg.Platforms[0].Up {
-		t.Fatalf("an added profile must read enabled and not yet up: %+v", greg)
+	if !alice.Enabled || alice.Platforms[0].Up {
+		t.Fatalf("an added profile must read enabled and not yet up: %+v", alice)
 	}
-	if len(greg.Queue) != 0 {
-		t.Fatalf("a profile with no store open must report no data: %+v", greg)
+	if len(alice.Queue) != 0 {
+		t.Fatalf("a profile with no store open must report no data: %+v", alice)
 	}
 
 	// Its directories exist, so the next start finds them.
 	root, _ := config.Dir()
 	for _, d := range []string{"chrome-profile", "chrome-profile-kick", "debug"} {
-		if _, err := os.Stat(filepath.Join(root, "profiles", "greg", d)); err != nil {
+		if _, err := os.Stat(filepath.Join(root, "profiles", "alice", d)); err != nil {
 			t.Fatalf("expected profile dir %s: %v", d, err)
 		}
 	}
@@ -207,12 +207,12 @@ func TestHTTPStateListsUnstartedProfile(t *testing.T) {
 	// the reconciler opens the store and brings Chrome up. Skip, which needs a
 	// live engine, is the one that stays honest about the missing store.
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/greg/twitch/start", nil))
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/alice/twitch/start", nil))
 	if rr.Code != 200 {
 		t.Fatalf("start on an added profile should be accepted (200), got %d %s", rr.Code, rr.Body.String())
 	}
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/greg/twitch/skip", nil))
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/engine/alice/twitch/skip", nil))
 	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "still starting") {
 		t.Fatalf("skip on a profile with no store should be 400 and say so, got %d %s", rr.Code, rr.Body.String())
 	}
@@ -220,7 +220,7 @@ func TestHTTPStateListsUnstartedProfile(t *testing.T) {
 	// A bad slug is rejected by the config validator and never reaches the live
 	// config.
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, jsonReq("POST", "/api/profiles", `{"name":"Greg Smith"}`))
+	h.ServeHTTP(rr, jsonReq("POST", "/api/profiles", `{"name":"Alice Smith"}`))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("invalid profile name should be 400, got %d %s", rr.Code, rr.Body.String())
 	}
@@ -385,10 +385,10 @@ func TestLiveTogglesReconcile(t *testing.T) {
 		body string
 	}{
 		{"app config save", "/api/config", `{"theme":"dark","volume":0.01,"claimStrategy":"in_page","authMode":"manual","logLevel":"info"}`},
-		{"add profile", "/api/profiles", `{"name":"greg","displayName":"Greg"}`},
-		{"profile kick toggle", "/api/profiles/update", `{"name":"greg","displayName":"Greg","kickEnabled":true,"games":["Rust"],"priorityMode":"top_down","autoEnqueueNew":true,"preferChannelSpecific":true,"fallThrough":true,"skipAccountLink":true}`},
-		{"profile enable toggle", "/api/profiles/enabled", `{"name":"greg","on":false}`},
-		{"profile remove", "/api/profiles/remove", `{"name":"greg"}`},
+		{"add profile", "/api/profiles", `{"name":"alice","displayName":"Alice"}`},
+		{"profile kick toggle", "/api/profiles/update", `{"name":"alice","displayName":"Alice","kickEnabled":true,"games":["Rust"],"priorityMode":"top_down","autoEnqueueNew":true,"preferChannelSpecific":true,"fallThrough":true,"skipAccountLink":true}`},
+		{"profile enable toggle", "/api/profiles/enabled", `{"name":"alice","on":false}`},
+		{"profile remove", "/api/profiles/remove", `{"name":"alice"}`},
 	}
 	for i, tc := range cases {
 		rr := httptest.NewRecorder()
@@ -414,7 +414,7 @@ func TestHTTPProfileRemove(t *testing.T) {
 	}
 
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, jsonReq("POST", "/api/profiles", `{"name":"greg","displayName":"Greg"}`))
+	h.ServeHTTP(rr, jsonReq("POST", "/api/profiles", `{"name":"alice","displayName":"Alice"}`))
 	if rr.Code != 200 {
 		t.Fatalf("add: %d %s", rr.Code, rr.Body.String())
 	}
@@ -426,7 +426,7 @@ func TestHTTPProfileRemove(t *testing.T) {
 	}
 
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, jsonReq("POST", "/api/profiles/remove", `{"name":"greg"}`))
+	h.ServeHTTP(rr, jsonReq("POST", "/api/profiles/remove", `{"name":"alice"}`))
 	if rr.Code != 200 {
 		t.Fatalf("remove: %d %s", rr.Code, rr.Body.String())
 	}
@@ -438,7 +438,7 @@ func TestHTTPProfileRemove(t *testing.T) {
 		t.Fatalf("decode remove: %v", err)
 	}
 	root, _ := config.Dir()
-	want := filepath.Join(root, "profiles", "greg")
+	want := filepath.Join(root, "profiles", "alice")
 	if !out.OK || out.DataDir != want {
 		t.Fatalf("remove must return the untouched data dir %q, got %+v", want, out)
 	}
@@ -446,14 +446,14 @@ func TestHTTPProfileRemove(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(want, "chrome-profile")); err != nil {
 		t.Fatalf("a removed profile's data must stay on disk: %v", err)
 	}
-	if b.config().Profile("greg") != nil {
+	if b.config().Profile("alice") != nil {
 		t.Fatal("removed profile must be gone from the live config")
 	}
 	reloaded, err := config.Load(b.ConfigPath)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if reloaded.Profile("greg") != nil {
+	if reloaded.Profile("alice") != nil {
 		t.Fatal("removed profile must be gone from the saved config")
 	}
 	if len(getState(t, h).Profiles) != 1 {

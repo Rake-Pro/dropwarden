@@ -133,9 +133,9 @@ func LaunchInstance(ctx context.Context, bcfg config.BrowserConfig, profileDir s
 	// rod emulates its "laptop" device on every page it hands out, and that
 	// device carries a fixed Mac Chrome/114 user agent plus an "en" language,
 	// while the real Chrome is a different build on a different OS (and
-	// navigator.platform still says so): an inconsistent fingerprint. Keep the
+	// navigator.platform still says so): a mismatched user agent. Keep the
 	// viewport emulation the watcher is tuned for, but report the browser's
-	// real user agent and language.
+	// own user agent and language.
 	dev := devices.LaptopWithMDPIScreen.Landscape()
 	if ver, err := br.Version(); err == nil && ver.UserAgent != "" {
 		dev.UserAgent = ver.UserAgent

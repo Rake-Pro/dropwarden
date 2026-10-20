@@ -253,7 +253,7 @@ func (t *tab) Click(ctx context.Context, selector string) (bool, error) {
 }
 
 // dwell pauses between hover and click. A real pointer rests on a control for a
-// moment before pressing; an instantaneous hover-then-click is a bot tell.
+// moment before pressing; a short dwell before the click matches normal pointer use and avoids missed clicks.
 func dwell(ctx context.Context) error {
 	d := 200*time.Millisecond + rand.N(600*time.Millisecond)
 	tm := time.NewTimer(d)
