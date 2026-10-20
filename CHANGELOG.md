@@ -47,6 +47,9 @@ and are grouped by day and theme on `main`.
   cards wrap the platform and LIVE badges under a long channel name instead
   of cutting the name short; the queue's status column fits "Waiting on
   earlier drop".
+- Phone-width layout: History stat tiles wrap to three or two per row,
+  banners put their buttons on their own line, and a wide control (select,
+  input) drops under its label instead of squeezing it.
 - Built with Go 1.27.3.
 
 ### Removed
