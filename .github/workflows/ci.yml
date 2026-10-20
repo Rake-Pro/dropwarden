@@ -1,0 +1,212 @@
+# CI for the dev branch: lint + test, the dev container image (dev-<sha>, the
+# tag GitOps pins for node4) and, for the desktop dev update channel, the
+# desktop builds published to the downloads host under dev-<sha>/ with a
+# dev-latest.json manifest. No paths filters: the "build" check is required on
+# dev -> main promotion PRs, so it must exist on every dev SHA.
+#
+# Dev version: X.Y.(Z+1)-dev.N.<sha7>, where vX.Y.Z is the latest release tag
+# and N the commits since it. It orders above the last release and below the
+# next one (update.semverGreater), so a dev-channel install moves forward on
+# every dev push and lands on the release when it ships.
+#
+# Desktop dev builds cost Windows and macOS runner minutes on every push; set
+# the repo variable DEV_DESKTOP_CHANNEL=false to skip them (the image and the
+# checks still run).
+name: CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.27.2"
+  IMAGE: ghcr.io/rake-pro/dropwarden
+
+jobs:
+  test:
+    name: lint + test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: gofmt
+        run: test -z "$(gofmt -l cmd internal)"
+
+      # cmd/dropwarden is the Wails GUI and needs GTK/WebKit headers; it is
+      # built by desktop.yml. Everything else is pure Go.
+      - name: go vet
+        run: go vet -tags production $(go list -tags production ./... | grep -v '/cmd/dropwarden$')
+
+      - name: go test
+        run: go test -tags production $(go list -tags production ./... | grep -v '/cmd/dropwarden$')
+
+  version:
+    name: dev version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      sha: ${{ steps.v.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Compute dev version
+        id: v
+        run: |
+          set -euo pipefail
+          sha="${GITHUB_SHA:0:7}"
+          latest=$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          if [ -z "${latest}" ]; then
+            next="0.1.0"; n=$(git rev-list --count HEAD)
+          else
+            IFS=. read -r ma mi pa <<< "${latest#v}"
+            next="${ma}.${mi}.$((pa+1))"
+            n=$(git rev-list --count "${latest}..HEAD")
+          fi
+          version="${next}-dev.${n}.${sha}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "dev version ${version}"
+
+  build:
+    name: build
+    needs: [test, version]
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # :dev floats; :dev-<sha> is what GitOps pins. The binary reports the
+      # dev semver, so the UI and the image label agree with the manifest.
+      - name: Build (push dev image on push events)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/container/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE }}:dev
+            ${{ env.IMAGE }}:dev-${{ needs.version.outputs.sha }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+          build-args: |
+            VERSION=${{ needs.version.outputs.version }}
+            GO_VERSION=${{ env.GO_VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  desktop:
+    needs: [test, version]
+    if: github.event_name == 'push' && vars.DEV_DESKTOP_CHANNEL != 'false'
+    uses: ./.github/workflows/desktop.yml
+    with:
+      ref: ${{ github.sha }}
+      version: ${{ needs.version.outputs.version }}
+    secrets: inherit
+
+  # Dev channel feed: assets under <base>/dropwarden/dev-<sha>/ and the
+  # manifest at <base>/dropwarden/dev-latest.json (next to the stable
+  # latest.json). No GitHub Release for dev builds.
+  publish-dev:
+    needs: [version, desktop]
+    if: github.event_name == 'push' && vars.DEV_DESKTOP_CHANNEL != 'false'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      SHA: ${{ needs.version.outputs.sha }}
+      DOWNLOADS_BASE_URL: ${{ vars.DOWNLOADS_BASE_URL || 'https://cdn.rake.pro/releases' }}
+      DOWNLOADS_UPLOAD_TOKEN: ${{ secrets.DOWNLOADS_UPLOAD_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: assets
+          pattern: "{windows,macos,linux}"
+          merge-multiple: true
+
+      # Notes = the CHANGELOG "Unreleased" section when there is one, else the
+      # commit subject, so the What's new dialog has something to say.
+      - name: Notes
+        run: |
+          set -euo pipefail
+          python3 - > "$RUNNER_TEMP/notes.md" <<'PY'
+          import re, subprocess
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          m = re.search(r"^## Unreleased[^\n]*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+          body = m.group(1).strip() if m else ""
+          subject = subprocess.run(["git", "log", "-1", "--format=%s"], capture_output=True, text=True).stdout.strip()
+          print(f"Dev build from `{subject}`.\n\n{body}".strip())
+          PY
+
+      - name: Write dev-latest.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime, hashlib, json, os
+          base = os.environ["DOWNLOADS_BASE_URL"].rstrip("/")
+          version, sha = os.environ["VERSION"], os.environ["SHA"]
+          notes = open(os.path.join(os.environ["RUNNER_TEMP"], "notes.md"), encoding="utf-8").read().strip()
+          assets = []
+          for name in sorted(os.listdir("assets")):
+              data = open(os.path.join("assets", name), "rb").read()
+              assets.append({"name": name, "url": f"{base}/dropwarden/dev-{sha}/{name}",
+                             "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)})
+          manifest = {"name": "dropwarden", "version": version, "tag": f"dev-{sha}",
+                      "published_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                      "notes": notes, "assets": assets}
+          with open("dev-latest.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, indent=2); f.write("\n")
+          PY
+          cat dev-latest.json
+
+      # Same contract as the release publish: PUT with a Bearer token, assets
+      # first, the manifest last so the feed never names files not yet there.
+      - name: Publish to downloads host
+        if: env.DOWNLOADS_UPLOAD_TOKEN != ''
+        run: |
+          set -euo pipefail
+          base="${DOWNLOADS_BASE_URL%/}"
+          for f in assets/*; do
+            name=$(basename "$f")
+            echo "PUT ${base}/dropwarden/dev-${SHA}/${name}"
+            curl --fail -sS -X PUT -H "Authorization: Bearer ${DOWNLOADS_UPLOAD_TOKEN}" \
+              --data-binary "@${f}" "${base}/dropwarden/dev-${SHA}/${name}"
+          done
+          echo "PUT ${base}/dropwarden/dev-latest.json"
+          curl --fail -sS -X PUT -H "Authorization: Bearer ${DOWNLOADS_UPLOAD_TOKEN}" \
+            --data-binary "@dev-latest.json" "${base}/dropwarden/dev-latest.json"

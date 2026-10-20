@@ -4,6 +4,19 @@ Snapshot for resuming after a context clear. Repo: Rake-Pro/dropwarden (private)
 branch main. This file is the "where are we" note; deeper design is in README.md,
 NOTES-twitch.md, NOTES-wails.md.
 
+## 2026-10-20 - dev/main flow + update channels (dev branch)
+
+- v0.3.3 released from main (profiles own their settings + review fixes).
+- Repo moved to the gpm flow: dev (default) -> Sync to main PR -> merge mints
+  the tag; release.yml builds desktop (desktop.yml, reusable) + image in one
+  run; ci.yml builds dev-<sha> images and the dev desktop channel
+  (dev-latest.json on the cdn). GitOps cluster-apps/dropwarden pins dev-<sha>.
+- Updater: `update.channel` stable|dev, IsDev = local 0.0.0-* builds only,
+  semverGreater orders dev.N builds. Container builds hide the Updates pane.
+- Not yet exercised: a full dev push through ci.yml (first run happens on
+  this commit), the dev-latest.json upload contract on the cdn, the Settings
+  UI in a browser.
+
 ## 2026-10-20 - profiles own their settings (uncommitted working tree)
 
 - Per-profile games/any_game/queue policy/skip-account-link/Kick on-off; root

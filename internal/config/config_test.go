@@ -747,3 +747,29 @@ func TestKickEnabledForcesSeparateWindow(t *testing.T) {
 		t.Fatal("shared_window_experimental must keep the shared layout")
 	}
 }
+
+func TestUpdateChannelPicksTheFeed(t *testing.T) {
+	cfg, _ := StarterDefaults()
+	if cfg.UpdateChannel() != UpdateChannelStable || cfg.UpdateFeedURL() != DefaultUpdateFeedURL {
+		t.Fatalf("starter = %q / %q, want stable + default feed", cfg.UpdateChannel(), cfg.UpdateFeedURL())
+	}
+	cfg.Update.Channel = UpdateChannelDev
+	if cfg.UpdateFeedURL() != DefaultDevUpdateFeedURL {
+		t.Fatalf("dev channel feed = %q", cfg.UpdateFeedURL())
+	}
+	// A pinned feed wins over the channel.
+	cfg.Update.FeedURL = ptr("https://example.com/x.json")
+	if cfg.UpdateFeedURL() != "https://example.com/x.json" {
+		t.Fatalf("pinned feed must win, got %q", cfg.UpdateFeedURL())
+	}
+	cfg.Update.FeedURL = nil
+	cfg.Update.Channel = "nightly"
+	if err := cfg.validate(); err == nil {
+		t.Fatal("unknown channel must be rejected")
+	}
+	// Legacy configs without the key read as stable and still validate.
+	legacy, err := parse([]byte("update:\n  interval_hours: 12\n"))
+	if err != nil || legacy.UpdateChannel() != UpdateChannelStable {
+		t.Fatalf("legacy: %v %q", err, legacy.UpdateChannel())
+	}
+}

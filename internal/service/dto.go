@@ -138,6 +138,7 @@ type ConfigDTO struct {
 	UpdateEnabled       *bool   `json:"updateEnabled,omitempty"`
 	UpdateAutoInstall   *bool   `json:"updateAutoInstall,omitempty"`
 	UpdateShowChangelog *bool   `json:"updateShowChangelog,omitempty"`
+	UpdateChannel       *string `json:"updateChannel,omitempty"` // stable|dev
 	UpdateFeedURL       *string `json:"updateFeedURL,omitempty"`
 	UpdateIntervalHours *int    `json:"updateIntervalHours,omitempty"`
 

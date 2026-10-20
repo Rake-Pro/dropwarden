@@ -335,19 +335,31 @@ CI:
 
 ### Releasing
 
-- Tag and push: `git tag v0.1.0 && git push --tags`, or run the Release
-  workflow by hand (workflow_dispatch) with `version` = an existing tag.
-- Jobs: windows (Inno Setup installer + updater zip, icon/manifest via
-  `wails3 generate syso`), macos (universal .app, ad-hoc signed unless the
-  Developer ID secrets exist, dmg + zip), linux (tar.gz), publish.
-- publish writes `checksums.txt` and `latest.json`, attaches all of it to the
-  GitHub release, then uploads to the downloads host when the
-  `DOWNLOADS_UPLOAD_TOKEN` secret is set.
-- Repo settings the workflow reads:
+- Branches: `dev` is where work lands (default branch); `main` is the release
+  line. Every push to `dev` runs CI: lint + test, the container image
+  `ghcr.io/rake-pro/dropwarden:dev-<sha>` (what GitOps pins for node4), and
+  the desktop builds for the dev update channel.
+- Promotion: the Sync to main workflow opens "Merge dev to main" whenever dev
+  is ahead. Merging it (merge commit) mints the next tag - patch by default,
+  `release:minor` / `release:major` labels change the bump - and the Release
+  workflow builds from the tag in the same run: desktop assets (desktop.yml),
+  the container image `:vX.Y.Z`, the GitHub release, `latest.json`, and the
+  upload to the downloads host when `DOWNLOADS_UPLOAD_TOKEN` is set.
+- By hand: `git tag v0.1.0 && git push --tags`, or run Release
+  (workflow_dispatch) with `version` = an existing tag; `container`
+  (workflow_dispatch) rebuilds an existing tag's image.
+- Update channels (Settings > Updates): Stable reads
+  `<base>/dropwarden/latest.json`; Dev reads `<base>/dropwarden/dev-latest.json`,
+  which CI writes for every dev push with assets under
+  `<base>/dropwarden/dev-<sha>/`. Dev versions are `X.Y.(Z+1)-dev.N.<sha>`:
+  above the last release, below the next. Container installs have no updater
+  (new image = new version) and no Updates pane.
+- Repo settings the workflows read:
 
 | Name | Kind | Purpose |
 | --- | --- | --- |
 | `DOWNLOADS_BASE_URL` | variable | Downloads host base; default `https://cdn.rake.pro/releases`. |
+| `DEV_DESKTOP_CHANNEL` | variable | `false` skips the desktop builds and dev-latest.json on dev pushes (saves Windows/macOS runner minutes); images and checks still run. |
 | `DOWNLOADS_UPLOAD_TOKEN` | secret | Enables the "Publish to downloads host" step. |
 | `MACOS_CERT_P12`, `MACOS_CERT_P12_PASSWORD`, `DEVELOPER_ID_APP` | secrets | Developer ID signing (optional). |
 | `AC_APPLE_ID`, `AC_PASSWORD`, `TEAM_ID` | secrets | Notarization (optional, needs signing). |

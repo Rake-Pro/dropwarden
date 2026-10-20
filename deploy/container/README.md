@@ -15,7 +15,7 @@ Nothing here has run on real hardware yet: see the verify-live gates below.
 | Build | `golang:1.27.2-trixie` stage | Pure Go: sqlite is `modernc.org/sqlite` |
 
 - Image name: `ghcr.io/rake-pro/dropwarden:vX.Y.Z` (private GHCR), built by
-  `.github/workflows/container.yml` on every `v*` tag and on dispatch; tag = git tag only.
+  `.github/workflows/release.yml` for every release (tag = git tag), `ci.yml` for every dev push (`dev-<sha>`, plus a floating `dev`), `container.yml` on dispatch to rebuild an existing tag.
 - The base's `USER` and `ENTRYPOINT` are kept; the image only adds the two binaries and `CMD`.
 - The self-updater is off in serve mode: the image is the update. `/api/state`
   reports `host.updates: false` and the dashboard hides the update banner and buttons.

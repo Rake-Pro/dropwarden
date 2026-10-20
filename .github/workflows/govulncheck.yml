@@ -2,9 +2,9 @@ name: govulncheck
 
 on:
   push:
-    branches: [main]
+    branches: [dev, main]
   pull_request:
-    branches: [main]
+    branches: [dev, main]
   schedule:
     - cron: '50 6 * * 1'
   workflow_dispatch: {}

@@ -246,6 +246,7 @@ func toConfigDTO(c *config.Config) ConfigDTO {
 		UpdateEnabled:       ptr(c.UpdateEnabled()),
 		UpdateAutoInstall:   ptr(c.UpdateAutoInstall()),
 		UpdateShowChangelog: ptr(c.UpdateShowChangelog()),
+		UpdateChannel:       ptr(c.UpdateChannel()),
 		UpdateFeedURL:       ptr(c.UpdateFeedURL()),
 		UpdateIntervalHours: ptr(c.Update.IntervalHours),
 
@@ -292,9 +293,24 @@ func applyConfigDTO(c *config.Config, d ConfigDTO) {
 	setUpdate(&c.Update.Enabled, d.UpdateEnabled, c.UpdateEnabled())
 	setUpdate(&c.Update.AutoInstall, d.UpdateAutoInstall, c.UpdateAutoInstall())
 	setUpdate(&c.Update.ShowChangelog, d.UpdateShowChangelog, c.UpdateShowChangelog())
+	// The channel decides the default feed, and the pane echoes the RESOLVED
+	// feed back, so a feed equal to either channel's default is "not pinned":
+	// switching channels must not pin the old channel's URL.
+	prevDefault := config.DefaultFeedURLFor(c.UpdateChannel())
+	if d.UpdateChannel != nil {
+		if ch := strings.TrimSpace(*d.UpdateChannel); ch == config.UpdateChannelDev {
+			c.Update.Channel = config.UpdateChannelDev
+		} else {
+			c.Update.Channel = ""
+		}
+	}
 	if d.UpdateFeedURL != nil {
 		feed := strings.TrimSpace(*d.UpdateFeedURL)
-		setUpdate(&c.Update.FeedURL, &feed, c.UpdateFeedURL())
+		if feed == prevDefault || feed == config.DefaultFeedURLFor(c.UpdateChannel()) {
+			c.Update.FeedURL = nil
+		} else {
+			c.Update.FeedURL = ptr(feed)
+		}
 	}
 	if d.UpdateIntervalHours != nil {
 		c.Update.IntervalHours = *d.UpdateIntervalHours

@@ -351,3 +351,36 @@ func TestApplyFlatRollsBack(t *testing.T) {
 		t.Errorf("host .old still present after rollback: %v", err)
 	}
 }
+
+func TestSemverGreaterDevChannel(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"0.3.4-dev.5.abc1234", "0.3.4-dev.4.def5678", true},  // newer dev build
+		{"0.3.4-dev.4.abc1234", "0.3.4-dev.5.def5678", false}, // older dev build
+		{"0.3.4-dev.4.abc1234", "0.3.4-dev.4.abc1234", false}, // same build
+		{"0.3.4", "0.3.4-dev.9.abc1234", true},                // the release supersedes its dev builds
+		{"0.3.4-dev.1.abc1234", "0.3.3", true},                // a dev build of the next version is newer than the last release
+		{"0.3.3", "0.3.4-dev.1.abc1234", false},               // ... and the stable feed never downgrades it
+		{"1.0.0-rc.2", "1.0.0-rc.1", false},                   // non-dev suffixes stay a tie
+	}
+	for _, c := range cases {
+		got, err := semverGreater(c.a, c.b)
+		if err != nil {
+			t.Fatalf("%s > %s: %v", c.a, c.b, err)
+		}
+		if got != c.want {
+			t.Errorf("%s > %s = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestIsDevIsLocalBuildOnly(t *testing.T) {
+	if !IsDev("0.0.0-dev") || !IsDev("0.0.0-abc") {
+		t.Fatal("the unstamped local build must read as dev")
+	}
+	if IsDev("0.3.4-dev.3.abc1234") || IsDev("0.3.4") {
+		t.Fatal("CI dev-channel builds and releases are real versions")
+	}
+}

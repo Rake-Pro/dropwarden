@@ -200,6 +200,11 @@ func (c *Config) validate() error {
 	if _, err := zerologLevel(c.Logging.Level); err != nil {
 		return err
 	}
+	switch c.Update.Channel {
+	case "", UpdateChannelStable, UpdateChannelDev:
+	default:
+		return fmt.Errorf("config: update.channel %q must be stable|dev", c.Update.Channel)
+	}
 	if c.Update.IntervalHours <= 0 {
 		return fmt.Errorf("config: update.interval_hours %d must be greater than 0", c.Update.IntervalHours)
 	}

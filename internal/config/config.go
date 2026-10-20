@@ -347,8 +347,33 @@ type UpdateConfig struct {
 	Enabled       *bool   `yaml:"enabled,omitempty"`        // nil => true: background checks
 	AutoInstall   *bool   `yaml:"auto_install,omitempty"`   // nil => true: install found updates when no watch is in progress
 	ShowChangelog *bool   `yaml:"show_changelog,omitempty"` // nil => true: offer release notes in the dashboard
-	FeedURL       *string `yaml:"feed_url,omitempty"`       // nil => DefaultUpdateFeedURL; "" disables checking
+	Channel       string  `yaml:"channel,omitempty"`        // stable (default) | dev: which feed the default feed_url points at
+	FeedURL       *string `yaml:"feed_url,omitempty"`       // nil => the channel's default feed; "" disables checking
 	IntervalHours int     `yaml:"interval_hours"`           // background check period; 0 => 24
+}
+
+// Update channels. Stable follows tagged releases (vX.Y.Z); dev follows every
+// build of the dev branch (X.Y.Z-dev.N.<sha>, published by CI).
+const (
+	UpdateChannelStable = "stable"
+	UpdateChannelDev    = "dev"
+)
+
+// UpdateChannel returns the effective channel ("" reads as stable).
+func (c *Config) UpdateChannel() string {
+	if c.Update.Channel == UpdateChannelDev {
+		return UpdateChannelDev
+	}
+	return UpdateChannelStable
+}
+
+// DefaultFeedURLFor returns the manifest URL a channel reads when no feed_url
+// is pinned.
+func DefaultFeedURLFor(channel string) string {
+	if channel == UpdateChannelDev {
+		return DefaultDevUpdateFeedURL
+	}
+	return DefaultUpdateFeedURL
 }
 
 // PowerConfig controls the OS sleep inhibitor. Display sleep is never
@@ -372,8 +397,13 @@ func (c *Config) KeepAwakeMode() string {
 	return c.Power.KeepAwake
 }
 
-// DefaultUpdateFeedURL is the release manifest the updater reads by default.
-const DefaultUpdateFeedURL = "https://cdn.rake.pro/releases/dropwarden/latest.json"
+// DefaultUpdateFeedURL is the release manifest the updater reads by default
+// (stable channel); DefaultDevUpdateFeedURL is the dev channel's, written by
+// CI for every dev-branch build.
+const (
+	DefaultUpdateFeedURL    = "https://cdn.rake.pro/releases/dropwarden/latest.json"
+	DefaultDevUpdateFeedURL = "https://cdn.rake.pro/releases/dropwarden/dev-latest.json"
+)
 
 // UpdateEnabled reports whether background update checks run (default true).
 func (c *Config) UpdateEnabled() bool { return boolOr(c.Update.Enabled, true) }
@@ -386,10 +416,11 @@ func (c *Config) UpdateAutoInstall() bool { return boolOr(c.Update.AutoInstall, 
 // of a pending update (default true).
 func (c *Config) UpdateShowChangelog() bool { return boolOr(c.Update.ShowChangelog, true) }
 
-// UpdateFeedURL returns the manifest URL; "" means checking is disabled.
+// UpdateFeedURL returns the manifest URL: a pinned feed_url, else the
+// channel's default; "" means checking is disabled.
 func (c *Config) UpdateFeedURL() string {
 	if c.Update.FeedURL == nil {
-		return DefaultUpdateFeedURL
+		return DefaultFeedURLFor(c.UpdateChannel())
 	}
 	return strings.TrimSpace(*c.Update.FeedURL)
 }

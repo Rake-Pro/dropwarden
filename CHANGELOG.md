@@ -6,6 +6,23 @@ and are grouped by day and theme on `main`.
 
 ## Unreleased
 
+### Added
+- Update channels (Settings > Updates > Release channel): Stable follows tagged
+  releases as before; Dev follows every build of the dev branch, published as
+  `X.Y.(Z+1)-dev.N.<sha>` with its own `dev-latest.json` feed. A dev build
+  moves to the release when it ships; switching back to Stable keeps the
+  current build until then. `update.channel` in config.yaml; a pinned
+  `feed_url` still wins.
+- Repo flow: `dev` is the working branch, `main` the release line; merging the
+  automated "Merge dev to main" PR mints the next tag and releases it. Dev
+  pushes publish `ghcr.io/rake-pro/dropwarden:dev-<sha>` images.
+
+### Changed
+- Container installs have no Updates pane at all (the image is the version);
+  the version shows on Settings > App.
+
+## v0.3.3 - 2026-10-20
+
 ### Changed
 - Profiles own their settings. Each profile now has its own games list, Any
   game, queue order, auto-enqueue, fall-through, streamer-specific-first,

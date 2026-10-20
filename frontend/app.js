@@ -1565,7 +1565,7 @@ const PANE_FIELDS = {
   player: ['volume', 'forceLowestQuality', 'muteAudio', 'startMinimized'],
   browser: ['chromePath', 'alwaysOnBottom'],
   app: ['theme', 'keepAwake'],
-  updates: ['updateEnabled', 'updateAutoInstall', 'updateShowChangelog', 'updateIntervalHours', 'updateFeedURL'],
+  updates: ['updateEnabled', 'updateAutoInstall', 'updateShowChangelog', 'updateChannel', 'updateIntervalHours', 'updateFeedURL'],
 };
 // Fields that only apply once the watcher Chrome restarts.
 const RESTART_FIELDS = ['chromePath', 'muteAudio', 'startMinimized'];
@@ -1642,8 +1642,12 @@ async function renderSettings() {
   const wrap = el(`<div class="set-wrap"><nav class="set-nav" id="set-nav" aria-label="Settings sections"></nav><div id="set-content"></div></div>`);
   v.append(wrap);
   const nav = $('#set-nav', wrap);
+  // A container install (hostInfo.updates === false) is updated by replacing
+  // its image, so it has no Updates pane at all; its version shows on App.
+  const panes = SETTINGS_PANES.filter(n => n.key !== 'updates' || hostInfo.updates !== false);
+  if (!panes.some(n => n.key === settingsPane)) settingsPane = 'games';
   nav.innerHTML = SETTINGS_GROUPS.map(g => `<div class="sgrp caption">${g.label}</div>` +
-    SETTINGS_PANES.filter(n => n.group === g.key).map(n => `<button type="button" class="sn" data-pane="${n.key}"><span class="sq" style="background:${n.tint};color:${n.fg}">${icon(n.icon, 13)}</span><span class="snl">${n.label}</span><span class="sdot" aria-hidden="true"></span></button>`).join('')).join('');
+    panes.filter(n => n.group === g.key).map(n => `<button type="button" class="sn" data-pane="${n.key}"><span class="sq" style="background:${n.tint};color:${n.fg}">${icon(n.icon, 13)}</span><span class="snl">${n.label}</span><span class="sdot" aria-hidden="true"></span></button>`).join('')).join('');
   nav.querySelectorAll('[data-pane]').forEach(x => x.addEventListener('click', () => {
     settingsPane = x.dataset.pane;
     syncSettingsNav();
@@ -1731,7 +1735,10 @@ function browserPaneHTML() {
 }
 
 function appPaneHTML() {
-  return group('Appearance',
+  const version = hostInfo.updates === false
+    ? group('Version', row('Current version', 'This install is updated by replacing its container image.', `<span class="mono">v${esc(appVersion)}</span>`))
+    : '';
+  return version + group('Appearance',
     row('Theme', 'System follows your OS light or dark setting.', '<select class="popup" data-field="theme" aria-label="Theme"><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select>')) +
   group('Power',
     row('Keep the computer awake', 'Stops the PC from idle-sleeping. Monitors still turn off on your normal schedule. With nothing to watch the PC sleeps as usual; nothing here wakes it back up.', '<select class="popup" data-field="keepAwake" aria-label="Keep the computer awake"><option value="while_watching">While watching a drop</option><option value="always">Always, while dropwarden runs</option><option value="never">Never</option></select>'));
@@ -1767,9 +1774,6 @@ function refreshUpdStatus(u) {
 }
 
 function updatesPaneHTML() {
-  if (hostInfo.updates === false) {
-    return group('Version', row('Current version', 'This install is updated by replacing its container image, so the built-in updater is off.', `<span class="mono">v${esc(appVersion)}</span>`));
-  }
   const u = updState || {};
   const dev = !!u.devBuild;
   const dis = dev || api.offline ? 'disabled' : '';
@@ -1777,12 +1781,14 @@ function updatesPaneHTML() {
     row('Current version', dev ? 'Dev build - updates disabled.' : '', `<span class="mono">v${esc(appVersion)}</span>`) +
     `<div class="row stacked"><div id="upd-status" aria-live="polite"></div>${updProgressHTML()}<div><button class="btn" id="upd-check" type="button" ${dis}>Check for updates</button></div></div>`) +
   group('Automatic updates',
+    row('Release channel', 'Stable follows tagged releases. Dev follows every build of the dev branch: newest features first, rough edges included. Switching back to Stable keeps the dev build until the next release.',
+      `<select class="popup" data-field="updateChannel" aria-label="Release channel" ${dis}><option value="stable">Stable</option><option value="dev">Dev</option></select>`) +
     toggleRow('updateEnabled', 'Check automatically', 'Shortly after start, then on the interval below.', dev) +
     toggleRow('updateAutoInstall', 'Install automatically', 'Waits until the current watch ends, installs, and restarts dropwarden.', dev) +
     toggleRow('updateShowChangelog', "Show what's new", 'Offer the release notes when an update is found.', dev),
     advanced('Advanced',
       row('Check interval', 'Hours between automatic checks.', `<input class="input" type="number" min="1" step="1" value="${esc(cfg.updateIntervalHours)}" data-field="updateIntervalHours" style="width:96px" aria-label="Check interval in hours" ${dis}>`) +
-      row('Feed URL', 'Where release information is read from. Empty turns update checks off.', `<input class="input mono" type="text" data-field="updateFeedURL" value="${esc(cfg.updateFeedURL)}" placeholder="empty = no update checks" style="width:100%" aria-label="Feed URL" ${dis}>`, true)));
+      row('Feed URL', 'Where release information is read from; the channel picks the default. Empty turns update checks off.', `<input class="input mono" type="text" data-field="updateFeedURL" value="${esc(cfg.updateFeedURL)}" placeholder="empty = no update checks" style="width:100%" aria-label="Feed URL" ${dis}>`, true)));
 }
 
 function settingsPaneHTML() {
@@ -1839,6 +1845,8 @@ function renderSettingsContent() {
   if (awakeSel) awakeSel.value = cfg.keepAwake || 'while_watching';
   const prioSel = host.querySelector('select[data-field="priorityMode"]');
   if (prioSel) prioSel.value = (curPE() || {}).priorityMode || 'top_down';
+  const chanSel = host.querySelector('select[data-field="updateChannel"]');
+  if (chanSel) chanSel.value = cfg.updateChannel || 'stable';
   if (settingsPane === 'games') { renderGamesCtl(); mountSharedPicker(); }
   if (settingsPane === 'updates') wireUpdatesPane(host);
   const rb = host.querySelector('[data-restart]');

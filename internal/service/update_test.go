@@ -176,3 +176,38 @@ func TestWatchInProgressNoEngines(t *testing.T) {
 		t.Error("a backend with no engines is never busy")
 	}
 }
+
+func TestSettingsUpdateChannelSwitchesTheFeed(t *testing.T) {
+	b := testBackend(t)
+	s := NewSettingsService(b)
+	dto := s.Load()
+	// The pane sends the resolved stable feed back together with the new
+	// channel: that must not pin the stable URL.
+	dto.UpdateChannel = ptr(config.UpdateChannelDev)
+	if err := s.Save(dto); err != nil {
+		t.Fatal(err)
+	}
+	got := b.config()
+	if got.UpdateChannel() != config.UpdateChannelDev || got.Update.FeedURL != nil || got.UpdateFeedURL() != config.DefaultDevUpdateFeedURL {
+		t.Fatalf("dev channel: channel=%q pinned=%v feed=%q", got.UpdateChannel(), got.Update.FeedURL, got.UpdateFeedURL())
+	}
+	// And back, with the dev feed echoed.
+	dto = s.Load()
+	dto.UpdateChannel = ptr(config.UpdateChannelStable)
+	if err := s.Save(dto); err != nil {
+		t.Fatal(err)
+	}
+	got = b.config()
+	if got.UpdateChannel() != config.UpdateChannelStable || got.Update.FeedURL != nil || got.UpdateFeedURL() != config.DefaultUpdateFeedURL {
+		t.Fatalf("stable channel: channel=%q pinned=%v feed=%q", got.UpdateChannel(), got.Update.FeedURL, got.UpdateFeedURL())
+	}
+	// A real custom feed still pins.
+	dto = s.Load()
+	dto.UpdateFeedURL = ptr("https://example.com/dw/latest.json")
+	if err := s.Save(dto); err != nil {
+		t.Fatal(err)
+	}
+	if b.config().UpdateFeedURL() != "https://example.com/dw/latest.json" {
+		t.Fatalf("custom feed lost: %q", b.config().UpdateFeedURL())
+	}
+}

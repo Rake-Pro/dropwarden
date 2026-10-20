@@ -94,11 +94,14 @@ func New(cfg Config) (*Updater, error) {
 	return &Updater{cfg: cfg}, nil
 }
 
-// IsDev reports whether the running build is a dev build (never auto-updated).
+// IsDev reports whether the running build is a local build (never auto-updated).
 func (u *Updater) IsDev() bool { return IsDev(u.cfg.Current) }
 
-// IsDev reports whether version is a dev build ("-dev" suffix).
-func IsDev(version string) bool { return strings.Contains(version, "-dev") }
+// IsDev reports whether version is a LOCAL build: the unstamped
+// version.Version default ("0.0.0-dev"), or any 0.0.0-* stamp. A dev-channel
+// build published by CI ("0.3.4-dev.3.abc1234") is a real version that
+// updates like any other; see semverGreater for its ordering.
+func IsDev(version string) bool { return strings.HasPrefix(version, "0.0.0-") }
 
 // Check fetches the manifest and reports whether it names a release newer
 // than the running version. A nil Release with nil error means "up to date".
@@ -247,9 +250,12 @@ func findAsset(assets []ManifestAsset, name string) (ManifestAsset, bool) {
 	return ManifestAsset{}, false
 }
 
-// semverGreater reports whether a > b for "X.Y.Z[-suffix]" versions. Suffixes
-// are ignored for ordering except that a suffixed version loses a tie against
-// the same bare version ("1.2.3-dev" < "1.2.3").
+// semverGreater reports whether a > b for "X.Y.Z[-suffix]" versions. A
+// suffixed version loses a tie against the same bare version ("1.2.3-dev.4" <
+// "1.2.3": the release supersedes every dev build that led to it). Two dev
+// builds of the same X.Y.Z order by their build number: "1.2.3-dev.5" >
+// "1.2.3-dev.4" (anything after the number, such as the commit, is ignored).
+// Other suffix pairs are a tie.
 func semverGreater(a, b string) (bool, error) {
 	am, as, err := parseSemver(a)
 	if err != nil {
@@ -264,7 +270,23 @@ func semverGreater(a, b string) (bool, error) {
 			return am[i] > bm[i], nil
 		}
 	}
-	return as == "" && bs != "", nil
+	if as == "" || bs == "" {
+		return as == "" && bs != "", nil
+	}
+	an, aok := devBuildNumber(as)
+	bn, bok := devBuildNumber(bs)
+	return aok && bok && an > bn, nil
+}
+
+// devBuildNumber parses the N of a "dev.N[.anything]" pre-release suffix.
+func devBuildNumber(suffix string) (int, bool) {
+	rest, ok := strings.CutPrefix(suffix, "dev.")
+	if !ok {
+		return 0, false
+	}
+	num, _, _ := strings.Cut(rest, ".")
+	n, err := strconv.Atoi(num)
+	return n, err == nil && n >= 0
 }
 
 func parseSemver(v string) ([3]int, string, error) {
