@@ -4,6 +4,30 @@ All notable changes to dropwarden. Releases are semver tags (vX.Y.Z) with a
 version heading each; the dated entries below v0.1.0 predate tagged releases
 and are grouped by day and theme on `main`.
 
+## Unreleased
+
+### Changed
+- Profiles own their settings. Each profile now has its own games list, Any
+  game, queue order, auto-enqueue, fall-through, streamer-specific-first,
+  skip-account-link and Kick on/off; the shared list and the "inherit" switch
+  are gone. Settings is split into a Profile group (Games, Platforms, with a
+  profile switcher when there is more than one) and an App group (Player,
+  Browser, App, Updates, Profiles). One Save covers both. On first load a
+  profile that had no settings of its own takes the old shared values once,
+  after which the root `games`, `queue`, `watcher.wait_for_top`,
+  `claim.skip_account_link_drops` and `kick.enabled` keys are no longer read.
+  New profiles start with no games picked.
+- API: `GET/POST /api/config` carry app-wide fields only; `GET /api/profiles`
+  and `POST /api/profiles/update` carry a profile's full settings block
+  (`games`, `anyGame`, `priorityMode`, `autoEnqueueNew`,
+  `preferChannelSpecific`, `fallThrough`, `skipAccountLink`, `kickEnabled`);
+  `POST /api/queue/priority` takes `profile`; each `/api/state` profile entry
+  reports the same fields.
+
+### Fixed
+- Settings > Updates in container builds threw a TypeError because the pane has
+  no status box there.
+
 ## v0.3.2 - 2026-10-18
 
 ### Fixed

@@ -30,17 +30,22 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected defaults: %+v", dto)
 	}
 	dto.Theme = "system"
-	dto.Games = []string{"Rust"}
-	dto.PriorityMode = "ending_soonest"
 	if err := s.Save(dto); err != nil {
 		t.Fatalf("save: %v", err)
+	}
+	pd := s.Profiles()[0]
+	pd.Games = []string{"Rust"}
+	pd.PriorityMode = "ending_soonest"
+	if err := s.UpdateProfile(pd); err != nil {
+		t.Fatalf("update profile: %v", err)
 	}
 	reloaded, err := config.Load(b.ConfigPath)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if reloaded.Theme != "system" || reloaded.Queue.PriorityMode != "ending_soonest" || len(reloaded.Games) != 1 {
-		t.Fatalf("not persisted: %+v", reloaded)
+	eff, _ := reloaded.Effective(config.MainProfileName)
+	if reloaded.Theme != "system" || eff.PriorityMode != "ending_soonest" || len(eff.Games) != 1 {
+		t.Fatalf("not persisted: %+v / %+v", reloaded, eff)
 	}
 	// The synthesized main profile is written back on the first save, so the
 	// file stops relying on legacy synthesis.
@@ -117,24 +122,38 @@ func TestWatcherServiceNilEngine(t *testing.T) {
 	}
 }
 
-func TestUpdateProfileKeepsKickInheritance(t *testing.T) {
+func TestUpdateProfileWritesTheWholeBlock(t *testing.T) {
 	b := testBackend(t)
 	ss := NewSettingsService(b)
-	// The pane shows the RESOLVED kick value; saving it back unchanged (off,
-	// matching the root default) must not pin an override, or the shared
-	// Platforms-pane toggle silently stops affecting the profile.
-	if err := ss.UpdateProfile(config.MainProfileName, "Main", false, nil, true); err != nil {
+	d := ss.Profiles()[0]
+	d.DisplayName = "Main"
+	d.Games = []string{"Rust", " Halo Infinite ", ""}
+	d.AnyGame = false
+	d.PriorityMode = "shortest_first"
+	d.AutoEnqueueNew = false
+	d.PreferChannelSpecific = false
+	d.FallThrough = false
+	d.SkipAccountLink = false
+	d.KickEnabled = true
+	if err := ss.UpdateProfile(d); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if p := b.config().Profile(config.MainProfileName); p.Kick.Enabled != nil {
-		t.Fatalf("expected kick to stay inherited, got override %v", *p.Kick.Enabled)
+	got := ss.Profiles()[0]
+	if got.DisplayName != "Main" || len(got.Games) != 2 || got.Games[1] != "Halo Infinite" || got.PriorityMode != "shortest_first" ||
+		got.AutoEnqueueNew || got.PreferChannelSpecific || got.FallThrough || got.SkipAccountLink || !got.KickEnabled {
+		t.Fatalf("profile block not saved in full: %+v", got)
 	}
-	// A value differing from the root default pins an override.
-	if err := ss.UpdateProfile(config.MainProfileName, "Main", true, nil, true); err != nil {
-		t.Fatalf("update: %v", err)
+	// The engines' copy carries it.
+	rc, err := b.config().ProfileRuntimeConfig(config.MainProfileName)
+	if err != nil {
+		t.Fatal(err)
 	}
-	p := b.config().Profile(config.MainProfileName)
-	if p.Kick.Enabled == nil || !*p.Kick.Enabled {
-		t.Fatalf("expected pinned kick override true, got %+v", p.Kick.Enabled)
+	if rc.Queue.PriorityMode != "shortest_first" || !rc.Watcher.WaitForTop || rc.Claim.SkipAccountLink || !rc.Kick.Enabled {
+		t.Fatalf("runtime copy missed the update: %+v wait=%v skip=%v kick=%v", rc.Queue, rc.Watcher.WaitForTop, rc.Claim.SkipAccountLink, rc.Kick.Enabled)
+	}
+	// Unknown profile is refused, nothing changes.
+	d.Name = "nobody"
+	if err := ss.UpdateProfile(d); err == nil {
+		t.Fatal("unknown profile must be refused")
 	}
 }

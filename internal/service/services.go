@@ -538,7 +538,11 @@ func (s *QueueService) Get(profile string) ([]QueueItemDTO, error) {
 			claimed[it.DropID] = true
 		}
 	}
-	alongside := queue.Alongside(items, cmap, progress, claimed, s.b.config().Claim.SkipAccountLink, time.Now())
+	skipLink := s.b.config().Claim.SkipAccountLink
+	if eff, err := s.b.config().Effective(profile); err == nil {
+		skipLink = eff.SkipAccountLink
+	}
+	alongside := queue.Alongside(items, cmap, progress, claimed, skipLink, time.Now())
 	// Live snapshot per platform engine, read once per platform.
 	pb := s.b.Profile(profile)
 	liveness := map[domain.Platform]map[string]watcher.CampaignLive{}
@@ -796,14 +800,21 @@ func (s *QueueService) ClearBlacklist(profile string) error {
 	return st.ClearBlacklist()
 }
 
-// SetPriorityMode is a root (shared) setting: every profile works its queue the
-// same way.
-func (s *QueueService) SetPriorityMode(mode string) error {
+// SetPriorityMode sets how one profile's queue is ordered within a game. An
+// empty profile means the first one (the single-profile case).
+func (s *QueueService) SetPriorityMode(profile, mode string) error {
 	if !domain.ValidPriorityMode(domain.PriorityMode(mode)) {
 		return fmt.Errorf("invalid priority mode %q", mode)
 	}
 	cfg := s.b.config()
-	cfg.Queue.PriorityMode = mode
+	if profile == "" && len(cfg.Profiles) > 0 {
+		profile = cfg.Profiles[0].Name
+	}
+	p := cfg.Profile(profile)
+	if p == nil {
+		return fmt.Errorf("unknown profile %q", profile)
+	}
+	p.Queue.PriorityMode = mode
 	if err := config.Save(s.b.ConfigPath, cfg); err != nil {
 		return err
 	}

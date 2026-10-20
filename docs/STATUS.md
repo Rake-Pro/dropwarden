@@ -4,6 +4,17 @@ Snapshot for resuming after a context clear. Repo: Rake-Pro/dropwarden (private)
 branch main. This file is the "where are we" note; deeper design is in README.md,
 NOTES-twitch.md, NOTES-wails.md.
 
+## 2026-10-20 - profiles own their settings (uncommitted working tree)
+
+- Per-profile games/any_game/queue policy/skip-account-link/Kick on-off; root
+  keys are legacy seeds read once (`materializeProfiles`). Settings nav split
+  into Profile (Games, Platforms + profile switcher) and App groups, one Save.
+  `GET/POST /api/config` = app-wide only; `/api/profiles[/update]` = full
+  profile block; `/api/queue/priority` takes `profile`. Design:
+  docs/NOTES-multiprofile.md "Config shape". Frontend not yet exercised in a
+  browser (no node in the build container): QA the Settings panes, the Queue
+  order select and a two-profile add/edit/remove round before tagging.
+
 ## 2026-09-26 - v0.2.0 UI rework + contract fit (uncommitted working tree)
 
 - Frontend rework (checklist, game picker, grouped queue, diagnostics, update

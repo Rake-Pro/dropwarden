@@ -15,9 +15,15 @@ import (
 
 // Config is the root configuration document.
 type Config struct {
-	Theme     string          `yaml:"theme"`    // dark|light|system (dashboard UI)
-	Games     []string        `yaml:"games"`    // campaigns for these games are queued
-	AnyGame   bool            `yaml:"any_game"` // future: queue every drops-enabled campaign
+	Theme string `yaml:"theme"` // dark|light|system (dashboard UI)
+	// Games and AnyGame are the LEGACY single-profile filter: read once to
+	// seed a profile that has none of its own (materializeProfiles), never
+	// consulted by a runtime since every profile carries its own. The same
+	// goes for Queue.PriorityMode/AutoEnqueueNew/PreferChannelSpecific,
+	// Watcher.WaitForTop, Claim.SkipAccountLink and Kick.Enabled: engines read
+	// them from the per-profile copy ProfileRuntimeConfig builds.
+	Games     []string        `yaml:"games"`
+	AnyGame   bool            `yaml:"any_game"`
 	Queue     QueueConfig     `yaml:"queue"`
 	Discovery DiscoveryConfig `yaml:"discovery"`
 	Watcher   WatcherConfig   `yaml:"watcher"`
@@ -30,10 +36,11 @@ type Config struct {
 	Update    UpdateConfig    `yaml:"update"`
 	Power     PowerConfig     `yaml:"power"`
 
-	// Profiles lists the people this instance manages drops for. A config with
-	// no profiles block synthesizes exactly one profile (MainProfileName)
-	// rooted at the app dir itself, so existing single-profile installs need
-	// zero file moves; see applyDefaults.
+	// Profiles lists the people this instance manages drops for, each with
+	// their own games, queue and platform choices. A config with no profiles
+	// block synthesizes exactly one profile (MainProfileName) rooted at the
+	// app dir itself and seeded from the legacy root fields, so existing
+	// single-profile installs need zero file moves; see applyDefaults.
 	Profiles []ProfileConfig `yaml:"profiles,omitempty"`
 }
 
@@ -41,10 +48,17 @@ type Config struct {
 // config has no profiles block, rooted at the app dir itself (dir ".").
 const MainProfileName = "main"
 
-// ProfileConfig is one person's overlay onto the root config: their own data
-// directory plus the few fields that can differ per profile. Every other
-// section of Config (queue, watcher, claim, browser, kick defaults, auth,
-// logging, theme) is shared across all profiles.
+// ProfileConfig is one person's own configuration: their data directory plus
+// everything that is theirs to decide - which games to watch, how their queue
+// is worked, which platforms run, and whether account-link drops are skipped.
+// Every other section of Config (discovery and watcher cadence, browser,
+// claim mechanics, auth, logging, theme, updates, power) is the app's and is
+// shared by every profile.
+//
+// The per-profile fields are pointers (or a nil-able slice) only so a config
+// written before a field existed can be told apart from an explicit value:
+// materializeProfiles fills every nil from the root's legacy value once at
+// load, after which each profile is complete and is written back in full.
 type ProfileConfig struct {
 	Name string `yaml:"name"`
 
@@ -54,23 +68,45 @@ type ProfileConfig struct {
 	// resolved relative to the app root, or used as-is if absolute.
 	Dir string `yaml:"dir,omitempty"`
 
-	Enabled     bool     `yaml:"enabled"`
-	DisplayName string   `yaml:"display_name,omitempty"` // optional; UI label, defaults to Name
-	Games       []string `yaml:"games,omitempty"`        // optional; omitted => inherit root games/any_game
-	AnyGame     *bool    `yaml:"any_game,omitempty"`     // optional; nil => inherit root any_game
+	Enabled     bool   `yaml:"enabled"`
+	DisplayName string `yaml:"display_name,omitempty"` // optional; UI label, defaults to Name
 
-	Kick ProfileKickConfig `yaml:"kick,omitempty"`
+	// Games is this profile's own list; the order is the game priority. An
+	// empty list queues nothing until games are picked. AnyGame queues every
+	// drops-enabled campaign and ignores the list.
+	Games   []string `yaml:"games"`
+	AnyGame *bool    `yaml:"any_game,omitempty"`
+
+	Queue ProfileQueueConfig `yaml:"queue,omitempty"`
+	Claim ProfileClaimConfig `yaml:"claim,omitempty"`
+	Kick  ProfileKickConfig  `yaml:"kick,omitempty"`
 
 	// WindowSlot is the tiling row index for this profile's engine windows.
 	// nil (omitted) defaults to the profile's position in the Profiles list.
 	WindowSlot *int `yaml:"window_slot,omitempty"`
 }
 
-// ProfileKickConfig is a profile's override of the shared kick block. The
-// root kick block (browser, geometry) stays the defaults for every profile;
-// only whether Kick runs for this profile is overridable.
+// ProfileQueueConfig is how one profile's queue is worked: the selection
+// order within a game, whether newly found drops join automatically, whether
+// channel-specific drops of a game come before its any-channel ones, and
+// whether selection waits on the top drop when it has no live channel.
+type ProfileQueueConfig struct {
+	PriorityMode          string `yaml:"priority_mode,omitempty"` // top_down|ending_soonest|closest_to_complete|shortest_first
+	AutoEnqueueNew        *bool  `yaml:"auto_enqueue_new,omitempty"`
+	PreferChannelSpecific *bool  `yaml:"prefer_channel_specific,omitempty"`
+	WaitForTop            *bool  `yaml:"wait_for_top,omitempty"`
+}
+
+// ProfileClaimConfig is the one claim preference that is a person's own:
+// whether drops needing a linked game account are skipped.
+type ProfileClaimConfig struct {
+	SkipAccountLink *bool `yaml:"skip_account_link_drops,omitempty"`
+}
+
+// ProfileKickConfig turns the Kick runtime on or off for this profile. The
+// root kick block (browser, geometry) stays the shared Kick browser setup.
 type ProfileKickConfig struct {
-	Enabled *bool `yaml:"enabled,omitempty"` // nil => inherit root kick.enabled
+	Enabled *bool `yaml:"enabled,omitempty"`
 }
 
 // Profile returns the named profile, or nil if it does not exist.
@@ -83,9 +119,11 @@ func (c *Config) Profile(name string) *ProfileConfig {
 	return nil
 }
 
-// KickConfig enables the parallel Kick runtime: its own Chrome instance and
-// watcher engine over the shared store/queue. The game filter is shared with
-// the top-level Games/AnyGame settings.
+// KickConfig is the shared Kick browser setup for the parallel Kick runtime
+// (its own Chrome instance and watcher engine over the profile's store and
+// queue). Whether Kick RUNS is each profile's own choice (ProfileKickConfig);
+// Enabled here is the legacy root value, read once to seed profiles that
+// predate the per-profile field.
 type KickConfig struct {
 	Enabled bool `yaml:"enabled"`
 

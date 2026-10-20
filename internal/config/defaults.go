@@ -12,23 +12,14 @@ import (
 // profileNameRe is the lowercase-slug rule for profile names.
 var profileNameRe = regexp.MustCompile(`^[a-z0-9-]{1,24}$`)
 
-// DefaultGames is the MVP test set.
-var DefaultGames = []string{
-	"Rust",
-	"Halo Infinite",
-	"Halo Campaign Evolved",
-	"Halo: The Master Chief Collection",
-	"Once Human",
-}
-
 // applyDefaults fills any zero-valued field with its default. It is safe to call
 // on a fully or partially populated Config.
 func (c *Config) applyDefaults() {
 	setString(&c.Theme, "dark")
-	// Only an ABSENT games key gets the defaults: an explicit "games: []" (the
-	// starter config) means "none picked yet" and must stay empty.
+	// The root games list is only a seed for profiles that predate their own
+	// (materializeProfiles); absent means nothing picked.
 	if c.Games == nil {
-		c.Games = append([]string(nil), DefaultGames...)
+		c.Games = []string{}
 	}
 
 	setString(&c.Queue.PriorityMode, string(domain.PriorityTopDown))
@@ -93,6 +84,35 @@ func (c *Config) applyDefaults() {
 	// into the profiles block the next time the config is saved.
 	if len(c.Profiles) == 0 {
 		c.Profiles = []ProfileConfig{{Name: MainProfileName, Dir: ".", Enabled: true}}
+	}
+	c.materializeProfiles()
+}
+
+// materializeProfiles completes every profile from the root's legacy values:
+// a profile with no games filter of its own takes the root games/any_game, and
+// every unset queue, claim and kick field takes the root's. This is the one
+// place inheritance happens, and it happens once: after it every profile is
+// complete, Save writes it in full, and a later root edit changes nothing for
+// anyone. A profile written by this version never has a nil here.
+func (c *Config) materializeProfiles() {
+	for i := range c.Profiles {
+		p := &c.Profiles[i]
+		if p.Games == nil && p.AnyGame == nil {
+			p.Games = append([]string{}, c.Games...)
+			p.AnyGame = ptr(c.AnyGame)
+		}
+		if p.Games == nil {
+			p.Games = []string{}
+		}
+		if p.AnyGame == nil {
+			p.AnyGame = ptr(false)
+		}
+		setString(&p.Queue.PriorityMode, c.Queue.PriorityMode)
+		setBool(&p.Queue.AutoEnqueueNew, c.Queue.AutoEnqueueNew)
+		setBool(&p.Queue.PreferChannelSpecific, c.PreferChannelSpecific())
+		setBool(&p.Queue.WaitForTop, c.Watcher.WaitForTop)
+		setBool(&p.Claim.SkipAccountLink, c.Claim.SkipAccountLink)
+		setBool(&p.Kick.Enabled, c.Kick.Enabled)
 	}
 }
 
@@ -196,8 +216,8 @@ func (c *Config) validate() error {
 }
 
 // validateProfiles walks every profile the same way the root config is
-// validated: name shape and uniqueness for all profiles. An empty games
-// overlay is valid (nothing is queued until games are picked).
+// validated: name shape and uniqueness, and a recognized queue order. An
+// empty games list is valid (nothing is queued until games are picked).
 func (c *Config) validateProfiles() error {
 	seen := make(map[string]bool, len(c.Profiles))
 	for i := range c.Profiles {
@@ -209,17 +229,18 @@ func (c *Config) validateProfiles() error {
 			return fmt.Errorf("config: profile name %q is not unique", p.Name)
 		}
 		seen[p.Name] = true
+		// "" is a profile built in code and not yet materialized (Effective
+		// falls back to the root); a loaded profile always has one.
+		if m := p.Queue.PriorityMode; m != "" && !domain.ValidPriorityMode(domain.PriorityMode(m)) {
+			return fmt.Errorf("config: profiles[%d].queue.priority_mode %q invalid", i, m)
+		}
 	}
 	return nil
 }
 
-// anyKickEnabled reports whether the root kick block or any enabled profile's
-// override turns Kick on, i.e. whether the shared kick browser config needs
-// to be valid.
+// anyKickEnabled reports whether any enabled profile runs Kick, i.e. whether
+// the shared kick browser config needs to be valid.
 func (c *Config) anyKickEnabled() bool {
-	if c.Kick.Enabled {
-		return true
-	}
 	for i := range c.Profiles {
 		p := &c.Profiles[i]
 		if p.Enabled && c.effectiveKickEnabled(p) {
@@ -257,3 +278,9 @@ func setDuration(p *time.Duration, def time.Duration) {
 		*p = def
 	}
 }
+func setBool(p **bool, def bool) {
+	if *p == nil {
+		*p = ptr(def)
+	}
+}
+func ptr[T any](v T) *T { return &v }

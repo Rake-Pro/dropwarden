@@ -17,7 +17,8 @@ import (
 
 func testEngine(t *testing.T, st *store.Store, ctrl *fakeController, pager *fakePager, disco *fakeDisco, emit *recordingEmitter) *Engine {
 	t.Helper()
-	cfg, _ := config.StarterDefaults()
+	root, _ := config.StarterDefaults()
+	cfg, _ := root.ProfileRuntimeConfig(config.MainProfileName) // the engine runs on the profile's copy
 	fixed := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
 	e := New(Deps{
 		Store: st, Ctrl: ctrl, Pages: pager, Disco: disco, Cfg: cfg, Emit: emit,

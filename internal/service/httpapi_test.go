@@ -384,9 +384,9 @@ func TestLiveTogglesReconcile(t *testing.T) {
 		path string
 		body string
 	}{
-		{"root kick toggle", "/api/config", `{"theme":"dark","games":["Rust"],"priorityMode":"top_down","volume":0.01,"kickEnabled":true,"claimStrategy":"in_page","authMode":"manual","logLevel":"info"}`},
+		{"app config save", "/api/config", `{"theme":"dark","volume":0.01,"claimStrategy":"in_page","authMode":"manual","logLevel":"info"}`},
 		{"add profile", "/api/profiles", `{"name":"greg","displayName":"Greg"}`},
-		{"profile kick toggle", "/api/profiles/update", `{"name":"greg","displayName":"Greg","kickEnabled":false,"inheritGames":true}`},
+		{"profile kick toggle", "/api/profiles/update", `{"name":"greg","displayName":"Greg","kickEnabled":true,"games":["Rust"],"priorityMode":"top_down","autoEnqueueNew":true,"preferChannelSpecific":true,"fallThrough":true,"skipAccountLink":true}`},
 		{"profile enable toggle", "/api/profiles/enabled", `{"name":"greg","on":false}`},
 		{"profile remove", "/api/profiles/remove", `{"name":"greg"}`},
 	}

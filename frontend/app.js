@@ -119,12 +119,10 @@ const isMulti = (plats) => visiblePlatforms(plats).length > 1;
 // loadCfg returns a mutable copy of the config so form edits never leak into
 // the shared state cache.
 async function loadCfg() {
-  const c = await api.config();
-  return { ...c, games: [...(c.games || [])] };
+  return { ...(await api.config()) };
 }
 const takeSnapshot = () => { cfgSnapshot = JSON.stringify(cfg || {}); };
 const snap = () => JSON.parse(cfgSnapshot || '{}');
-const savedGames = () => (cfgSnapshot ? snap().games : (cfg && cfg.games)) || [];
 
 // applyTheme sets the page theme. remember (load and save, never the live
 // preview) keeps it for the next start, so the first paint is already right.
@@ -526,13 +524,12 @@ function firstRunChecklist(state) {
   const prof = (state.profiles || []).find(p => p.enabled) || (state.profiles || [])[0];
   if (!prof || api.offline) return null;
   const tw = (prof.platforms || []).find(p => p.platform === 'twitch') || {};
-  const c = state.config || cfg || {};
   const steps = [
     { ok: hostInfo.chromeFound !== false, label: 'Chrome found', act: 'chrome', btn: 'Browser settings' },
     hostInfo.remote && tw.up
       ? { ok: !tw.needsLogin, label: 'Sign in to Twitch', act: 'remote', btn: 'Open remote login' }
       : { ok: !tw.needsLogin, label: 'Sign in to Twitch', act: 'login', btn: 'Log in' },
-    { ok: !!c.anyGame || (c.games || []).length > 0, label: 'Choose your games', act: 'games', btn: 'Choose games' },
+    { ok: !!prof.anyGame || (prof.games || []).length > 0, label: 'Choose your games', act: 'games', btn: 'Choose games' },
     { ok: noteStarted(state), label: 'Start', act: 'start', btn: 'Start' },
   ];
   if (steps.every(s => s.ok)) return null;
@@ -1071,9 +1068,14 @@ const PRIO_LABEL = {
 
 // queueOrderText describes the selection sort keys in order (queue.Ordering
 // in internal/queue/select.go).
+// queueProf is the profile the Queue view shows: its own games list orders the
+// sections and its queue policy is what the header describes and edits.
+let queueProf = null;
+let queueMulti = false;
+
 function queueOrderText(mode) {
-  const chan = !cfg || cfg.preferChannelSpecific !== false ? ', streamer-specific drops before any-channel drops' : '';
-  const whose = queueOwnGames ? "this profile's games" : 'your games';
+  const chan = !queueProf || queueProf.preferChannelSpecific !== false ? ', streamer-specific drops before any-channel drops' : '';
+  const whose = queueMulti ? "this profile's games" : 'your games';
   return `Pinned drops first, then ${whose} in list order${chan}, then ${PRIO_LABEL[mode] || PRIO_LABEL.top_down}`;
 }
 
@@ -1084,9 +1086,6 @@ function setQueueOrderText(mode) {
 
 let queuePlatFilter = 'all';
 let queueFocusID = null;
-// queueOwnGames: the selected profile has its own games list (not the shared
-// one), so sections follow that list and section moves edit it.
-let queueOwnGames = false;
 
 const gIndex = (games, g) => (games || []).findIndex(x => String(x).toLowerCase() === String(g || '').toLowerCase());
 
@@ -1238,30 +1237,28 @@ function wireOpenButton(row, q, profile) {
   });
 }
 
-// paintPriority shows mode in cfg, the Queue select and its description;
-// setSavedPriority records a mode the server accepted in the saved snapshot,
-// so a later Settings Discard or Save cannot write the old mode back.
+// paintPriority shows mode on the profile, the Queue select and its
+// description; setSavedPriority records a mode the server accepted in the
+// Settings copies of the profile, so a later Settings Discard or Save cannot
+// write the old mode back.
 function paintPriority(mode) {
-  if (cfg) cfg.priorityMode = mode;
+  if (queueProf) queueProf.priorityMode = mode;
   const sel = document.querySelector('#prio');
   if (sel) sel.value = mode;
   setQueueOrderText(mode);
 }
 function setSavedPriority(mode) {
-  if (!cfgSnapshot) return;
-  const b = snap();
-  b.priorityMode = mode;
-  cfgSnapshot = JSON.stringify(b);
+  if (queueProf) syncProfileField(queueProf.name, 'priorityMode', mode);
 }
 
 // ensureTopDown: a manual reorder implies "your order"; switch so it applies,
 // and roll back if the server refuses.
 async function ensureTopDown() {
-  if (!cfg || cfg.priorityMode === 'top_down') return;
-  const prev = cfg.priorityMode;
+  if (!queueProf || queueProf.priorityMode === 'top_down') return;
+  const prev = queueProf.priorityMode;
   paintPriority('top_down');
   try {
-    await api.setPriority('top_down');
+    await api.setPriority('top_down', queueProf.name);
     setSavedPriority('top_down');
   } catch (err) {
     paintPriority(prev);
@@ -1302,40 +1299,18 @@ function queueRowEl(q, sec, ctx) {
   return row;
 }
 
-// moveGameSection swaps two games in the SAVED games list (fresh GET, then
-// POST), leaving any unsaved Settings edits alone. For a profile with its own
-// list it swaps them in that profile's list instead.
+// moveGameSection swaps two games in the profile's SAVED games list (fresh
+// GET, then POST), leaving any unsaved Settings edits of that list alone.
 async function moveGameSection(game, other, ctx) {
   try {
-    if (ctx.ownGames) {
-      const pc = ((await api.profileConfigs()) || []).find(x => x.name === ctx.profile);
-      if (!pc) return;
-      const games = [...(pc.games || [])];
-      const a = gIndex(games, game), b = gIndex(games, other);
-      if (a < 0 || b < 0) return;
-      [games[a], games[b]] = [games[b], games[a]];
-      await api.updateProfile({ name: pc.name, displayName: pc.displayName, kickEnabled: pc.kickEnabled, games, inheritGames: false });
-      // Keep the Profiles pane in step unless it holds other edits of this list.
-      const s = (profileSnapshot || []).find(x => x.name === pc.name);
-      const e = (profileEdits || []).find(x => x.name === pc.name);
-      if (s) {
-        if (e && arraysEqual(e.games, s.games)) e.games = [...games];
-        s.games = [...games];
-      }
-      renderQueue();
-      return;
-    }
-    await api.refreshState();
-    const fresh = await loadCfg();
-    const a = gIndex(fresh.games, game), b = gIndex(fresh.games, other);
+    const pc = ((await api.profileConfigs()) || []).find(x => x.name === ctx.profile);
+    if (!pc) return;
+    const games = [...(pc.games || [])];
+    const a = gIndex(games, game), b = gIndex(games, other);
     if (a < 0 || b < 0) return;
-    [fresh.games[a], fresh.games[b]] = [fresh.games[b], fresh.games[a]];
-    await api.saveConfig(fresh);
-    const gamesDirty = cfg && JSON.stringify(cfg.games) !== JSON.stringify(snap().games);
-    const base = snap();
-    base.games = [...fresh.games];
-    cfgSnapshot = JSON.stringify(base);
-    if (cfg && !gamesDirty) cfg.games = [...fresh.games];
+    [games[a], games[b]] = [games[b], games[a]];
+    await api.updateProfile({ ...pc, games });
+    syncProfileField(pc.name, 'games', games);
   } catch (err) { toast(errText(err), 'err'); }
   renderQueue();
 }
@@ -1374,7 +1349,7 @@ function platformChips(onPick) {
 
 function queueHeaderEl(multi) {
   const h = el(`<div class="qhead">
-    <div><h2 class="title">Queue</h2><p class="sub" style="margin:0"><span id="qorder">${esc(queueOrderText(cfg && cfg.priorityMode))}</span>. Drag rows, or press Alt+Up/Down, to reorder within a game${multi ? '. Each platform works its own drops' : ''}.</p></div>
+    <div><h2 class="title">Queue</h2><p class="sub" style="margin:0"><span id="qorder">${esc(queueOrderText(queueProf && queueProf.priorityMode))}</span>. Drag rows, or press Alt+Up/Down, to reorder within a game${multi ? '. Each platform works its own drops' : ''}.</p></div>
     <div class="qprio">
       <label for="prio">Within a game, order by</label>
       <select class="popup" id="prio">
@@ -1386,7 +1361,7 @@ function queueHeaderEl(multi) {
     </div>
   </div>`);
   const sel = $('#prio', h);
-  if (cfg) sel.value = cfg.priorityMode || 'top_down';
+  sel.value = (queueProf && queueProf.priorityMode) || 'top_down';
   // A mouse press opens the dropdown: hold the poll re-render until a choice
   // is made (queueBusy), then let it run again even though focus stays here.
   // Closing it without a choice (Escape, leaving it) ends the hold too, and
@@ -1397,11 +1372,11 @@ function queueHeaderEl(multi) {
   sel.addEventListener('change', async e => {
     prioChanged = true;
     try {
-      await api.setPriority(e.target.value);
-      if (cfg) cfg.priorityMode = e.target.value;
+      await api.setPriority(e.target.value, queueProf && queueProf.name);
+      if (queueProf) queueProf.priorityMode = e.target.value;
       setSavedPriority(e.target.value);
       setQueueOrderText(e.target.value);
-    } catch (err) { if (cfg) e.target.value = cfg.priorityMode; toast(errText(err), 'err'); }
+    } catch (err) { if (queueProf) e.target.value = queueProf.priorityMode; toast(errText(err), 'err'); }
   });
   return h;
 }
@@ -1413,16 +1388,17 @@ async function renderQueue() {
   const multi = isMulti(prof.platforms);
   // Only current, workable items belong here; claimed/expired live in History.
   const queue = (prof.queue || []).filter(q => q.status !== 'claimed' && q.status !== 'expired');
-  const kickOn = (cfg && cfg.kickEnabled) || multi;
+  queueProf = prof;
+  queueMulti = multiProfile;
+  const kickOn = multi || (prof.platforms || []).some(p => p.platform === 'kick' && p.enabled);
   if (!kickOn) queuePlatFilter = 'all';
   const shown = queuePlatFilter === 'all' ? queue : queue.filter(q => q.platform === queuePlatFilter);
-  // A profile with its own games list orders sections by that list.
-  queueOwnGames = prof.inheritGames === false;
-  const games = queueOwnGames ? (prof.games || []) : savedGames();
-  const ctx = { profile: prof.name, multi, queue, pinCount: queue.filter(q => q.pin > 0).length, ownGames: queueOwnGames };
+  // Sections follow the profile's own games list.
+  const games = prof.games || [];
+  const ctx = { profile: prof.name, multi, queue, pinCount: queue.filter(q => q.pin > 0).length };
   const v = $('#v-queue');
-  const key = JSON.stringify([queue, games, queueOwnGames, queuePlatFilter, selectedProfile, kickOn, multi,
-    profiles.map(p => [p.name, p.displayName]), cfg && cfg.priorityMode, cfg && cfg.preferChannelSpecific]);
+  const key = JSON.stringify([queue, games, queuePlatFilter, selectedProfile, kickOn, multi,
+    profiles.map(p => [p.name, p.displayName]), prof.priorityMode, prof.preferChannelSpecific]);
   if (key === lastQueueKey && !queueFocusID && v.childElementCount) return;
   lastQueueKey = key;
   const fk = focusKey(v);
@@ -1562,20 +1538,28 @@ let appVersion = '';
 let hostOS = '';
 let restartNeeded = false;
 
+// Settings has two groups: the PROFILE panes edit the selected profile's own
+// settings (switcher above them when there is more than one profile); the APP
+// panes are shared by every profile.
+const SETTINGS_GROUPS = [
+  { key: 'profile', label: 'Profile' },
+  { key: 'app', label: 'App' },
+];
 const SETTINGS_PANES = [
-  { key: 'games', label: 'Games', icon: 'games', tint: 'var(--ok-dim)', fg: 'var(--pill-ok)' },
-  { key: 'platforms', label: 'Platforms', icon: 'platforms', tint: 'var(--twitch-dim)', fg: 'var(--twitch-fg)' },
-  { key: 'player', label: 'Player', icon: 'player', tint: 'var(--accent-dim)', fg: 'var(--pill-accent)' },
-  { key: 'browser', label: 'Browser', icon: 'browser', tint: 'rgba(127,127,127,0.16)', fg: 'var(--text-primary)' },
-  { key: 'app', label: 'App', icon: 'app', tint: 'rgba(127,127,127,0.16)', fg: 'var(--text-primary)' },
-  { key: 'profiles', label: 'Profiles', icon: 'profiles', tint: 'rgba(127,127,127,0.16)', fg: 'var(--text-primary)' },
-  { key: 'updates', label: 'Updates', icon: 'up', tint: 'var(--accent-dim)', fg: 'var(--pill-accent)' },
+  { key: 'games', group: 'profile', label: 'Games', icon: 'games', tint: 'var(--ok-dim)', fg: 'var(--pill-ok)' },
+  { key: 'platforms', group: 'profile', label: 'Platforms', icon: 'platforms', tint: 'var(--twitch-dim)', fg: 'var(--twitch-fg)' },
+  { key: 'player', group: 'app', label: 'Player', icon: 'player', tint: 'var(--accent-dim)', fg: 'var(--pill-accent)' },
+  { key: 'browser', group: 'app', label: 'Browser', icon: 'browser', tint: 'rgba(127,127,127,0.16)', fg: 'var(--text-primary)' },
+  { key: 'app', group: 'app', label: 'App', icon: 'app', tint: 'rgba(127,127,127,0.16)', fg: 'var(--text-primary)' },
+  { key: 'updates', group: 'app', label: 'Updates', icon: 'up', tint: 'var(--accent-dim)', fg: 'var(--pill-accent)' },
+  { key: 'profiles', group: 'app', label: 'Profiles', icon: 'profiles', tint: 'rgba(127,127,127,0.16)', fg: 'var(--text-primary)' },
 ];
 
-// PANE_FIELDS maps each pane to the cfg fields it edits (dirty dots, and
-// which pane to open for a field-mapped save error).
+// PANE_FIELDS maps each pane to the fields it edits (dirty dots, and which
+// pane to open for a field-mapped save error). PROFILE_FIELDS live on the
+// selected profile (profileEdits); the rest on cfg.
 const PANE_FIELDS = {
-  games: ['anyGame', 'games', 'autoEnqueueNew', 'fallThrough'],
+  games: ['anyGame', 'games', 'priorityMode', 'autoEnqueueNew', 'fallThrough', 'preferChannelSpecific'],
   platforms: ['kickEnabled', 'skipAccountLink', 'claimButtonSelector', 'claimButtonText'],
   player: ['volume', 'forceLowestQuality', 'muteAudio', 'startMinimized'],
   browser: ['chromePath', 'alwaysOnBottom'],
@@ -1587,21 +1571,43 @@ const RESTART_FIELDS = ['chromePath', 'muteAudio', 'startMinimized'];
 // Fields whose change warrants a fresh discovery pass after saving.
 const DISCOVERY_FIELDS = ['games', 'anyGame', 'autoEnqueueNew'];
 
-const fieldChanged = (f, base = snap()) => !!cfg && JSON.stringify(cfg[f]) !== JSON.stringify(base[f]);
-// The Profiles pane keeps its own edits (profileEdits) next to cfg.
-const paneDirty = (k) => k === 'profiles' ? profilesDirty() : (PANE_FIELDS[k] || []).some(f => fieldChanged(f));
-const cfgDirty = () => !!cfg && !!cfgSnapshot && Object.keys(PANE_FIELDS).some(paneDirty);
+const PROFILE_FIELDS = new Set(['games', 'anyGame', 'priorityMode', 'autoEnqueueNew', 'fallThrough', 'preferChannelSpecific', 'skipAccountLink', 'kickEnabled']);
+const isProfileField = (f) => PROFILE_FIELDS.has(f);
+
+// curPE / curPS: the selected profile's edit and its untouched snapshot.
+function curPE() { const l = profileEdits || []; return l.find(p => p.name === selectedProfile) || l[0] || null; }
+function curPS() { const e = curPE(); return e ? (profileSnapshot || []).find(p => p.name === e.name) || null : null; }
+
+const fieldChanged = (f, base = snap()) => {
+  if (isProfileField(f)) {
+    const e = curPE(), o = curPS();
+    return !!e && !!o && JSON.stringify(e[f]) !== JSON.stringify(o[f]);
+  }
+  return !!cfg && JSON.stringify(cfg[f]) !== JSON.stringify(base[f]);
+};
+// Pane dots: a profile pane reflects the selected profile; the Profiles
+// (manage) pane reflects display names and on/off of every profile.
+const profileRowsDirty = () => (profileEdits || []).some(p => {
+  const o = (profileSnapshot || []).find(x => x.name === p.name);
+  return !o || o.displayName !== p.displayName || o.enabled !== p.enabled;
+});
+const paneDirty = (k) => k === 'profiles' ? profileRowsDirty() : (PANE_FIELDS[k] || []).some(f => fieldChanged(f));
+// cfgDirty: the app-wide fields; isDirty adds every profile's edits, which
+// the one Save button saves together.
+const cfgDirty = () => !!cfg && !!cfgSnapshot && Object.values(PANE_FIELDS).flat().some(f => !isProfileField(f) && fieldChanged(f));
 const isDirty = () => cfgDirty() || profilesDirty();
 
 // A disabled toggle renders off and ignores clicks: the backend cannot honour
 // it on this OS, so it must not look enabled.
-const toggleHTML = (id, on, label, disabled = false) => disabled
-  ? `<div class="switch disabled" role="switch" aria-checked="false" aria-disabled="true" aria-label="${esc(label)}" tabindex="-1" data-toggle="${id}"><i></i></div>`
-  : `<div class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${!!on}" aria-label="${esc(label)}" tabindex="0" data-toggle="${id}"><i></i></div>`;
+const toggleHTML = (id, on, label, disabled = false, scope = '') => disabled
+  ? `<div class="switch disabled" role="switch" aria-checked="false" aria-disabled="true" aria-label="${esc(label)}" tabindex="-1" data-toggle="${id}"${scope ? ` data-scope="${scope}"` : ''}><i></i></div>`
+  : `<div class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${!!on}" aria-label="${esc(label)}" tabindex="0" data-toggle="${id}"${scope ? ` data-scope="${scope}"` : ''}><i></i></div>`;
 
 // row renders one settings row (label, hint, control).
 const row = (l, h, ctl, stacked = false) => `<div class="row${stacked ? ' stacked' : ''}"><div class="lab"><div class="l">${l}</div>${h ? `<div class="h">${h}</div>` : ''}</div><div class="ctl">${ctl}</div></div>`;
 const toggleRow = (id, l, h, disabled = false) => row(esc(l), h, toggleHTML(id, cfg[id], l, disabled));
+// ptoggleRow binds a switch to the selected profile's own settings.
+const ptoggleRow = (id, l, h) => row(esc(l), h, toggleHTML(id, (curPE() || {})[id], l, false, 'profile'));
 const group = (caption, body, extra = '') => `<div class="group"><div class="caption">${caption}</div><div class="card">${body}</div>${extra}</div>`;
 const advanced = (title, body) => `<details class="adv"><summary>${title}</summary><div class="card">${body}</div></details>`;
 
@@ -1614,6 +1620,8 @@ function openSettings(pane) {
 async function renderSettings() {
   cfg = await loadCfg();
   takeSnapshot();
+  // Unsaved profile edits are kept (not reloaded) when coming back.
+  if (!profilesDirty()) await loadProfileEdits();
   const state = await api.state();
   hostInfo = state.host || {};
   appVersion = state.version || (state.update && state.update.currentVersion) || '';
@@ -1625,7 +1633,8 @@ async function renderSettings() {
   const wrap = el(`<div class="set-wrap"><nav class="set-nav" id="set-nav" aria-label="Settings sections"></nav><div id="set-content"></div></div>`);
   v.append(wrap);
   const nav = $('#set-nav', wrap);
-  nav.innerHTML = SETTINGS_PANES.map(n => `<button type="button" class="sn" data-pane="${n.key}"><span class="sq" style="background:${n.tint};color:${n.fg}">${icon(n.icon, 13)}</span><span class="snl">${n.label}</span><span class="sdot" aria-hidden="true"></span></button>`).join('');
+  nav.innerHTML = SETTINGS_GROUPS.map(g => `<div class="sgrp caption">${g.label}</div>` +
+    SETTINGS_PANES.filter(n => n.group === g.key).map(n => `<button type="button" class="sn" data-pane="${n.key}"><span class="sq" style="background:${n.tint};color:${n.fg}">${icon(n.icon, 13)}</span><span class="snl">${n.label}</span><span class="sdot" aria-hidden="true"></span></button>`).join('')).join('');
   nav.querySelectorAll('[data-pane]').forEach(x => x.addEventListener('click', () => {
     settingsPane = x.dataset.pane;
     syncSettingsNav();
@@ -1647,17 +1656,12 @@ function syncSettingsNav() {
 // markDirty enables Save/Discard only when something changed and dots the
 // panes holding unsaved edits.
 function markDirty() {
-  // The shared Save/Discard cover cfg only; profile edits have their own.
-  const d = cfgDirty();
+  // One Save/Discard covers cfg and every profile's edits.
+  const d = isDirty();
   const s = $('#save');
   if (s) s.disabled = !d || api.offline;
   const x = $('#discard');
   if (x) x.disabled = !d;
-  const pd = profilesDirty();
-  const ps = $('#prof-save');
-  if (ps) ps.disabled = !pd || api.offline;
-  const px = $('#prof-discard');
-  if (px) px.disabled = !pd;
   document.querySelectorAll('#set-nav [data-pane]').forEach(b => {
     const pd = paneDirty(b.dataset.pane);
     b.classList.toggle('dirty', pd);
@@ -1665,14 +1669,20 @@ function markDirty() {
   });
 }
 
+// gamesPaneHTML and the profile half of platformsPaneHTML read the SELECTED
+// profile's own settings (curPE), never cfg.
 function gamesPaneHTML() {
   return group('Games',
     row('Your games', 'Only drops for these games are watched, on every platform. Games higher in the list are watched first (pinned drops still come first).', '<div id="games-ctl"></div>', true) +
-    row('Add games', 'Pick a game with drops right now, or search all Twitch categories.', '<div id="games-picker"></div>', true) +
-    toggleRow('autoEnqueueNew', 'Add new drops automatically', 'Newly found drops for your games join the queue.') +
-    toggleRow('fallThrough', 'Watch the next drop when the top one has no live channel', 'dropwarden goes back to the top drop as soon as it has a live channel. Off = wait for the top drop.'),
-    advanced('Advanced', toggleRow('anyGame', 'Any game', 'Queue drops for every game and ignore your list.') +
-      '<div class="warnnote">' + icon('alert', 13) + ' Watches every drops-enabled campaign; noticeably more Twitch traffic.</div>'));
+    row('Add games', 'Pick a game with drops right now, or search all Twitch categories.', '<div id="games-picker"></div>', true),
+    advanced('Advanced', ptoggleRow('anyGame', 'Any game', 'Queue drops for every game and ignore your list.') +
+      '<div class="warnnote">' + icon('alert', 13) + ' Watches every drops-enabled campaign; noticeably more Twitch traffic.</div>')) +
+  group('Queue',
+    row('Within a game, order by', 'How drops of the same game are picked. Pinned drops and the games list order always come first.',
+      '<select class="popup" data-field="priorityMode" data-scope="profile" aria-label="Within a game, order by"><option value="top_down">Your order</option><option value="ending_soonest">Ending soonest</option><option value="closest_to_complete">Closest to complete</option><option value="shortest_first">Shortest first</option></select>') +
+    ptoggleRow('autoEnqueueNew', 'Add new drops automatically', 'Newly found drops for your games join the queue.') +
+    ptoggleRow('fallThrough', 'Watch the next drop when the top one has no live channel', 'dropwarden goes back to the top drop as soon as it has a live channel. Off = wait for the top drop.') +
+    ptoggleRow('preferChannelSpecific', 'Streamer-specific drops first', 'Within a game, drops tied to particular streamers are watched before any-channel drops, which those streamers credit as well.'));
 }
 
 function platformsPaneHTML() {
@@ -1683,10 +1693,10 @@ function platformsPaneHTML() {
       `<input class="input mono" type="text" data-field="claimButtonText" value="${esc(cfg.claimButtonText)}" placeholder="Claim Now" aria-label="Claim button text" style="width:100%">`, true);
   return group('Twitch',
     row(pfBadge('twitch') + ' Twitch drops', 'Always on.', '<span class="pill active"><span class="d"></span> Always on</span>') +
-    toggleRow('skipAccountLink', 'Skip drops that need a linked game account', 'Drops Twitch is already crediting are watched anyway. Off = watch everything; claims that fail show up in the queue as Needs you.'),
+    ptoggleRow('skipAccountLink', 'Skip drops that need a linked game account', 'Drops Twitch is already crediting are watched anyway. Off = watch everything; claims that fail show up in the queue as Needs you.'),
     advanced('Advanced (troubleshooting)', claimFields)) +
   group('Kick',
-    row(pfBadge('kick') + ' Kick drops (experimental)', 'Runs next to Twitch with the same games and queue. Starts or stops when you press Save.', toggleHTML('kickEnabled', cfg.kickEnabled, 'Kick drops (experimental)')) +
+    row(pfBadge('kick') + ' Kick drops (experimental)', 'Runs next to Twitch with this profile\'s games and queue. Starts or stops when you press Save.', toggleHTML('kickEnabled', (curPE() || {}).kickEnabled, 'Kick drops (experimental)', false, 'profile')) +
     row('First run', 'Sign in to Kick once in its Chrome window; the session is kept. Kick rewards expire if left unclaimed, so keep an eye on the Needs you banner.', ''),
     `<div class="warnnote">${icon('alert', 13)} Kick support is still new. If a Kick drop stops making progress, copy the diagnostics from the Debugging page and send them in.</div>`);
 }
@@ -1784,28 +1794,33 @@ const restartBannerHTML = () => restartNeeded
 function renderSettingsContent() {
   const host = $('#set-content');
   if (!host) return;
-  // The Profiles pane edits its own data through its own endpoints, so it
-  // skips the shared cfg form and Save/Discard wiring. Unsaved profile edits
-  // are kept (not reloaded) when the user comes back to the pane.
-  if (settingsPane === 'profiles') {
-    host.innerHTML = '<div class="empty">Loading profiles...</div>';
-    Promise.all([profilesDirty() ? null : loadProfileEdits(), loadProfileLive()]).then(() => {
-      if (settingsPane === 'profiles') renderProfilesPane(host);
-    }).catch(e => {
-      if (settingsPane !== 'profiles') return;
-      host.innerHTML = `<div class="card"><div class="empty">Couldn't load your profiles right now. <button class="linkbtn" type="button" data-retry>Try again</button></div></div>`;
-      host.querySelector('[data-retry]').addEventListener('click', () => renderSettingsContent());
-    });
-    return;
-  }
-  host.innerHTML = restartBannerHTML() + settingsPaneHTML() +
+  const pane = SETTINGS_PANES.find(n => n.key === settingsPane) || SETTINGS_PANES[0];
+  const list = profileEdits || [];
+  if (list.length && !list.some(p => p.name === selectedProfile)) selectedProfile = list[0].name;
+  const switcher = pane.group === 'profile' && list.length > 1 ? '<div class="caption">Settings for</div><div id="set-prof"></div>' : '';
+  host.innerHTML = restartBannerHTML() + switcher +
+    (settingsPane === 'profiles' ? '<div id="prof-host"><div class="empty">Loading profiles...</div></div>' : settingsPaneHTML()) +
     `<div class="foot-btns"><button class="btn primary" id="save" type="button">Save</button><button class="btn" id="discard" type="button">Discard changes</button></div>`;
+  const sp = $('#set-prof', host);
+  if (sp) sp.replaceWith(profilePillBar(list.map(p => ({ name: p.name, displayName: p.displayName || p.name })), () => renderSettingsContent()));
+  if (settingsPane === 'profiles') {
+    // The manage pane needs each profile's live status; its rows are built
+    // once that is in.
+    loadProfileLive().then(() => { if (settingsPane === 'profiles') renderProfilesPane($('#prof-host', host)); }).catch(() => {
+      const h = $('#prof-host', host);
+      if (!h || settingsPane !== 'profiles') return;
+      h.innerHTML = `<div class="card"><div class="empty">Couldn't load your profiles right now. <button class="linkbtn" type="button" data-retry>Try again</button></div></div>`;
+      h.querySelector('[data-retry]').addEventListener('click', () => renderSettingsContent());
+    });
+  }
   wireSettingsToggles(host);
   wireSettingsFields(host);
   const themeSel = host.querySelector('select[data-field="theme"]');
   if (themeSel) themeSel.value = cfg.theme || 'dark';
   const awakeSel = host.querySelector('select[data-field="keepAwake"]');
   if (awakeSel) awakeSel.value = cfg.keepAwake || 'while_watching';
+  const prioSel = host.querySelector('select[data-field="priorityMode"]');
+  if (prioSel) prioSel.value = (curPE() || {}).priorityMode || 'top_down';
   if (settingsPane === 'games') { renderGamesCtl(); mountSharedPicker(); }
   if (settingsPane === 'updates') wireUpdatesPane(host);
   const rb = host.querySelector('[data-restart]');
@@ -1822,7 +1837,7 @@ function wireSettingsToggles(host) {
       const on = !sw.classList.contains('on');
       sw.classList.toggle('on', on);
       sw.setAttribute('aria-checked', String(on));
-      cfg[sw.dataset.toggle] = on;
+      (sw.dataset.scope === 'profile' ? (curPE() || {}) : cfg)[sw.dataset.toggle] = on;
       clearFieldError(sw);
       if (sw.dataset.toggle === 'anyGame') renderGamesCtl();
       markDirty();
@@ -1834,6 +1849,13 @@ function wireSettingsToggles(host) {
 
 function onFieldInput(inp, host) {
   const f = inp.dataset.field;
+  if (inp.dataset.scope === 'profile') {
+    const pe = curPE();
+    if (pe) pe[f] = inp.value;
+    clearFieldError(inp);
+    markDirty();
+    return;
+  }
   if (f === 'volume') {
     const n = parseInt(inp.value, 10);
     if (Number.isFinite(n)) cfg.volume = n / 100;
@@ -1925,18 +1947,22 @@ function showFieldError(field, msg) {
 
 function discardSettings() {
   cfg = JSON.parse(cfgSnapshot || '{}');
-  cfg.games = [...(cfg.games || [])];
+  resetProfileEdits();
   applyTheme(cfg.theme);
 }
 
 const anyEngineUp = (profiles) => (profiles || []).some(p => (p.platforms || []).some(pl => pl.up));
 
-// saveSettings saves cfg; returns true on success. A field-mapped error
-// jumps to and marks that field.
+// saveSettings saves cfg (the app-wide fields) and every profile with edits;
+// returns true on success. A field-mapped error jumps to and marks that field.
+// Each part that saved is snapshotted at once, so a failure further down
+// leaves only the unsaved part dirty.
 async function saveSettings() {
   const before = snap();
   const restart = RESTART_FIELDS.some(f => fieldChanged(f, before));
-  const rediscover = DISCOVERY_FIELDS.some(f => fieldChanged(f, before));
+  const orig = (p) => (profileSnapshot || []).find(x => x.name === p.name);
+  const changed = (profileEdits || []).filter(p => { const o = orig(p); return !o || JSON.stringify(o) !== JSON.stringify(p); });
+  const rediscover = changed.some(p => { const o = orig(p) || {}; return DISCOVERY_FIELDS.some(f => JSON.stringify(o[f]) !== JSON.stringify(p[f])); });
   if (cfg.updateIntervalHours !== undefined && !(cfg.updateIntervalHours >= 1)) {
     const m = 'Enter how many hours to wait between update checks (1 or more).';
     showFieldError('updateIntervalHours', m);
@@ -1944,17 +1970,30 @@ async function saveSettings() {
     return false;
   }
   try {
-    await api.saveConfig(cfg);
+    if (cfgDirty()) {
+      await api.saveConfig(cfg);
+      takeSnapshot();
+    }
+    for (const p of changed) {
+      const o = orig(p);
+      if (o && o.enabled !== p.enabled) await api.setProfileEnabled(p.name, p.enabled);
+      const { enabled: _e, ...rest } = p;
+      const { enabled: _o, ...orest } = o || {};
+      if (!o || JSON.stringify(rest) !== JSON.stringify(orest)) await api.updateProfile(p);
+      const i = (profileSnapshot || []).findIndex(x => x.name === p.name);
+      const copy = cloneProfiles([p])[0];
+      if (i >= 0) profileSnapshot[i] = copy; else (profileSnapshot = profileSnapshot || []).push(copy);
+    }
   } catch (e) {
     const m = errText(e);
     if (e.field) showFieldError(e.field, m);
     toast(m, 'err');
+    markDirty();
     return false;
   }
-  takeSnapshot();
   applyTheme(cfg.theme, true);
   if (restart && anyEngineUp(await api.profiles())) restartNeeded = true;
-  if (isActive('settings') && settingsPane !== 'profiles') renderSettingsContent();
+  if (isActive('settings')) renderSettingsContent();
   toast(rediscover ? 'Saved. Checking for drops for your games...' : 'Saved');
   if (rediscover) refreshDiscovery();
   setTimeout(() => refreshAll(), 500);
@@ -2048,16 +2087,26 @@ function gameRowHTML(g, i, n) {
     `<button class="qbtn" type="button" data-rm="${i}" aria-label="Remove ${name}">&times;</button></div>`;
 }
 
+// peGames is the selected profile's games list (the Games pane edits it in
+// place).
+function peGames() {
+  const pe = curPE();
+  if (!pe) return [];
+  if (!pe.games) pe.games = [];
+  return pe.games;
+}
+
 function moveGame(i, step) {
+  const g = peGames();
   const j = i + step;
-  if (j < 0 || j >= cfg.games.length) return;
-  [cfg.games[i], cfg.games[j]] = [cfg.games[j], cfg.games[i]];
+  if (j < 0 || j >= g.length) return;
+  [g[i], g[j]] = [g[j], g[i]];
   renderGamesCtl();
 }
 
 function addGame(name) {
   const val = String(name || '').trim();
-  if (val && gIndex(cfg.games, val) < 0) cfg.games.push(val);
+  if (val && gIndex(peGames(), val) < 0) peGames().push(val);
   renderGamesCtl();
   refreshPickers();
 }
@@ -2065,11 +2114,11 @@ function addGame(name) {
 function renderGamesCtl() {
   const gamesCtl = document.querySelector('#games-ctl');
   if (!gamesCtl) return;
-  const disabled = cfg.anyGame;
+  const disabled = (curPE() || {}).anyGame;
   gamesCtl.classList.toggle('dim', !!disabled);
   // inert: a list shown as off must not be reachable by keyboard either.
   gamesCtl.inert = !!disabled;
-  const games = cfg.games || [];
+  const games = peGames();
   const rows = games.map((g, i) => gameRowHTML(g, i, games.length)).join('');
   const fk = focusKey(gamesCtl);
   gamesCtl.innerHTML = (disabled ? '<div class="h">Any game is on (Advanced), so this list is ignored.</div>' : '') +
@@ -2078,7 +2127,7 @@ function renderGamesCtl() {
   gamesCtl.querySelectorAll('[data-rm]').forEach(x => x.addEventListener('click', () => {
     const i = +x.dataset.rm;
     const kb = x === document.activeElement;
-    cfg.games.splice(i, 1);
+    peGames().splice(i, 1);
     renderGamesCtl();
     refreshPickers();
     // The removed row is gone: keyboard focus moves to the next remove button.
@@ -2089,7 +2138,7 @@ function renderGamesCtl() {
   markDirty();
 }
 
-// ---- game picker (Settings > Games and the profile games editor) ----
+// ---- game picker (Settings > Games) ----
 
 // catalogCache is GET /api/games/catalog, fetched only when a picker opens
 // or its Refresh link is pressed (the server caches it too), never on a timer.
@@ -2209,21 +2258,34 @@ function refreshPickers() {
 function mountSharedPicker() {
   const host = document.querySelector('#games-picker');
   if (!host) return;
-  const pk = gamePicker(g => gIndex(cfg.games, g) >= 0, g => { cfg.games.push(g); renderGamesCtl(); });
+  const pk = gamePicker(g => gIndex(peGames(), g) >= 0, g => { peGames().push(g); renderGamesCtl(); });
   host.append(pk.el);
   pk.open();
 }
 
-// ---- Settings > Profiles pane ----
+// ---- profile settings state (Games, Platforms and Profiles panes) ----
 
-// profileEdits is a mutable clone of GET /api/profiles; profileSnapshot the
-// untouched copy so saveProfileEdits sends only what changed, and the pane
-// knows when it holds unsaved edits.
+// profileEdits is a mutable clone of GET /api/profiles (every profile's own
+// settings); profileSnapshot the untouched copy, so saveSettings sends only
+// the profiles that changed and the panes know when they hold unsaved edits.
 let profileEdits = null;
 let profileSnapshot = null;
 let profileLive = {};
 
 const cloneProfiles = (list) => (list || []).map(p => ({ ...p, games: [...(p.games || [])] }));
+
+// syncProfileField records a value the server accepted outside Settings (the
+// Queue view's order select, a game-section move) in the Settings copies of
+// that profile: the snapshot always, the edit only when it did not hold its
+// own change to that field.
+function syncProfileField(name, field, value) {
+  const o = (profileSnapshot || []).find(x => x.name === name);
+  const e = (profileEdits || []).find(x => x.name === name);
+  if (!o) return;
+  const untouched = e && JSON.stringify(e[field]) === JSON.stringify(o[field]);
+  o[field] = Array.isArray(value) ? [...value] : value;
+  if (untouched) e[field] = Array.isArray(value) ? [...value] : value;
+}
 const profileRowDirty = (p) => {
   const o = (profileSnapshot || []).find(x => x.name === p.name);
   return !o || JSON.stringify(o) !== JSON.stringify(p);
@@ -2245,7 +2307,6 @@ async function loadProfileLive() {
   const live = {};
   (state.profiles || []).forEach(p => { live[p.name] = p.platforms || []; });
   profileLive = live;
-  profileLive.__enabled = (state.profiles || []).filter(p => p.enabled);
 }
 
 function arraysEqual(a, b) {
@@ -2265,30 +2326,20 @@ function platformRuntimeStatus(p) {
 }
 
 function renderProfilesPane(host) {
+  if (!host) return;
   host.innerHTML = `
-    <div id="prof-pick"></div>
     <div class="group"><div class="caption">Profiles</div><div class="card" id="prof-list"></div></div>
     <div class="group"><div class="caption">Add profile</div><div class="card">
       <div class="row stacked">
-        <div class="lab"><div class="l">New profile</div><div class="h">Name: lowercase letters, digits and hyphens, 1-24 characters. Each profile has its own Chrome and sign-ins.</div></div>
+        <div class="lab"><div class="l">New profile</div><div class="h">Name: lowercase letters, digits and hyphens, 1-24 characters. Each profile has its own Chrome and sign-ins, and its own Games and Platforms settings (pick the profile at the top of those panes).</div></div>
         <div class="ctl" style="display:flex;gap:8px;flex-wrap:wrap">
           <input class="input" id="np-name" placeholder="name, e.g. profile-two" aria-label="Profile name" style="flex:1;min-width:140px">
           <input class="input" id="np-display" placeholder="Display name (optional)" aria-label="Display name" style="flex:1;min-width:140px">
           <button class="btn" id="np-add" type="button">Add profile</button>
         </div>
       </div>
-    </div></div>
-    <div class="foot-btns"><button class="btn primary" id="prof-save" type="button">Save</button><button class="btn" id="prof-discard" type="button">Discard changes</button></div>`;
-  const enabled = profileLive.__enabled || [];
-  if (enabled.length > 1) {
-    const pick = host.querySelector('#prof-pick');
-    pick.append(el('<div class="caption">Queue and History show</div>'));
-    const redraw = () => { pick.lastElementChild.replaceWith(profilePillBar(enabled, redraw)); };
-    pick.append(profilePillBar(enabled, redraw));
-  }
+    </div></div>`;
   renderProfileRows(host);
-  host.querySelector('#prof-save').addEventListener('click', () => saveProfileEdits(host));
-  host.querySelector('#prof-discard').addEventListener('click', () => { resetProfileEdits(); renderProfileRows(host); markDirty(); });
   host.querySelector('#np-add').addEventListener('click', () => addProfileFlow(host));
   markDirty();
 }
@@ -2310,45 +2361,24 @@ function profileRowEl(p, onlyOne, host) {
       <input class="input" data-pf="displayName" value="${esc(p.displayName)}" placeholder="${esc(p.name)}" aria-label="Display name for ${esc(p.name)}" style="width:160px">
       <span class="mono muted">${esc(p.name)}</span>
       <div style="flex:1"></div>
-      <div class="inl inl-tog">${pfBadge('kick')} ${toggleHTML('kickEnabled', p.kickEnabled, 'Kick for ' + dn)}</div>
       <div class="inl inl-tog">Enabled ${toggleHTML('enabled', p.enabled, 'Enable ' + dn)}</div>
     </div>
     <div class="inl-status">${profileStatusHTML(p.name, p.enabled)}</div>
-    <div class="inl inl-tog">Use the shared games list ${toggleHTML('inheritGames', p.inheritGames, 'Use the shared games list for ' + dn)}</div>
-    <div class="games-ctl ${p.inheritGames ? 'dim' : ''}" data-pf-games></div>
     <div data-pf-remove style="display:flex;justify-content:flex-end;align-items:center;gap:8px"></div>
   </div>`);
-  // changed: every edit clears this row's games error and repaints the
-  // Save/Discard state and the Profiles dirty dot.
-  const changed = () => {
-    const e = row.querySelector('.field-err');
-    if (e) e.remove();
+  const sw = row.querySelector('[data-toggle]');
+  const flip = () => {
+    const on = !sw.classList.contains('on');
+    sw.classList.toggle('on', on);
+    sw.setAttribute('aria-checked', String(on));
+    p.enabled = on;
     markDirty();
   };
-  row.querySelectorAll('[data-toggle]').forEach(sw => {
-    const flip = () => {
-      const on = !sw.classList.contains('on');
-      sw.classList.toggle('on', on);
-      sw.setAttribute('aria-checked', String(on));
-      p[sw.dataset.toggle] = on;
-      if (sw.dataset.toggle === 'inheritGames') {
-        const g = row.querySelector('[data-pf-games]');
-        g.classList.toggle('dim', on);
-        g.inert = on;
-      }
-      changed();
-    };
-    sw.addEventListener('click', e => { e.preventDefault(); flip(); });
-    sw.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } });
-    // The words next to a switch toggle it too.
-    const wrap = sw.closest('.inl-tog');
-    if (wrap) wrap.addEventListener('click', e => { if (!sw.contains(e.target)) flip(); });
-  });
-  // inert: the own-games editor is off (and not reachable) while inheriting.
-  const pfGames = row.querySelector('[data-pf-games]');
-  pfGames.inert = !!p.inheritGames;
-  row.querySelector('[data-pf="displayName"]').addEventListener('input', e => { p.displayName = e.target.value; changed(); });
-  renderProfileGamesChips(row.querySelector('[data-pf-games]'), p, changed);
+  sw.addEventListener('click', e => { e.preventDefault(); flip(); });
+  sw.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } });
+  // The words next to the switch toggle it too.
+  sw.closest('.inl-tog').addEventListener('click', e => { if (!sw.contains(e.target)) flip(); });
+  row.querySelector('[data-pf="displayName"]').addEventListener('input', e => { p.displayName = e.target.value; markDirty(); });
   attachRemoveControl(row.querySelector('[data-pf-remove]'), p, onlyOne, host);
   return row;
 }
@@ -2393,85 +2423,6 @@ function attachRemoveControl(wrap, p, onlyOne, host) {
     }
   });
   wrap.append(btn);
-}
-
-// renderProfileGamesChips renders one profile's own games as an ordered list
-// (the same rows as the shared list: order sets priority) plus a game picker
-// behind an "Add games" disclosure; the catalog loads when it first opens.
-function renderProfileGamesChips(container, p, onChange) {
-  if (!container) return;
-  container.innerHTML = `<div class="glist" data-pglist></div><details class="adv"><summary>Add games</summary><div class="pk-host"></div></details>`;
-  const list = container.querySelector('[data-pglist]');
-  const paint = () => {
-    const games = p.games || [];
-    const fk = focusKey(list);
-    list.innerHTML = games.map((g, i) => gameRowHTML(g, i, games.length)).join('') ||
-      '<span class="muted">No games of its own yet. Add some, or use the shared list.</span>';
-    restoreFocus(list, fk);
-  };
-  // One delegated handler: the rows are rebuilt on every change.
-  list.addEventListener('click', e => {
-    const b = e.target.closest('[data-rm], [data-mv]');
-    if (!b) return;
-    const kb = b === document.activeElement;
-    if (b.dataset.rm !== undefined) {
-      const i = +b.dataset.rm;
-      p.games.splice(i, 1);
-      paint();
-      const rest = list.querySelectorAll('[data-rm]');
-      if (kb && rest.length) rest[Math.min(i, rest.length - 1)].focus();
-      pk.refresh();
-    } else {
-      const i = +b.dataset.mv, j = i + +b.dataset.step;
-      if (j < 0 || j >= p.games.length) return;
-      [p.games[i], p.games[j]] = [p.games[j], p.games[i]];
-      paint();
-    }
-    onChange();
-  });
-  const pk = gamePicker(g => gIndex(p.games, g) >= 0, g => { p.games.push(g); paint(); onChange(); });
-  container.querySelector('.pk-host').append(pk.el);
-  const det = container.querySelector('details');
-  det.addEventListener('toggle', () => { if (det.open) pk.open(); });
-  paint();
-}
-
-// saveProfileEdits saves the changed profiles; returns true on success. A
-// profile switched to its own games list with no games is refused here: the
-// server would store that as "use the shared list" and the toggle would flip
-// back. A row already saved that way (any_game set in config.yaml) is fine.
-async function saveProfileEdits(host = $('#set-content')) {
-  const ownEmpty = (p) => !!p && !p.inheritGames && !(p.games || []).length;
-  const empty = (profileEdits || []).find(p => ownEmpty(p) && !ownEmpty((profileSnapshot || []).find(x => x.name === p.name)));
-  if (empty) {
-    const msg = `Add at least one game for ${empty.displayName || empty.name}, or turn "Use the shared games list" back on.`;
-    const r = host && host.querySelector(`[data-prof="${CSS.escape(empty.name)}"]`);
-    if (r && !r.querySelector('.field-err')) r.querySelector('[data-pf-games]').before(el('<div class="field-err" role="alert"></div>'));
-    if (r) r.querySelector('.field-err').textContent = msg;
-    toast(msg, 'err');
-    return false;
-  }
-  try {
-    for (const p of profileEdits) {
-      const orig = (profileSnapshot || []).find(o => o.name === p.name);
-      if (!orig) continue;
-      if (orig.enabled !== p.enabled) await api.setProfileEnabled(p.name, p.enabled);
-      const overlayChanged = orig.displayName !== p.displayName || orig.kickEnabled !== p.kickEnabled ||
-        orig.inheritGames !== p.inheritGames || !arraysEqual(orig.games, p.games);
-      if (overlayChanged) {
-        await api.updateProfile({ name: p.name, displayName: p.displayName, kickEnabled: p.kickEnabled, games: p.games, inheritGames: p.inheritGames });
-      }
-    }
-    toast('Saved');
-    await Promise.all([loadProfileEdits(), loadProfileLive()]);
-    if (settingsPane === 'profiles' && host) renderProfileRows(host);
-    markDirty();
-    refreshAll();
-    return true;
-  } catch (e) {
-    toast(errText(e), 'err');
-    return false;
-  }
 }
 
 async function addProfileFlow(host) {
@@ -2730,11 +2681,8 @@ async function go(view) {
   if (isActive('settings') && isDirty()) {
     const c = await confirmLeave();
     if (c === 'cancel') return;
-    if (c === 'save') {
-      if (profilesDirty() && !(await saveProfileEdits())) return;
-      if (cfgDirty() && !(await saveSettings())) return;
-    }
-    if (c === 'discard') { discardSettings(); resetProfileEdits(); }
+    if (c === 'save' && !(await saveSettings())) return;
+    if (c === 'discard') discardSettings();
   }
   switchView(view);
   setRail(false);

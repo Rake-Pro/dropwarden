@@ -22,7 +22,15 @@ func TestStarterDefaultsValid(t *testing.T) {
 		t.Fatalf("auth mode must default to manual, got %q", cfg.Auth.Mode)
 	}
 	if cfg.Games == nil || len(cfg.Games) != 0 {
-		t.Fatalf("starter config ships games: [] (picked after the first scan), got %v", cfg.Games)
+		t.Fatalf("starter config ships no root games (picked per profile after the first scan), got %v", cfg.Games)
+	}
+	main := cfg.Profile(MainProfileName)
+	if main == nil || main.Games == nil || len(main.Games) != 0 || main.AnyGame == nil || *main.AnyGame {
+		t.Fatalf("starter main profile ships games: [] and any_game: false, got %+v", main)
+	}
+	if main.Queue.PriorityMode != "top_down" || main.Queue.AutoEnqueueNew == nil || !*main.Queue.AutoEnqueueNew ||
+		main.Claim.SkipAccountLink == nil || !*main.Claim.SkipAccountLink || main.Kick.Enabled == nil || *main.Kick.Enabled {
+		t.Fatalf("starter main profile queue/claim/kick defaults wrong: %+v", main)
 	}
 }
 
@@ -271,27 +279,107 @@ func TestProfileNameValidation(t *testing.T) {
 	}
 }
 
-func TestProfileGamesInheritance(t *testing.T) {
+// TestProfileGamesMaterializedFromRootOnce pins the migration: a profile
+// written before it had games of its own takes the legacy root list when the
+// config is LOADED, a profile with its own list keeps it, and after loading
+// nothing inherits any more - a root edit changes no profile.
+func TestProfileGamesMaterializedFromRootOnce(t *testing.T) {
+	cfg, err := parse([]byte(`
+games: [Rust]
+any_game: false
+queue:
+  priority_mode: ending_soonest
+  auto_enqueue_new: false
+watcher:
+  wait_for_top: true
+claim:
+  skip_account_link_drops: false
+kick:
+  enabled: true
+profiles:
+  - name: legacy
+    dir: .
+    enabled: true
+  - name: own
+    enabled: true
+    games: [Halo Infinite]
+    kick:
+      enabled: false
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	legacy, err := cfg.Effective("legacy")
+	if err != nil {
+		t.Fatalf("Effective: %v", err)
+	}
+	if len(legacy.Games) != 1 || legacy.Games[0] != "Rust" || legacy.AnyGame {
+		t.Fatalf("legacy profile must take the root games once: %+v", legacy)
+	}
+	if legacy.PriorityMode != "ending_soonest" || legacy.AutoEnqueueNew || !legacy.WaitForTop || legacy.SkipAccountLink || !legacy.KickEnabled {
+		t.Fatalf("legacy profile must take the root queue/claim/kick values once: %+v", legacy)
+	}
+	own, err := cfg.Effective("own")
+	if err != nil {
+		t.Fatalf("Effective: %v", err)
+	}
+	if len(own.Games) != 1 || own.Games[0] != "Halo Infinite" || own.KickEnabled {
+		t.Fatalf("a profile with its own values keeps them: %+v", own)
+	}
+	// Materialized: the root is no longer consulted.
+	cfg.Games = []string{"Once Human"}
+	cfg.Kick.Enabled = false
+	again, _ := cfg.Effective("legacy")
+	if len(again.Games) != 1 || again.Games[0] != "Rust" || !again.KickEnabled {
+		t.Fatalf("a root edit after load must not change a profile: %+v", again)
+	}
+	// And the materialized values survive a round trip in full.
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	p := got.Profile("legacy")
+	if p.AnyGame == nil || p.Queue.AutoEnqueueNew == nil || p.Queue.PreferChannelSpecific == nil || p.Queue.WaitForTop == nil ||
+		p.Claim.SkipAccountLink == nil || p.Kick.Enabled == nil || p.Queue.PriorityMode == "" {
+		t.Fatalf("every per-profile field must be written explicitly: %+v", p)
+	}
+	eff, _ := got.Effective("legacy")
+	if len(eff.Games) != 1 || eff.Games[0] != "Rust" || !eff.KickEnabled || eff.PriorityMode != "ending_soonest" {
+		t.Fatalf("round trip lost per-profile values: %+v", eff)
+	}
+}
+
+// TestProfileRuntimeConfigCarriesOwnSettings: the engines read the legacy root
+// fields of the per-profile copy, so every per-profile value must land there.
+func TestProfileRuntimeConfigCarriesOwnSettings(t *testing.T) {
 	cfg, _ := StarterDefaults()
-	cfg.Games = []string{"Rust"}
-	cfg.AnyGame = false
-	cfg.Profiles = append(cfg.Profiles, ProfileConfig{Name: "inherits", Enabled: true})
-	cfg.Profiles = append(cfg.Profiles, ProfileConfig{Name: "overrides", Enabled: true, Games: []string{"Halo Infinite"}})
-
-	inherited, err := cfg.Effective("inherits")
+	p := NewProfile("p2", "Two")
+	p.Games = []string{"Rust"}
+	p.AnyGame = boolPtr(false)
+	p.Queue.PriorityMode = "shortest_first"
+	p.Queue.AutoEnqueueNew = boolPtr(false)
+	p.Queue.PreferChannelSpecific = boolPtr(false)
+	p.Queue.WaitForTop = boolPtr(true)
+	p.Claim.SkipAccountLink = boolPtr(false)
+	p.Kick.Enabled = boolPtr(true)
+	cfg.Profiles = append(cfg.Profiles, p)
+	rc, err := cfg.ProfileRuntimeConfig("p2")
 	if err != nil {
-		t.Fatalf("Effective: %v", err)
+		t.Fatalf("runtime config: %v", err)
 	}
-	if len(inherited.Games) != 1 || inherited.Games[0] != "Rust" {
-		t.Fatalf("expected inherited games [Rust], got %v", inherited.Games)
+	if len(rc.Games) != 1 || rc.Games[0] != "Rust" || rc.Queue.PriorityMode != "shortest_first" || rc.Queue.AutoEnqueueNew ||
+		rc.PreferChannelSpecific() || !rc.Watcher.WaitForTop || rc.Claim.SkipAccountLink || !rc.Kick.Enabled {
+		t.Fatalf("runtime copy must carry the profile's own settings: games=%v queue=%+v wait=%v skip=%v kick=%v",
+			rc.Games, rc.Queue, rc.Watcher.WaitForTop, rc.Claim.SkipAccountLink, rc.Kick.Enabled)
 	}
-
-	overridden, err := cfg.Effective("overrides")
-	if err != nil {
-		t.Fatalf("Effective: %v", err)
-	}
-	if len(overridden.Games) != 1 || overridden.Games[0] != "Halo Infinite" {
-		t.Fatalf("expected overridden games [Halo Infinite], got %v", overridden.Games)
+	// The main profile's copy is untouched by p2's choices.
+	mc, _ := cfg.ProfileRuntimeConfig(MainProfileName)
+	if mc.Kick.Enabled || mc.Queue.PriorityMode != "top_down" || len(mc.Games) != 0 {
+		t.Fatalf("main profile copy must keep its own settings: %+v", mc.Queue)
 	}
 }
 
@@ -594,8 +682,8 @@ func TestPreferChannelSpecificDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.PreferChannelSpecific() || cfg.Queue.PreferChannelSpecific == nil {
-		t.Fatal("the starter config should set prefer_channel_specific: true explicitly")
+	if m := cfg.Profiles[0]; m.Queue.PreferChannelSpecific == nil || !*m.Queue.PreferChannelSpecific {
+		t.Fatal("the starter config should set the main profile's prefer_channel_specific: true explicitly")
 	}
 }
 
@@ -642,11 +730,14 @@ func TestKickEnabledForcesSeparateWindow(t *testing.T) {
 	if cfg.KickSeparateWindow() {
 		t.Fatal("kick off: shared layout is the (irrelevant) default")
 	}
-	cfg.Kick.Enabled = true
-	if !cfg.KickSeparateWindow() {
-		t.Fatal("root kick.enabled must force separate_window")
+	// Legacy root kick.enabled reaches the profile at load, and forces it.
+	legacy, err := parse([]byte("kick:\n  enabled: true\n"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	cfg.Kick.Enabled = false
+	if !legacy.KickSeparateWindow() {
+		t.Fatal("a legacy root kick.enabled must force separate_window through the materialized profile")
+	}
 	cfg.Profiles[0].Kick.Enabled = boolPtr(true)
 	if !cfg.KickSeparateWindow() {
 		t.Fatal("a profile enabling kick must force separate_window")

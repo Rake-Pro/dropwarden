@@ -346,15 +346,16 @@ func NewHTTPHandler(b *Backend) http.Handler {
 		}
 		writeJSON(w, map[string]any{"ok": true})
 	})
-	// Priority mode is a root setting shared by every profile.
+	// Priority mode is each profile's own; an omitted profile means the first.
 	mux.HandleFunc("POST /api/queue/priority", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Mode string `json:"mode"`
+			Profile string `json:"profile"`
+			Mode    string `json:"mode"`
 		}
 		if !decode(w, r, &body) {
 			return
 		}
-		if err := queue.SetPriorityMode(body.Mode); err != nil {
+		if err := queue.SetPriorityMode(body.Profile, body.Mode); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -451,24 +452,20 @@ func NewHTTPHandler(b *Backend) http.Handler {
 	// (screencast out, input in). Headless service only; see remote.go.
 	mux.Handle("GET /api/remote/{profile}/{platform}/ws", newRemoteHandler(b))
 
-	// GET /api/profiles lists every profile's raw editable overlay for the
-	// Profiles settings pane (distinct from POST /api/profiles, which adds one).
+	// GET /api/profiles lists every profile's own settings for the Settings
+	// UI (distinct from POST /api/profiles, which adds one).
 	mux.HandleFunc("GET /api/profiles", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, settings.Profiles())
 	})
+	// POST /api/profiles/update saves one profile's settings in full (a
+	// ProfileDTO; enabled is ignored here, /api/profiles/enabled owns it).
 	mux.HandleFunc("POST /api/profiles/update", func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Name         string   `json:"name"`
-			DisplayName  string   `json:"displayName"`
-			KickEnabled  bool     `json:"kickEnabled"`
-			Games        []string `json:"games"`
-			InheritGames bool     `json:"inheritGames"`
-		}
+		var body ProfileDTO
 		if !decode(w, r, &body) {
 			return
 		}
-		if err := settings.UpdateProfile(body.Name, body.DisplayName, body.KickEnabled, body.Games, body.InheritGames); err != nil {
-			writeErr(w, err)
+		if err := settings.UpdateProfile(body); err != nil {
+			writeFieldErr(w, err, configErrorField(err))
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true})
@@ -543,16 +540,19 @@ func profileStates(b *Backend, queue *QueueService, history *HistoryService) []m
 			continue
 		}
 		pb := b.Profile(eff.Name)
-		// games/inheritGames: the resolved games list and whether it is the
-		// shared one, so the Queue orders a profile's sections by its own list.
+		// The profile's own games and queue policy ride along so the Queue
+		// view orders sections by its list and describes its selection order.
 		entry := map[string]any{
 			"name": eff.Name, "displayName": eff.DisplayName, "enabled": eff.Enabled,
-			"games": eff.Games, "inheritGames": len(pc.Games) == 0 && pc.AnyGame == nil,
-			"platforms": platformStates(b, eff, pb),
-			"queue":     []QueueItemDTO{},
-			"claims":    []ClaimDTO{},
-			"stats":     StatsDTO{OutcomeCounts: map[string]int{}, ByPlatform: map[string]PlatformTotalsDTO{}},
-			"spark":     []int{},
+			"games": eff.Games, "anyGame": eff.AnyGame,
+			"priorityMode": eff.PriorityMode, "preferChannelSpecific": eff.PreferChannelSpecific,
+			"autoEnqueueNew": eff.AutoEnqueueNew, "fallThrough": !eff.WaitForTop,
+			"skipAccountLink": eff.SkipAccountLink,
+			"platforms":       platformStates(b, eff, pb),
+			"queue":           []QueueItemDTO{},
+			"claims":          []ClaimDTO{},
+			"stats":           StatsDTO{OutcomeCounts: map[string]int{}, ByPlatform: map[string]PlatformTotalsDTO{}},
+			"spark":           []int{},
 		}
 		if pb != nil {
 			q, _ := queue.Get(eff.Name)

@@ -70,9 +70,9 @@ top down, falling through past drops with no live channel:
 | # | Key | Where it is set |
 |---|-----|-----------------|
 | 0 | Pinned drops first, rank 1 before rank 2 | Queue view: star a drop; up/down arrows re-rank pinned rows |
-| 1 | Game rank: position of the campaign's game in `games` (case-insensitive); unlisted games last | Settings > Games: up/down per game, then Save |
-| 2 | Channel-specific before any-channel, within a game | `queue.prefer_channel_specific` (default `true`) |
-| 3 | Priority mode (`top_down` = queue position, `ending_soonest`, `closest_to_complete`, `shortest_first`) | Queue view Priority menu / `queue.priority_mode` |
+| 1 | Game rank: position of the campaign's game in the profile's `games` (case-insensitive); unlisted games last | Settings > Games (per profile): up/down per game, then Save |
+| 2 | Channel-specific before any-channel, within a game | Settings > Games > Queue, or `profiles[].queue.prefer_channel_specific` (default `true`) |
+| 3 | Priority mode (`top_down` = queue position, `ending_soonest`, `closest_to_complete`, `shortest_first`) | Queue view order menu / `profiles[].queue.priority_mode` |
 
 - *Pins persist across campaign instances.* Starring a drop also stores a pin
   rule keyed by platform, game, and the drop's normalized reward name(s). When
@@ -267,7 +267,7 @@ language as the sibling GoShareIt app.
 | Choose your games | the games list is not empty, or Any game is on | Choose games |
 | Start | the watcher has run once | Start |
 
-- Game picker (Settings > Games, and per profile under Profiles): "Drops right
+- Game picker (Settings > Games, for the selected profile): "Drops right
   now" lists games with active drops (loaded when the picker opens, Refresh
   forces a fresh list), the search box searches all Twitch categories, and
   "Not listed?" adds an exact name. Press Save to apply.

@@ -118,8 +118,11 @@ func doctor() error {
 		fmt.Fprintf(w, "chrome binary\t%s\n", chrome)
 	}
 	fmt.Fprintf(w, "theme\t%s\n", a.Cfg.Theme)
-	fmt.Fprintf(w, "games\t%v\n", a.Cfg.Games)
-	fmt.Fprintf(w, "priority mode\t%s\n", a.Cfg.Queue.PriorityMode)
+	for _, p := range a.Cfg.Profiles {
+		if eff, err := a.Cfg.Effective(p.Name); err == nil {
+			fmt.Fprintf(w, "profile %s\tgames %v, any_game %v, order %s, kick %v\n", p.Name, eff.Games, eff.AnyGame, eff.PriorityMode, eff.KickEnabled)
+		}
+	}
 	fmt.Fprintf(w, "auth mode\t%s\n", a.Cfg.Auth.Mode)
 	fmt.Fprintf(w, "player volume\t%.3f (muted-safe: %v)\n", a.Cfg.Browser.Player.Volume, a.Cfg.Browser.Player.Volume > 0)
 	fmt.Fprintf(w, "claim sweep\t%v\n", a.Cfg.ClaimSweep())

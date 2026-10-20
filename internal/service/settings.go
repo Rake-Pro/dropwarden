@@ -47,7 +47,7 @@ func (s *SettingsService) Save(dto ConfigDTO) error {
 // profile's runtime up immediately and its Chrome needs somewhere to live.
 func (s *SettingsService) AddProfile(name, displayName string) error {
 	cp := s.copyConfig()
-	cp.Profiles = append(cp.Profiles, config.ProfileConfig{Name: name, DisplayName: displayName, Enabled: true})
+	cp.Profiles = append(cp.Profiles, config.NewProfile(name, displayName))
 	if err := config.Save(s.b.ConfigPath, cp); err != nil {
 		return err
 	}
@@ -113,59 +113,66 @@ func (s *SettingsService) RemoveProfile(name string) (string, error) {
 	return dataDir, nil
 }
 
-// Profiles returns every profile's editable overlay for the Profiles settings
-// pane - the Profiles pane needs the raw per-profile overrides (games list,
-// whether it inherits the shared one, kick override), not the resolved values
-// /api/state already reports.
+// Profiles returns every profile's own settings for the Settings UI (the
+// profile group of panes edits them; /api/state carries the same resolved
+// values for the views).
 func (s *SettingsService) Profiles() []ProfileDTO {
-	s.b.mu.RLock()
-	cfg := s.b.cfg
-	s.b.mu.RUnlock()
+	cfg := s.b.config()
 	out := make([]ProfileDTO, 0, len(cfg.Profiles))
 	for _, p := range cfg.Profiles {
-		kickEnabled := cfg.Kick.Enabled
-		if eff, err := cfg.Effective(p.Name); err == nil {
-			kickEnabled = eff.KickEnabled
+		eff, err := cfg.Effective(p.Name)
+		if err != nil {
+			continue
 		}
-		out = append(out, ProfileDTO{
-			Name:         p.Name,
-			DisplayName:  p.DisplayName,
-			Enabled:      p.Enabled,
-			Games:        append([]string(nil), p.Games...),
-			InheritGames: len(p.Games) == 0 && p.AnyGame == nil,
-			KickEnabled:  kickEnabled,
-		})
+		out = append(out, profileDTO(p, eff))
 	}
 	return out
 }
 
-// UpdateProfile saves one profile's editable overlay: display name, kick
-// on/off, and the games filter (or inherit-the-shared-list when inheritGames
-// is true). Like AddProfile, it validates on a copy before committing; a kick
-// change takes effect immediately (the commit reconciles that runtime up or
-// down).
-func (s *SettingsService) UpdateProfile(name, displayName string, kickEnabled bool, games []string, inheritGames bool) error {
+func profileDTO(p config.ProfileConfig, eff *config.ProfileEffective) ProfileDTO {
+	return ProfileDTO{
+		Name:                  p.Name,
+		DisplayName:           p.DisplayName,
+		Enabled:               p.Enabled,
+		Games:                 append([]string{}, eff.Games...),
+		AnyGame:               eff.AnyGame,
+		PriorityMode:          eff.PriorityMode,
+		AutoEnqueueNew:        eff.AutoEnqueueNew,
+		PreferChannelSpecific: eff.PreferChannelSpecific,
+		FallThrough:           !eff.WaitForTop,
+		SkipAccountLink:       eff.SkipAccountLink,
+		KickEnabled:           eff.KickEnabled,
+	}
+}
+
+// UpdateProfile saves one profile's own settings in full: display name,
+// games and any_game, queue policy, skip-account-link and Kick on/off. Like
+// AddProfile, it validates on a copy before committing; a kick or games
+// change takes effect immediately (the commit reconciles the runtime and
+// reloads the engines). Enabled is not here: SetProfileEnabled owns it.
+func (s *SettingsService) UpdateProfile(d ProfileDTO) error {
 	cp := s.copyConfig()
-	p := cp.Profile(name)
+	p := cp.Profile(d.Name)
 	if p == nil {
-		return fmt.Errorf("unknown profile %q", name)
+		return fmt.Errorf("unknown profile %q", d.Name)
 	}
-	p.DisplayName = displayName
-	// Only pin a kick override when it differs from the shared default: the
-	// pane shows the RESOLVED value, so writing it back verbatim would turn
-	// every inherited profile into a pinned one and the shared Platforms-pane
-	// kick toggle would silently stop affecting it.
-	if kickEnabled == cp.Kick.Enabled {
-		p.Kick.Enabled = nil
-	} else {
-		p.Kick.Enabled = &kickEnabled
+	p.DisplayName = strings.TrimSpace(d.DisplayName)
+	games := make([]string, 0, len(d.Games))
+	for _, g := range d.Games {
+		if g = strings.TrimSpace(g); g != "" {
+			games = append(games, g)
+		}
 	}
-	if inheritGames {
-		p.Games = nil
-		p.AnyGame = nil
-	} else {
-		p.Games = append([]string(nil), games...)
+	p.Games = games
+	p.AnyGame = ptr(d.AnyGame)
+	if d.PriorityMode != "" {
+		p.Queue.PriorityMode = d.PriorityMode
 	}
+	p.Queue.AutoEnqueueNew = ptr(d.AutoEnqueueNew)
+	p.Queue.PreferChannelSpecific = ptr(d.PreferChannelSpecific)
+	p.Queue.WaitForTop = ptr(!d.FallThrough)
+	p.Claim.SkipAccountLink = ptr(d.SkipAccountLink)
+	p.Kick.Enabled = ptr(d.KickEnabled)
 	if err := config.Save(s.b.ConfigPath, cp); err != nil {
 		return err
 	}
@@ -181,6 +188,9 @@ func (s *SettingsService) copyConfig() *config.Config {
 	cp := *s.b.cfg
 	cp.Games = append([]string(nil), s.b.cfg.Games...)
 	cp.Profiles = append([]config.ProfileConfig(nil), s.b.cfg.Profiles...)
+	for i := range cp.Profiles {
+		cp.Profiles[i].Games = append([]string{}, cp.Profiles[i].Games...)
+	}
 	return &cp
 }
 
@@ -215,11 +225,6 @@ func (s *SettingsService) ResetDefaults() (ConfigDTO, error) {
 func toConfigDTO(c *config.Config) ConfigDTO {
 	return ConfigDTO{
 		Theme:              c.Theme,
-		Games:              append([]string(nil), c.Games...),
-		AnyGame:            c.AnyGame,
-		PriorityMode:       c.Queue.PriorityMode,
-		AutoEnqueueNew:     c.Queue.AutoEnqueueNew,
-		FallThrough:        !c.Watcher.WaitForTop,
 		Volume:             c.Browser.Player.Volume,
 		ForceLowestQuality: c.Browser.Player.ForceLowestQuality,
 		NeverFocus:         c.Browser.Window.NeverFocus,
@@ -228,10 +233,8 @@ func toConfigDTO(c *config.Config) ConfigDTO {
 		DimOpacity:         c.Browser.Burnin.DimOpacity,
 		ChromePath:         c.Browser.ChromePath,
 		MuteAudio:          c.Browser.MuteAudio,
-		KickEnabled:        c.Kick.Enabled,
 		ClaimStrategy:      c.Claim.Strategy,
 		AllowGQLFallback:   c.Claim.AllowGQLFallback,
-		SkipAccountLink:    c.Claim.SkipAccountLink,
 
 		ClaimButtonSelector: ptr(c.ClaimInventorySelector()),
 		ClaimButtonText:     ptr(c.Claim.InventoryButtonText),
@@ -239,8 +242,6 @@ func toConfigDTO(c *config.Config) ConfigDTO {
 		StoredEnabled:       c.Auth.Stored.Enabled,
 		LogLevel:            c.Logging.Level,
 		CaptureGQLBodies:    c.Logging.CaptureGQLBodies,
-
-		PreferChannelSpecific: c.PreferChannelSpecific(),
 
 		UpdateEnabled:       ptr(c.UpdateEnabled()),
 		UpdateAutoInstall:   ptr(c.UpdateAutoInstall()),
@@ -254,15 +255,11 @@ func toConfigDTO(c *config.Config) ConfigDTO {
 
 func ptr[T any](v T) *T { return &v }
 
-// applyConfigDTO writes editable fields from the DTO onto cfg. Fields the UI
-// does not expose are left untouched.
+// applyConfigDTO writes the app-wide editable fields from the DTO onto cfg.
+// Fields the UI does not expose are left untouched; per-profile fields are
+// UpdateProfile's.
 func applyConfigDTO(c *config.Config, d ConfigDTO) {
 	c.Theme = d.Theme
-	c.Games = append([]string(nil), d.Games...)
-	c.AnyGame = d.AnyGame
-	c.Queue.PriorityMode = d.PriorityMode
-	c.Queue.AutoEnqueueNew = d.AutoEnqueueNew
-	c.Watcher.WaitForTop = !d.FallThrough
 	c.Browser.Player.Volume = d.Volume
 	c.Browser.Player.ForceLowestQuality = d.ForceLowestQuality
 	c.Browser.Window.NeverFocus = d.NeverFocus
@@ -271,10 +268,8 @@ func applyConfigDTO(c *config.Config, d ConfigDTO) {
 	c.Browser.Burnin.DimOpacity = d.DimOpacity
 	c.Browser.ChromePath = d.ChromePath
 	c.Browser.MuteAudio = d.MuteAudio
-	c.Kick.Enabled = d.KickEnabled
 	c.Claim.Strategy = d.ClaimStrategy
 	c.Claim.AllowGQLFallback = d.AllowGQLFallback
-	c.Claim.SkipAccountLink = d.SkipAccountLink
 	if d.ClaimButtonSelector != nil {
 		sel := strings.TrimSpace(*d.ClaimButtonSelector)
 		setUpdate(&c.Claim.InventoryButtonSelector, &sel, c.ClaimInventorySelector())

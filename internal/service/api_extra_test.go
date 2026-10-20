@@ -38,7 +38,7 @@ func TestHTTPGames(t *testing.T) {
 	}
 
 	cfg := b.config()
-	cfg.Games = []string{"rust"}
+	cfg.Profiles[0].Games = []string{"rust"} // the profile's own list is what Tracked reads
 	st := b.Profile("main").Store
 	end1 := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
 	end2 := time.Now().Add(96 * time.Hour).UTC().Truncate(time.Second)
@@ -259,15 +259,15 @@ func TestExportDiagnosticsZip(t *testing.T) {
 	}
 }
 
-func TestSettingsAnyGameKickRoundTrip(t *testing.T) {
+func TestProfileAnyGameKickRoundTrip(t *testing.T) {
 	b := testBackend(t)
 	s := NewSettingsService(b)
-	d := s.Load()
+	d := s.Profiles()[0]
 	d.AnyGame, d.KickEnabled = true, true
-	if err := s.Save(d); err != nil {
+	if err := s.UpdateProfile(d); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.Load(); !got.AnyGame || !got.KickEnabled {
+	if got := s.Profiles()[0]; !got.AnyGame || !got.KickEnabled {
 		t.Fatalf("anyGame/kickEnabled not saved: %+v", got)
 	}
 }
@@ -329,10 +329,12 @@ func TestStateCarriesFrontendFields(t *testing.T) {
 
 	state := get("/api/state")
 	need("state", state, "config", "host", "profiles", "update", "version")
-	need("config", state["config"].(map[string]any), "theme", "games", "anyGame", "priorityMode", "preferChannelSpecific",
-		"autoEnqueueNew", "fallThrough", "volume", "forceLowestQuality", "muteAudio", "startMinimized", "alwaysOnBottom",
-		"chromePath", "kickEnabled", "skipAccountLink", "claimButtonSelector", "claimButtonText", "captureGqlBodies",
+	need("config", state["config"].(map[string]any), "theme", "volume", "forceLowestQuality", "muteAudio", "startMinimized", "alwaysOnBottom",
+		"chromePath", "claimButtonSelector", "claimButtonText", "captureGqlBodies",
 		"updateEnabled", "updateAutoInstall", "updateShowChangelog", "updateFeedURL", "updateIntervalHours")
+	// Per-profile settings ride on the profile entry, not on config.
+	need("profiles[0]", state["profiles"].([]any)[0].(map[string]any), "name", "displayName", "enabled", "games", "anyGame",
+		"priorityMode", "preferChannelSpecific", "autoEnqueueNew", "fallThrough", "skipAccountLink", "platforms", "queue")
 	need("host", state["host"].(map[string]any), "os", "chromeFound", "chromePath", "remote", "updates")
 	u := state["update"].(map[string]any)
 	need("state.update", u, updateKeys...)

@@ -38,9 +38,11 @@ const SAMPLE = {
       kick: { dropsEarned: 2, dropsClaimed: 2, minutesWatched: 252, sessions: 5 },
     } },
     spark: [10, 30, 20, 60, 40, 80, 55, 90, 70, 100, 65, 45, 85, 60],
-    inheritGames: true, games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'],
+    games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'], anyGame: false, priorityMode: 'top_down', preferChannelSpecific: true,
+    autoEnqueueNew: true, fallThrough: true, skipAccountLink: true,
   }, {
-    name: 'p2', displayName: 'Profile 2', enabled: true, inheritGames: false, games: ['Once Human'],
+    name: 'p2', displayName: 'Profile 2', enabled: true, games: ['Once Human'], anyGame: false, priorityMode: 'ending_soonest',
+    preferChannelSpecific: true, autoEnqueueNew: true, fallThrough: true, skipAccountLink: true,
     platforms: [
       {
         platform: 'twitch', enabled: true, up: true, needsLogin: false, launchError: '', reason: 'nothing eligible to watch',
@@ -58,10 +60,9 @@ const SAMPLE = {
     spark: [0, 0, 5, 10, 0, 0, 20, 15, 0, 30, 10, 0, 0, 5],
   }],
   config: {
-    theme: 'dark', games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'], anyGame: false, fallThrough: true,
-    priorityMode: 'top_down', preferChannelSpecific: true, autoEnqueueNew: true, volume: 0.01, forceLowestQuality: true,
-    neverFocus: true, alwaysOnBottom: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, kickEnabled: true, claimStrategy: 'in_page',
-    allowGqlFallback: false, skipAccountLink: true, claimButtonSelector: 'button:has([data-a-target="tw-core-button-label-text"])', claimButtonText: 'Claim Now', authMode: 'manual', storedEnabled: false, logLevel: 'info', captureGqlBodies: false,
+    theme: 'dark', volume: 0.01, forceLowestQuality: true,
+    neverFocus: true, alwaysOnBottom: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, claimStrategy: 'in_page',
+    allowGqlFallback: false, claimButtonSelector: 'button:has([data-a-target="tw-core-button-label-text"])', claimButtonText: 'Claim Now', authMode: 'manual', storedEnabled: false, logLevel: 'info', captureGqlBodies: false,
     updateEnabled: true, updateAutoInstall: true, updateShowChangelog: true,
     updateFeedURL: 'https://cdn.rake.pro/releases/dropwarden/latest.json', updateIntervalHours: 24,
   },
@@ -83,11 +84,13 @@ const SAMPLE = {
   },
 };
 
-// SAMPLE_PROFILE_CONFIGS mirrors GET /api/profiles (the raw per-profile
-// overlay the Profiles settings pane edits) for offline preview.
+// SAMPLE_PROFILE_CONFIGS mirrors GET /api/profiles (each profile's own
+// settings, which the Settings profile panes edit) for offline preview.
 const SAMPLE_PROFILE_CONFIGS = [
-  { name: 'main', displayName: 'main', enabled: true, games: [], inheritGames: true, kickEnabled: true },
-  { name: 'p2', displayName: 'Profile 2', enabled: true, games: ['Once Human'], inheritGames: false, kickEnabled: false },
+  { name: 'main', displayName: 'main', enabled: true, games: ['Rust', 'Halo Infinite', 'Halo MCC', 'Once Human'], anyGame: false, priorityMode: 'top_down',
+    autoEnqueueNew: true, preferChannelSpecific: true, fallThrough: true, skipAccountLink: true, kickEnabled: true },
+  { name: 'p2', displayName: 'Profile 2', enabled: true, games: ['Once Human'], anyGame: false, priorityMode: 'ending_soonest',
+    autoEnqueueNew: true, preferChannelSpecific: true, fallThrough: true, skipAccountLink: true, kickEnabled: false },
 ];
 
 // SAMPLE_CATALOG mirrors GET /api/games/catalog; SAMPLE_SEARCH mirrors
@@ -241,8 +244,8 @@ export const api = {
   // Move a pinned drop one rank: direction 'up' (toward rank 1) or 'down'.
   setPinRank(dropID, direction, profile = activeProfile) { return post('/api/queue/pin-rank', { profile, dropID, direction }); },
   setOrder(ids, profile = activeProfile) { return post('/api/queue/order', { profile, ids }); },
-  // Priority mode is shared by every profile.
-  setPriority(mode) { return post('/api/queue/priority', { mode }); },
+  // Priority mode is each profile's own.
+  setPriority(mode, profile = activeProfile) { return post('/api/queue/priority', { profile, mode }); },
   addProfile(name, displayName) { return post('/api/profiles', { name, displayName }); },
   setProfileEnabled(name, on) { return post('/api/profiles/enabled', { name, on }); },
   // Never deletes the data directory; the response carries its path so the UI
@@ -251,9 +254,10 @@ export const api = {
   // Returns { loggedIn: true|false|null }; null means unknowable (no session
   // up, or a platform with no probe - see docs/NOTES-kick.md). On-demand only.
   loginCheck(profile, platform) { return post('/api/profiles/login-check', { profile, platform }); },
-  // The Profiles settings pane's raw per-profile overlay (games/inherit/kick),
-  // distinct from the resolved blocks profiles() returns. Like update(), it
-  // throws once the backend has been seen: SAMPLE only before first contact.
+  // Each profile's own settings (games, queue policy, kick, skip account
+  // link) for the Settings profile panes, distinct from the full blocks
+  // profiles() returns. Like update(), it throws once the backend has been
+  // seen: SAMPLE only before first contact.
   async profileConfigs() {
     try {
       const r = await fetch('/api/profiles', { cache: 'no-store' });
@@ -264,7 +268,8 @@ export const api = {
       return SAMPLE_PROFILE_CONFIGS;
     }
   },
-  // body: { name, displayName, kickEnabled, games, inheritGames }.
+  // body: one profileConfigs() entry in full (enabled is ignored; see
+  // setProfileEnabled).
   updateProfile(body) { return post('/api/profiles/update', body); },
 
   // Self-updater. update() is cheap (no network); checkUpdate() runs a real

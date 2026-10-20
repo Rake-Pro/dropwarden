@@ -108,27 +108,22 @@ type PlatformTotalsDTO struct {
 	Sessions       int `json:"sessions"`
 }
 
-// ConfigDTO is the subset of config the settings UI edits. It is deliberately
-// flat and string-friendly for form binding.
+// ConfigDTO is the app-wide (shared) subset of config the settings UI edits.
+// What is a profile's own - games, queue policy, Kick on/off, skipping
+// account-link drops - is ProfileDTO, edited through /api/profiles/update.
+// It is deliberately flat and string-friendly for form binding.
 type ConfigDTO struct {
-	Theme              string   `json:"theme"`
-	Games              []string `json:"games"`
-	AnyGame            bool     `json:"anyGame"`
-	PriorityMode       string   `json:"priorityMode"`
-	AutoEnqueueNew     bool     `json:"autoEnqueueNew"`
-	FallThrough        bool     `json:"fallThrough"`
-	Volume             float64  `json:"volume"`
-	ForceLowestQuality bool     `json:"forceLowestQuality"`
-	NeverFocus         bool     `json:"neverFocus"`
-	AlwaysOnBottom     bool     `json:"alwaysOnBottom"` // Windows only; the UI disables it elsewhere
-	StartMinimized     bool     `json:"startMinimized"`
-	DimOpacity         float64  `json:"dimOpacity"`
-	ChromePath         string   `json:"chromePath"`
-	MuteAudio          bool     `json:"muteAudio"`
-	KickEnabled        bool     `json:"kickEnabled"`
-	ClaimStrategy      string   `json:"claimStrategy"`
-	AllowGQLFallback   bool     `json:"allowGqlFallback"`
-	SkipAccountLink    bool     `json:"skipAccountLink"`
+	Theme              string  `json:"theme"`
+	Volume             float64 `json:"volume"`
+	ForceLowestQuality bool    `json:"forceLowestQuality"`
+	NeverFocus         bool    `json:"neverFocus"`
+	AlwaysOnBottom     bool    `json:"alwaysOnBottom"` // Windows only; the UI disables it elsewhere
+	StartMinimized     bool    `json:"startMinimized"`
+	DimOpacity         float64 `json:"dimOpacity"`
+	ChromePath         string  `json:"chromePath"`
+	MuteAudio          bool    `json:"muteAudio"`
+	ClaimStrategy      string  `json:"claimStrategy"`
+	AllowGQLFallback   bool    `json:"allowGqlFallback"`
 	// DOM claim fallback (claim.inventory_button_*). Pointers so a partial POST
 	// that omits them leaves the config alone; "" selector = capture only.
 	ClaimButtonSelector *string `json:"claimButtonSelector,omitempty"`
@@ -137,10 +132,6 @@ type ConfigDTO struct {
 	StoredEnabled       bool    `json:"storedEnabled"`
 	LogLevel            string  `json:"logLevel"`
 	CaptureGQLBodies    bool    `json:"captureGqlBodies"`
-	// PreferChannelSpecific is read-only here (config file only; Save ignores
-	// it): the Queue view uses it to describe the selection order accurately.
-	PreferChannelSpecific bool `json:"preferChannelSpecific"`
-
 	// Updates pane. Pointers so a partial POST that omits them (an older
 	// client, a scripted call) leaves the update block untouched instead of
 	// zeroing it; the settings UI always sends all five.
@@ -163,10 +154,17 @@ type LoginDTO struct {
 // pane - the raw overlay values (what the profile itself sets vs inherits),
 // not the resolved Effective ones the dashboard uses.
 type ProfileDTO struct {
-	Name         string   `json:"name"`
-	DisplayName  string   `json:"displayName"`
-	Enabled      bool     `json:"enabled"`
-	Games        []string `json:"games"`
-	InheritGames bool     `json:"inheritGames"`
-	KickEnabled  bool     `json:"kickEnabled"` // effective (resolved), for display
+	Name        string   `json:"name"`
+	DisplayName string   `json:"displayName"`
+	Enabled     bool     `json:"enabled"`
+	Games       []string `json:"games"`
+	AnyGame     bool     `json:"anyGame"`
+	// Queue policy.
+	PriorityMode          string `json:"priorityMode"`
+	AutoEnqueueNew        bool   `json:"autoEnqueueNew"`
+	PreferChannelSpecific bool   `json:"preferChannelSpecific"`
+	FallThrough           bool   `json:"fallThrough"` // !queue.wait_for_top, the way the UI words it
+	// Platforms.
+	SkipAccountLink bool `json:"skipAccountLink"`
+	KickEnabled     bool `json:"kickEnabled"`
 }

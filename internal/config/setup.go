@@ -16,21 +16,10 @@ const StarterConfig = `# dropwarden configuration.
 
 theme: dark            # dark | light | system  (dashboard UI)
 
-# Campaigns for games outside this list are cached but never queued. The list
-# order is the game priority: earlier games are watched first.
-# pick games in Settings > Games after the first campaign scan
-games: []
-any_game: false        # true = queue every drops-enabled campaign and ignore the list (Settings > Games > Advanced)
-
-queue:
-  priority_mode: top_down   # top_down | ending_soonest | closest_to_complete | shortest_first
-  auto_enqueue_new: true    # new campaigns for listed games join the bottom of the queue
-  # Within a game, watch channel-allowlisted campaigns before any-channel ones:
-  # an allowlisted streamer also credits the game's any-channel drops, so those
-  # only get their own watch when no allowlisted streamer of the game is live.
-  # Games are prioritized in the order of the games list above; pinned drops
-  # (Queue view star) outrank everything.
-  prefer_channel_specific: true
+# Everything below is the APP's: shared by every profile. What is a person's
+# own - their games, how their queue is worked, whether Kick runs for them,
+# whether account-link drops are skipped - lives in the profiles block at the
+# end of this file, one entry per person.
 
 discovery:
   interval: 45m
@@ -56,7 +45,6 @@ watcher:
   cooldown_jitter: 120s
   channel_blacklist_ttl: 45m
   offline_blacklist_ttl: 15m
-  wait_for_top: false           # false = fall through to the next available drop
   max_select_attempts: 6        # any-channel directory scrapes per pass; allowlists always checked
   timing_jitter: 0.2            # +/- fraction on periodic watcher delays (bot-detection avoidance: desynchronizes periodic actions); 0 disables, max 0.5
 
@@ -74,7 +62,6 @@ claim:
   strategy: in_page            # legacy, not read by the claim flow
   allow_gql_fallback: false    # legacy, ignored since v0.1.4 (the mutation is now the primary path)
   retry_backoff: 5m
-  skip_account_link_drops: true
 
 browser:
   chrome_path: ""              # blank = auto-detect; override for Chrome Beta/Dev or odd installs
@@ -101,7 +88,8 @@ browser:
     reassert_interval: 30s
 
 kick:
-  enabled: false               # parallel Kick drops runtime (its own engine)
+  # Whether Kick runs is each profile's choice (profiles[].kick.enabled); this
+  # block is the shared Kick browser setup.
   browser:
     # While kick is enabled Kick always gets its OWN Chrome window (profile_dir
     # and window below): a Kick tab and a Twitch tab cannot both be in the
@@ -155,6 +143,32 @@ update:
 
 power:
   keep_awake: while_watching   # while_watching = stop the PC idle-sleeping only while a drop is being watched; always; never. Monitors may still turn off.
+
+# One entry per person. Each profile has its own data directory (queue,
+# history, Chrome sign-ins) and its own choices below; add more in
+# Settings > Profiles.
+profiles:
+  - name: main
+    dir: .                     # this profile's data lives in the app root itself
+    enabled: true
+    # Campaigns for games outside this list are cached but never queued. The
+    # list order is the game priority: earlier games are watched first. Pick
+    # games in Settings > Games after the first campaign scan.
+    games: []
+    any_game: false            # true = queue every drops-enabled campaign and ignore the list (Settings > Games > Advanced)
+    queue:
+      priority_mode: top_down  # top_down | ending_soonest | closest_to_complete | shortest_first
+      auto_enqueue_new: true   # new campaigns for listed games join the bottom of the queue
+      # Within a game, watch channel-allowlisted campaigns before any-channel
+      # ones: an allowlisted streamer also credits the game's any-channel
+      # drops, so those only get their own watch when no allowlisted streamer
+      # of the game is live. Pinned drops (Queue view star) outrank everything.
+      prefer_channel_specific: true
+      wait_for_top: false      # false = fall through to the next available drop
+    claim:
+      skip_account_link_drops: true
+    kick:
+      enabled: false           # parallel Kick drops runtime for this profile (its own engine)
 `
 
 // dirName is the app root folder name: dotted on unix/macOS, undotted on
@@ -290,19 +304,28 @@ func (c *Config) profileBaseDir(p *ProfileConfig) (string, error) {
 	}
 }
 
-// ProfileEffective is a profile's overlay resolved onto the root config: the
-// fields Phase 1 runtimes and API/UI code consume per profile.
+// ProfileEffective is one profile's own settings, resolved: what the
+// runtimes and the API/UI consume per profile.
 type ProfileEffective struct {
 	Name        string
 	DisplayName string
 	Enabled     bool
 	Games       []string
 	AnyGame     bool
-	KickEnabled bool
-	WindowSlot  int
+	// Queue policy.
+	PriorityMode          string
+	AutoEnqueueNew        bool
+	PreferChannelSpecific bool
+	WaitForTop            bool
+	// Claim preference.
+	SkipAccountLink bool
+	KickEnabled     bool
+	WindowSlot      int
 }
 
-// Effective resolves the named profile's overlay onto the root config.
+// Effective resolves the named profile's settings. Profiles are complete
+// after load (materializeProfiles), so the root fallbacks here only cover a
+// ProfileConfig built in code and never loaded.
 func (c *Config) Effective(name string) (*ProfileEffective, error) {
 	idx := -1
 	for i := range c.Profiles {
@@ -315,30 +338,55 @@ func (c *Config) Effective(name string) (*ProfileEffective, error) {
 		return nil, fmt.Errorf("config: unknown profile %q", name)
 	}
 	p := &c.Profiles[idx]
-	games, anyGame := c.effectiveGames(p)
+	games := p.Games
+	if games == nil {
+		games = []string{}
+	}
+	mode := p.Queue.PriorityMode
+	if mode == "" {
+		mode = c.Queue.PriorityMode
+	}
 	return &ProfileEffective{
-		Name:        p.Name,
-		DisplayName: p.effectiveDisplayName(),
-		Enabled:     p.Enabled,
-		Games:       games,
-		AnyGame:     anyGame,
-		KickEnabled: c.effectiveKickEnabled(p),
-		WindowSlot:  c.effectiveWindowSlot(idx, p),
+		Name:                  p.Name,
+		DisplayName:           p.effectiveDisplayName(),
+		Enabled:               p.Enabled,
+		Games:                 games,
+		AnyGame:               boolOr(p.AnyGame, false),
+		PriorityMode:          mode,
+		AutoEnqueueNew:        boolOr(p.Queue.AutoEnqueueNew, c.Queue.AutoEnqueueNew),
+		PreferChannelSpecific: boolOr(p.Queue.PreferChannelSpecific, c.PreferChannelSpecific()),
+		WaitForTop:            boolOr(p.Queue.WaitForTop, c.Watcher.WaitForTop),
+		SkipAccountLink:       boolOr(p.Claim.SkipAccountLink, c.Claim.SkipAccountLink),
+		KickEnabled:           c.effectiveKickEnabled(p),
+		WindowSlot:            c.effectiveWindowSlot(idx, p),
 	}, nil
 }
 
-// effectiveGames resolves a profile's games filter: omitted (no games, no
-// any_game override) inherits the root filter wholesale; otherwise the
-// profile's own games/any_game apply.
-func (c *Config) effectiveGames(p *ProfileConfig) ([]string, bool) {
-	if len(p.Games) == 0 && p.AnyGame == nil {
-		return c.Games, c.AnyGame
+// NewProfile is a fresh profile with nothing picked yet: no games, any_game
+// off, and the starter template's queue, claim and kick choices. It is never
+// seeded from another profile or from the root, so what one person set up
+// stays theirs.
+func NewProfile(name, displayName string) ProfileConfig {
+	def, err := StarterDefaults()
+	if err != nil {
+		def = &Config{}
+		def.applyDefaults()
 	}
-	anyGame := false
-	if p.AnyGame != nil {
-		anyGame = *p.AnyGame
+	return ProfileConfig{
+		Name:        name,
+		DisplayName: displayName,
+		Enabled:     true,
+		Games:       []string{},
+		AnyGame:     ptr(false),
+		Queue: ProfileQueueConfig{
+			PriorityMode:          def.Queue.PriorityMode,
+			AutoEnqueueNew:        ptr(def.Queue.AutoEnqueueNew),
+			PreferChannelSpecific: ptr(def.PreferChannelSpecific()),
+			WaitForTop:            ptr(def.Watcher.WaitForTop),
+		},
+		Claim: ProfileClaimConfig{SkipAccountLink: ptr(def.Claim.SkipAccountLink)},
+		Kick:  ProfileKickConfig{Enabled: ptr(false)},
 	}
-	return p.Games, anyGame
 }
 
 // effectiveDisplayName defaults to the profile's Name.
@@ -349,8 +397,8 @@ func (p *ProfileConfig) effectiveDisplayName() string {
 	return p.Name
 }
 
-// effectiveKickEnabled resolves a profile's Kick override, defaulting to the
-// root kick.enabled.
+// effectiveKickEnabled resolves a profile's Kick choice, falling back to the
+// legacy root kick.enabled for a profile not yet materialized.
 func (c *Config) effectiveKickEnabled(p *ProfileConfig) bool {
 	if p.Kick.Enabled != nil {
 		return *p.Kick.Enabled
@@ -396,8 +444,9 @@ func applyWindowTileDefault(w *WindowConfig, col, row int) {
 	w.X, w.Y = windowTileDefault(col, row)
 }
 
-// ProfileRuntimeConfig builds the config the named profile's engines run with: a copy
-// of the root config with the profile's games overlay applied, and the
+// ProfileRuntimeConfig builds the config the named profile's engines run with: a
+// copy of the root config with the profile's own games, queue, claim and kick
+// choices written over the legacy root fields the engines read, and the
 // window-tiling default filled in for the Twitch window (col 0) when the
 // config left it unset.
 func (c *Config) ProfileRuntimeConfig(name string) (*Config, error) {
@@ -408,12 +457,18 @@ func (c *Config) ProfileRuntimeConfig(name string) (*Config, error) {
 	cp := *c
 	cp.Games = eff.Games
 	cp.AnyGame = eff.AnyGame
+	cp.Queue.PriorityMode = eff.PriorityMode
+	cp.Queue.AutoEnqueueNew = eff.AutoEnqueueNew
+	cp.Queue.PreferChannelSpecific = ptr(eff.PreferChannelSpecific)
+	cp.Watcher.WaitForTop = eff.WaitForTop
+	cp.Claim.SkipAccountLink = eff.SkipAccountLink
+	cp.Kick.Enabled = eff.KickEnabled
 	applyWindowTileDefault(&cp.Browser.Window, 0, eff.WindowSlot)
 	return &cp, nil
 }
 
 // ProfileKickRuntimeConfig builds the config the named profile's Kick engine
-// runs with: the profile's games overlay applied to a copy of the root
+// runs with: the profile's own settings applied to a copy of the root
 // config, then the same KickRuntimeConfig derivation used for the shared
 // (single-profile) case, with the window-tiling default filled in when the
 // config left it unset.

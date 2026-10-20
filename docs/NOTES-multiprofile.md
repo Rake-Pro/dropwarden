@@ -47,7 +47,11 @@ app (GTK3 on Linux).
   paths from the profile's dir; all existing `config.DBPath()`-style helpers
   become thin wrappers over the `main` profile during the transition.
 
-## Config shape (single root file, per-profile overlay)
+## Config shape (single root file; app settings global, the rest per profile)
+
+Revised 2026-10-20 (was: per-profile OVERLAY with inheritance). Every profile
+now OWNS its games, queue policy, Kick on/off and skip-account-link; the root
+sections are the app's and shared.
 
 ```yaml
 profiles:
@@ -55,23 +59,36 @@ profiles:
     dir: .                 # legacy-rooted; omitted => profiles/<name>/
     enabled: true
     display_name: Greg     # optional; UI label, defaults to name
-    games: [...]           # optional; omitted => inherit root games/any_game
+    games: [...]           # the profile's own list; [] = nothing picked yet
     any_game: false
+    queue:
+      priority_mode: top_down
+      auto_enqueue_new: true
+      prefer_channel_specific: true
+      wait_for_top: false
+    claim:
+      skip_account_link_drops: true
     kick:
-      enabled: true        # per-profile; root kick block stays the DEFAULTS
+      enabled: true        # whether Kick RUNS for this profile
     window_slot: 0         # optional; tiling index, defaults to list position
 ```
 
-- Root sections keep their current meaning but become DEFAULTS: `games`,
-  `queue`, `watcher`, `discovery`, `claim`, `browser`, `kick`, `auth`,
-  `logging`, `ui`, `theme` apply to every profile unless the profile overrides
-  the few overridable fields above. Deliberately NOT per-profile in v1:
-  player policy, watchdog cadence, claim strategy, theme (household-shared
-  box, shared posture).
-- Effective config per (profile, platform) = root -> profile overlay ->
-  `KickRuntimeConfig()` derivation (unchanged, including the 2026-08-30
-  inheritance fixes). Validation walks every enabled profile the same way
-  kick is validated today.
+- Global (root) sections: `theme`, `discovery`, `watcher` (cadence; not
+  `wait_for_top`), `claim` mechanics (sweep, selector, backoff; not
+  `skip_account_link_drops`), `browser`, `kick.browser`, `auth`, `logging`,
+  `ui`, `update`, `power`.
+- Legacy root `games`/`any_game`, `queue.*`, `watcher.wait_for_top`,
+  `claim.skip_account_link_drops`, `kick.enabled` are read ONCE by
+  `materializeProfiles` (applyDefaults) to complete any profile that lacks the
+  field, then written back per profile on the next save. After that a root
+  edit changes nothing for any profile. The starter template no longer carries
+  them at the root.
+- New profiles (`config.NewProfile`) start empty: no games, any_game off,
+  starter queue/claim defaults, Kick off. Never seeded from another profile.
+- Effective config per (profile, platform) = `ProfileRuntimeConfig` (the
+  profile's own values written over the legacy root fields of a copy, so the
+  engines keep reading `cfg.Games`, `cfg.Queue.*`, `cfg.Claim.SkipAccountLink`,
+  `cfg.Kick.Enabled`) -> `KickRuntimeConfig()` derivation (unchanged).
 - Window tiling: default geometry per engine = slot grid, x = 40 + col*660,
   y = 40 + row*420 (col = platform index, row = window_slot), overridable via
   the existing browser.window/kick.browser.window blocks per profile only if
@@ -155,11 +172,13 @@ engine/disco handles + startupKick flag per profile), plus `Order []string`.
 - Queue/History: current views unchanged, fed from the selected profile's
   block. Platform badges keep their existing multi-platform rule, evaluated
   per profile.
-- Settings: new "Profiles" pane (list profiles: display name, enabled toggle
-  with pendingRestart copy, per-profile Kick toggle, per-profile games
-  override with an "inherit shared list" switch, Add-profile row). The
-  existing Platforms pane keeps the SHARED claim/kick defaults. Everything
-  else stays shared.
+- Settings (revised 2026-10-20): two nav groups. PROFILE: Games (list, picker,
+  any game, queue order, auto-enqueue, fall-through, streamer-specific first)
+  and Platforms (skip account link, Kick on/off; the DOM claim fallback fields
+  stay global) edit the SELECTED profile, with a profile pill bar above them
+  when there is more than one. APP: Player, Browser, App, Updates, Profiles
+  (manage: display name, enabled, status, remove, add). One Save/Discard
+  covers cfg and every profile's edits.
 - Footer: one row per (profile, platform): "Greg - Twitch running". With one
   profile the label collapses to today's platform-only text.
 - Preview SAMPLE data: two profiles so the unified layout is designable
