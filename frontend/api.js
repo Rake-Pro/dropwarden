@@ -293,9 +293,13 @@ export const api = {
   // Game picker: the merged "drops right now" catalogue (fetched on demand;
   // refresh=true asks the server to bypass its ~10 min cache) and Twitch's
   // category search.
-  async gamesCatalog(refresh = false) {
+  async gamesCatalog(refresh = false, profile = '') {
     try {
-      const r = await fetch('/api/games/catalog' + (refresh ? '?refresh=1' : ''), { cache: 'no-store' });
+      const q = new URLSearchParams();
+      if (profile) q.set('profile', profile);
+      if (refresh) q.set('refresh', '1');
+      const qs = q.toString();
+      const r = await fetch('/api/games/catalog' + (qs ? '?' + qs : ''), { cache: 'no-store' });
       if (!r.ok) throw new Error('catalog ' + r.status);
       return await r.json();
     } catch (e) {

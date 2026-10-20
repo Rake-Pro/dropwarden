@@ -16,7 +16,9 @@ and are grouped by day and theme on `main`.
   profile that had no settings of its own takes the old shared values once,
   after which the root `games`, `queue`, `watcher.wait_for_top`,
   `claim.skip_account_link_drops` and `kick.enabled` keys are no longer read.
-  New profiles start with no games picked.
+  New profiles start with no games picked. A config so old that it had no
+  `games` key at all used to run on a built-in default list; it now starts
+  with no games picked too.
 - API: `GET/POST /api/config` carry app-wide fields only; `GET /api/profiles`
   and `POST /api/profiles/update` carry a profile's full settings block
   (`games`, `anyGame`, `priorityMode`, `autoEnqueueNew`,

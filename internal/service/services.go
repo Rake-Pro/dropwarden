@@ -806,19 +806,22 @@ func (s *QueueService) SetPriorityMode(profile, mode string) error {
 	if !domain.ValidPriorityMode(domain.PriorityMode(mode)) {
 		return fmt.Errorf("invalid priority mode %q", mode)
 	}
-	cfg := s.b.config()
-	if profile == "" && len(cfg.Profiles) > 0 {
-		profile = cfg.Profiles[0].Name
+	// Same copy, validate, save, commit path as every other settings write:
+	// the live config is never changed in place.
+	ss := NewSettingsService(s.b)
+	cp := ss.copyConfig()
+	if profile == "" && len(cp.Profiles) > 0 {
+		profile = cp.Profiles[0].Name
 	}
-	p := cfg.Profile(profile)
+	p := cp.Profile(profile)
 	if p == nil {
 		return fmt.Errorf("unknown profile %q", profile)
 	}
 	p.Queue.PriorityMode = mode
-	if err := config.Save(s.b.ConfigPath, cfg); err != nil {
+	if err := config.Save(s.b.ConfigPath, cp); err != nil {
 		return err
 	}
-	s.b.ReloadEngines()
+	ss.commit(cp)
 	return nil
 }
 

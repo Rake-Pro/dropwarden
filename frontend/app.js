@@ -546,7 +546,7 @@ function firstRunChecklist(state) {
 
 async function checklistAction(act, profile) {
   if (act === 'chrome') return openSettings('browser');
-  if (act === 'games') return openSettings('games');
+  if (act === 'games') { selectedProfile = profile; return openSettings('games'); }
   if (act === 'remote') return openRemoteLogin(profile, 'twitch');
   const a = api.engine('twitch', profile);
   try { await (act === 'login' ? a.login() : a.start()); }
@@ -631,7 +631,8 @@ const queueReason = (r) => {
   return hit ? hit[1] : s;
 };
 
-const gamesLink = () => ' <button class="linkbtn" type="button" data-choose-games>Choose games</button>';
+// gamesLink opens Settings > Games; with a profile name, for that profile.
+const gamesLink = (profile = '') => ` <button class="linkbtn" type="button" data-choose-games data-profile="${esc(profile)}">Choose games</button>`;
 
 function watchingBody(p, st) {
   const tick = st.current > 0
@@ -675,7 +676,7 @@ function cardBody(kind, p, st, key) {
     case 'busy': return msg(esc((BUSY_COPY[st.state] || (() => 'Working...'))(st)));
     default: {
       const r = reasonCopy(p.reason || st.reason);
-      return msg(esc(r.text) + (r.games ? gamesLink() : ''));
+      return msg(esc(r.text) + (r.games ? gamesLink((st && st.profile) || '') : ''));
     }
   }
 }
@@ -1412,7 +1413,7 @@ async function renderQueue() {
     const box = el(`<div class="card"><div class="empty">No ${esc(platLabel(queuePlatFilter))} drops right now. <button class="linkbtn" type="button">Show all</button></div></div>`);
     box.querySelector('button').addEventListener('click', () => { queuePlatFilter = 'all'; renderQueue(); });
     wrap.append(box);
-  } else if (!shown.length) wrap.append(el(`<div class="card"><div class="empty">No drops queued yet. Drops for your games appear here after the next check.${gamesLink()}</div></div>`));
+  } else if (!shown.length) wrap.append(el(`<div class="card"><div class="empty">No drops queued yet. Drops for your games appear here after the next check.${gamesLink(prof.name)}</div></div>`));
   const secs = queueSections(shown, games);
   secs.forEach((sec, i) => wrap.append(queueSectionEl(sec, i, secs, ctx)));
   v.append(wrap);
@@ -1591,7 +1592,13 @@ const profileRowsDirty = () => (profileEdits || []).some(p => {
   const o = (profileSnapshot || []).find(x => x.name === p.name);
   return !o || o.displayName !== p.displayName || o.enabled !== p.enabled;
 });
-const paneDirty = (k) => k === 'profiles' ? profileRowsDirty() : (PANE_FIELDS[k] || []).some(f => fieldChanged(f));
+// A profile pane's dot covers EVERY profile's edits of its fields, not only the
+// selected one, so switching the pill never hides a pending change.
+const profileFieldChanged = (f) => (profileEdits || []).some(p => {
+  const o = (profileSnapshot || []).find(x => x.name === p.name);
+  return !o || JSON.stringify(o[f]) !== JSON.stringify(p[f]);
+});
+const paneDirty = (k) => k === 'profiles' ? profileRowsDirty() : (PANE_FIELDS[k] || []).some(f => isProfileField(f) ? profileFieldChanged(f) : fieldChanged(f));
 // cfgDirty: the app-wide fields; isDirty adds every profile's edits, which
 // the one Save button saves together.
 const cfgDirty = () => !!cfg && !!cfgSnapshot && Object.values(PANE_FIELDS).flat().some(f => !isProfileField(f) && fieldChanged(f));
@@ -1620,8 +1627,10 @@ function openSettings(pane) {
 async function renderSettings() {
   cfg = await loadCfg();
   takeSnapshot();
-  // Unsaved profile edits are kept (not reloaded) when coming back.
-  if (!profilesDirty()) await loadProfileEdits();
+  // Unsaved profile edits are kept (not reloaded) when coming back. A failed
+  // load leaves profileEdits null: the App panes still render, the profile
+  // panes show a retry card (renderSettingsContent).
+  try { if (!profilesDirty()) await loadProfileEdits(); } catch (_) { profileEdits = null; }
   const state = await api.state();
   hostInfo = state.host || {};
   appVersion = state.version || (state.update && state.update.currentVersion) || '';
@@ -1796,7 +1805,16 @@ function renderSettingsContent() {
   if (!host) return;
   const pane = SETTINGS_PANES.find(n => n.key === settingsPane) || SETTINGS_PANES[0];
   const list = profileEdits || [];
-  if (list.length && !list.some(p => p.name === selectedProfile)) selectedProfile = list[0].name;
+  if ((pane.group === 'profile' || settingsPane === 'profiles') && !list.length) {
+    host.innerHTML = restartBannerHTML() + `<div class="card"><div class="empty">Couldn't load your profiles right now. <button class="linkbtn" type="button" data-retry>Try again</button></div></div>`;
+    host.querySelector('[data-retry]').addEventListener('click', async () => {
+      try { await loadProfileEdits(); } catch (_) { /* the card stays */ }
+      renderSettingsContent();
+    });
+    markDirty();
+    return;
+  }
+  if (!list.some(p => p.name === selectedProfile)) selectedProfile = list[0].name;
   const switcher = pane.group === 'profile' && list.length > 1 ? '<div class="caption">Settings for</div><div id="set-prof"></div>' : '';
   host.innerHTML = restartBannerHTML() + switcher +
     (settingsPane === 'profiles' ? '<div id="prof-host"><div class="empty">Loading profiles...</div></div>' : settingsPaneHTML()) +
@@ -2144,13 +2162,17 @@ function renderGamesCtl() {
 // or its Refresh link is pressed (the server caches it too), never on a timer.
 let catalogCache = null;
 let catalogLoading = null;
+let catalogProfile = '';
 
 function loadCatalog(refresh = false) {
+  // The catalog is a profile's cached campaigns: switching profiles drops it.
+  const prof = (curPE() || {}).name || '';
+  if (prof !== catalogProfile) { catalogProfile = prof; catalogCache = null; catalogLoading = null; }
   if (catalogCache && !refresh) return Promise.resolve(catalogCache);
   if (catalogLoading && !refresh) return catalogLoading;
   // A failure keeps the last good list, or stores a failed marker so the
   // picker shows "Could not load the list" instead of loading forever.
-  catalogLoading = api.gamesCatalog(refresh)
+  catalogLoading = api.gamesCatalog(refresh, prof)
     .then(c => { catalogCache = c || { games: [] }; return catalogCache; })
     .catch(() => { toast("Couldn't load the games with drops right now. Try Refresh in a moment.", 'err'); catalogCache = catalogCache || { games: [], failed: true }; return catalogCache; })
     .finally(() => { catalogLoading = null; });
@@ -2307,11 +2329,6 @@ async function loadProfileLive() {
   const live = {};
   (state.profiles || []).forEach(p => { live[p.name] = p.platforms || []; });
   profileLive = live;
-}
-
-function arraysEqual(a, b) {
-  a = a || []; b = b || [];
-  return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
 function platformRuntimeStatus(p) {
@@ -2724,9 +2741,13 @@ function initShell() {
   document.addEventListener('mousedown', e => {
     if ($('.app').classList.contains('rail-open') && !e.target.closest('.rail')) setRail(false);
   });
-  // Any "Choose games" link anywhere opens Settings > Games.
+  // Any "Choose games" link anywhere opens Settings > Games, for the profile
+  // the link names when it names one.
   document.addEventListener('click', e => {
-    if (e.target.closest('[data-choose-games]')) openSettings('games');
+    const b = e.target.closest('[data-choose-games]');
+    if (!b) return;
+    if (b.dataset.profile) selectedProfile = b.dataset.profile;
+    openSettings('games');
   });
 }
 

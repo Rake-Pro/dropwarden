@@ -149,7 +149,7 @@ engine/disco handles + startupKick flag per profile), plus `Order []string`.
   Later additions: `login`; `pause` (parks a live engine like the tray's
   Pause); skip takes an optional `{dropID}` body and refuses a stale one.
 - Queue actions gain `profile` in the body (`/api/queue/order|enabled|
-  priority`); priority mode stays a root (shared) setting in v1.
+  priority`); priority mode is per profile since 2026-10-20 (was root/shared in v1).
 - `POST /api/profiles` (add), `POST /api/profiles/enabled` (enable/disable)
   and `POST /api/profiles/remove` are all LIVE since 2026-08-31: the settings
   commit reconciles the running runtimes (see the lifecycle section below), so

@@ -22,8 +22,8 @@ type Config struct {
 	// goes for Queue.PriorityMode/AutoEnqueueNew/PreferChannelSpecific,
 	// Watcher.WaitForTop, Claim.SkipAccountLink and Kick.Enabled: engines read
 	// them from the per-profile copy ProfileRuntimeConfig builds.
-	Games     []string        `yaml:"games"`
-	AnyGame   bool            `yaml:"any_game"`
+	Games     []string        `yaml:"games,omitempty"`
+	AnyGame   bool            `yaml:"any_game,omitempty"`
 	Queue     QueueConfig     `yaml:"queue"`
 	Discovery DiscoveryConfig `yaml:"discovery"`
 	Watcher   WatcherConfig   `yaml:"watcher"`
@@ -125,7 +125,7 @@ func (c *Config) Profile(name string) *ProfileConfig {
 // Enabled here is the legacy root value, read once to seed profiles that
 // predate the per-profile field.
 type KickConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled bool `yaml:"enabled,omitempty"`
 
 	// Browser configures Kick's dedicated Chrome instance. A blank profile_dir
 	// resolves to <approot>/chrome-profile-kick so the Twitch and Kick
