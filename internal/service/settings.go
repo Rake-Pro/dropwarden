@@ -239,7 +239,6 @@ func toConfigDTO(c *config.Config) ConfigDTO {
 		ClaimButtonSelector: ptr(c.ClaimInventorySelector()),
 		ClaimButtonText:     ptr(c.Claim.InventoryButtonText),
 		AuthMode:            c.Auth.Mode,
-		StoredEnabled:       c.Auth.Stored.Enabled,
 		LogLevel:            c.Logging.Level,
 		CaptureGQLBodies:    c.Logging.CaptureGQLBodies,
 
@@ -283,7 +282,6 @@ func applyConfigDTO(c *config.Config, d ConfigDTO) {
 		}
 	}
 	c.Auth.Mode = d.AuthMode
-	c.Auth.Stored.Enabled = d.StoredEnabled
 	c.Logging.Level = d.LogLevel
 	c.Logging.CaptureGQLBodies = d.CaptureGQLBodies
 	// Fresh pointers, never the DTO's own: the copy must not alias the request.

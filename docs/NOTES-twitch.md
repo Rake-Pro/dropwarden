@@ -84,3 +84,14 @@ a JSON array of `{operationName,...}` objects.
   watching Twitch elsewhere, this app's progress will stall.
 - Post-raid progress can stall ~30 min until a refresh; the watcher forces a
   hard refresh after every raid transition to avoid this.
+
+## Chrome automation flag
+
+`--disable-blink-features=AutomationControlled` stays set (internal/browser/flags.go).
+Without it a Chrome launched with `--remote-debugging-port` reports
+`navigator.webdriver === true`, and Twitch's client-integrity check then
+refuses every integrity-gated query, the page's own included: the campaigns
+page goes empty and nothing can be claimed (live, 2026-09-26, v0.2.2). The
+flag is what lets the page work at all under DevTools control; it is not a
+way around a human-presence rule, and the stream still has to play for
+anything to credit.

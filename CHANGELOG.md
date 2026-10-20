@@ -20,6 +20,15 @@ and are grouped by day and theme on `main`.
 ### Changed
 - Container installs have no Updates pane at all (the image is the version);
   the version shows on Settings > App.
+- README leads with the purpose and a "what it does and does not do" list,
+  and says plainly that the platforms' terms restrict automation and that
+  enforcement has landed on accounts. "Safety posture (anti-bot)" is now
+  "How it behaves".
+
+### Removed
+- The stored-credentials sign-in mode (`auth.stored`, shipped off and
+  unsupported). `auth.mode` is `manual` only: you sign in yourself, once. A
+  config still naming `stored` is refused with a clear message.
 
 ## v0.3.3 - 2026-10-20
 

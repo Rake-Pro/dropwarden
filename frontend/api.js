@@ -62,7 +62,7 @@ const SAMPLE = {
   config: {
     theme: 'dark', volume: 0.01, forceLowestQuality: true,
     neverFocus: true, alwaysOnBottom: true, startMinimized: false, dimOpacity: 0.55, chromePath: '', muteAudio: false, claimStrategy: 'in_page',
-    allowGqlFallback: false, claimButtonSelector: 'button:has([data-a-target="tw-core-button-label-text"])', claimButtonText: 'Claim Now', authMode: 'manual', storedEnabled: false, logLevel: 'info', captureGqlBodies: false,
+    allowGqlFallback: false, claimButtonSelector: 'button:has([data-a-target="tw-core-button-label-text"])', claimButtonText: 'Claim Now', authMode: 'manual', logLevel: 'info', captureGqlBodies: false,
     updateEnabled: true, updateAutoInstall: true, updateShowChangelog: true, updateChannel: 'stable',
     updateFeedURL: 'https://cdn.rake.pro/releases/dropwarden/latest.json', updateIntervalHours: 24,
   },

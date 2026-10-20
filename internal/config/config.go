@@ -185,8 +185,8 @@ type WatcherConfig struct {
 	// 0 = default.
 	MaxSelectAttempts int `yaml:"max_select_attempts"`
 
-	// TimingJitter desynchronizes periodic watcher actions for bot-detection
-	// avoidance: a covered delay D becomes D * (1 + timing_jitter * (2*r-1)),
+	// TimingJitter keeps the watcher's cadence human (no exact fixed
+	// intervals): a covered delay D becomes D * (1 + timing_jitter * (2*r-1)),
 	// r in [0,1), i.e. +/- that fraction. 0 disables it (exact legacy
 	// intervals); valid range is [0, 0.5]. Unlike the other *Jitter fields
 	// above (each already covering one specific site), this one is a single
@@ -313,18 +313,13 @@ type PlayerConfig struct {
 	ReassertInterval   time.Duration `yaml:"reassert_interval"`
 }
 
+// AuthConfig: the only mode is manual. You sign in to Twitch (and Kick)
+// yourself, once, in the dropwarden-driven Chrome; the app never stores or
+// types a password. A stored-credentials mode existed (shipped off) and was
+// removed: typing credentials into the real login form is the behavior that
+// gets accounts locked.
 type AuthConfig struct {
-	Mode   string            `yaml:"mode"` // manual|stored
-	Stored StoredCredentials `yaml:"stored"`
-}
-
-// StoredCredentials is implemented but ships disabled: typing credentials into
-// the real login form is exactly the behavior that has triggered login blocks
-// and lockouts for other drop bots.
-type StoredCredentials struct {
-	Enabled      bool   `yaml:"enabled"`
-	Username     string `yaml:"username"`
-	PasswordFile string `yaml:"password_file"` // 0600 file; never inline
+	Mode string `yaml:"mode"` // manual
 }
 
 type LoggingConfig struct {

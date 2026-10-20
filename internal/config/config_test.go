@@ -52,7 +52,7 @@ func TestValidateRejectsBadPriorityAndStall(t *testing.T) {
 		{"bad theme", func(c *Config) { c.Theme = "neon" }},
 		{"bad keep_awake", func(c *Config) { c.Power.KeepAwake = "sometimes" }},
 		{"bad claim strategy", func(c *Config) { c.Claim.Strategy = "spam" }},
-		{"stored without enable", func(c *Config) { c.Auth.Mode = "stored"; c.Auth.Stored.Enabled = false }},
+		{"stored credentials mode removed", func(c *Config) { c.Auth.Mode = "stored" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

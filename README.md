@@ -1,18 +1,49 @@
 # dropwarden
 
-A tray-first desktop app that collects Twitch Drops by driving one real,
-visible, never-focused Chrome window. It watches actual streams in a genuine
-logged-in session, tracks drop progress, claims completed drops, and keeps a
-persistent report. It deliberately does not spoof watching via the API.
+dropwarden watches Twitch and Kick drop campaigns for you.
 
-Windows is the primary target; macOS is secondary. The GUI is built with Wails
-v3. Development happens directly from GoLand.
+Drop campaigns reward watch time, but the campaigns that matter are long,
+multi-item, spread across dozens of streamers in every time zone, and nobody
+can sit in front of them for the hours they ask. dropwarden does what you
+would do if you could: it keeps one real, logged-in Chrome window open on an
+eligible live stream, in the background, at low quality, tracks the minutes
+and the items, claims what completes, and keeps a record so you never lose
+your place. The stream plays for real. Streamers running a campaign get a
+viewer who is there for the drop, which is the deal they signed up for when
+they enabled drops. It deliberately does not spoof watching via the API.
 
-> Status: MVP. All Go logic and parsers are unit-tested and the app cross-
-> compiles for Windows. The Twitch-facing selectors, GraphQL field names, and
-> localStorage keys are marked "verify live" and must be confirmed on a real,
-> logged-in machine (see `TESTING.md` and `docs/NOTES-twitch.md`). This is
-> expected: none of that can be exercised from a headless CI box.
+## What it does and does not do
+
+Does
+
+- One account per person. Profiles are for people who share a machine
+  (a household, a couple), each with their own Twitch sign-in and their own
+  games, queue and history. Profiles are not a way to run several accounts
+  for one person.
+- Watches the real stream, visible and unminimized, in your own session.
+- Plays the stream for real, at low volume. You can silence Chrome at the
+  system level so you are not listening to it all day; the player itself
+  stays playing and unmuted, because a muted player stops earning drops.
+- Reads the same drop and campaign data the Twitch page shows you.
+- Claims with the same request the page sends when you press Claim.
+- Keeps the pace of a person: one action at a time, with natural timing.
+
+Does not
+
+- Hide the stream or stop it playing. The window stays visible and
+  unminimized; ads play like they would for anyone with the tab open.
+- Run more than one account per person, inflate viewer counts, or block ads.
+- Store or type your password. You sign in to Twitch yourself, once.
+- Spoof watch time through an API. If the stream is not playing, nothing
+  is credited.
+
+## Before you use it
+
+Twitch and Kick terms restrict automated access to their services, and this
+tool is automation. Enforcement to date has been against user accounts, not
+tools: accounts have been flagged or temporarily banned. Use it on an account
+you are prepared to lose that way. dropwarden is not affiliated with Twitch
+or Kick.
 
 ## How it works
 
@@ -91,10 +122,10 @@ top down, falling through past drops with no live channel:
   queue position, so an unpinned drop returns to where it was.
 - A profile with its own games list ranks games by that list's order.
 
-### Safety posture (anti-bot)
+### How it behaves
 
-- Manual login only by default. Stored credentials exist in config but ship
-  OFF and unsupported.
+- You sign in yourself, once, in the dropwarden Chrome window. The app never
+  stores or types a password.
 - The player runs at 1% volume, never muted: Chrome 145+ pauses a muted video
   when its tab is backgrounded, which would silently stop drop credit.
 - A single pacer rate-limits every synthetic action with jitter; there is no
@@ -313,6 +344,14 @@ backend behind it, it falls back to sample data for design review.
 - `search` needs 2-60 characters after trimming (400 otherwise), caches each query 10 minutes, and allows 2 upstream searches per second process-wide (429 `{error}` beyond; cache hits are never limited). Upstream failure is 502.
 - All three upstream calls are anonymous (no cookies, no login, no browser), 10 s timeout each, and run only when these routes are called; nothing polls them.
 - Twitch refuses anonymous stream pages past the first with "failed integrity check" (seen 2026-09-26); the walk keeps page 1 and stops, so `live` counts cover the top 30 drops-enabled streams in practice.
+
+## Development notes
+
+> Status: the Twitch-facing selectors, GraphQL field names, and localStorage
+> keys are marked "verify live" and must be confirmed on a real, logged-in
+> machine (see `TESTING.md` and `docs/NOTES-twitch.md`); none of that can be
+> exercised from a headless CI box. Windows is the primary target; macOS and
+> Linux are secondary. The GUI is built with Wails v3.
 
 ## GoLand
 

@@ -46,7 +46,7 @@ watcher:
   channel_blacklist_ttl: 45m
   offline_blacklist_ttl: 15m
   max_select_attempts: 6        # any-channel directory scrapes per pass; allowlists always checked
-  timing_jitter: 0.2            # +/- fraction on periodic watcher delays (bot-detection avoidance: desynchronizes periodic actions); 0 disables, max 0.5
+  timing_jitter: 0.2            # +/- fraction on periodic watcher delays so the cadence is never an exact fixed interval; 0 disables, max 0.5
 
 claim:
   # Claiming: the DropsPage_ClaimDropRewards GraphQL mutation (sent from the
@@ -115,14 +115,7 @@ kick:
       start_minimized: false
 
 auth:
-  mode: manual                 # manual | stored
-  # stored mode is implemented but unsupported and OFF by default; it types
-  # credentials into the real login form, which is exactly the behavior that
-  # has produced login blocks and 24h lockouts for other drop bots.
-  stored:
-    enabled: false
-    username: ""
-    password_file: ""          # 0600 file; never inline
+  mode: manual                 # the only mode: you sign in yourself, once, in the dropwarden Chrome window; no password is ever stored or typed
 
 logging:
   level: info                  # trace | debug | info | warn | error

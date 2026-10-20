@@ -150,8 +150,6 @@ func TestQueueAction(t *testing.T) {
 func TestDiagnosticsRedaction(t *testing.T) {
 	b := testBackend(t)
 	cfg := b.config()
-	cfg.Auth.Stored.Username = "secretuser42"
-	cfg.Auth.Stored.PasswordFile = "/very/private/pw.txt"
 	cfg.Browser.ExtraFlags = []string{"oauth:abcdefghijklmnop", "abcdefghijklmnopqrstuvwxyz0123456789"}
 	h := NewHTTPHandler(b)
 	rr := httptest.NewRecorder()
@@ -160,12 +158,12 @@ func TestDiagnosticsRedaction(t *testing.T) {
 	if rr.Code != 200 || !strings.HasPrefix(rr.Header().Get("Content-Type"), "text/plain") {
 		t.Fatalf("code=%d type=%s", rr.Code, rr.Header().Get("Content-Type"))
 	}
-	for _, leak := range []string{"secretuser42", "/very/private/pw.txt", "oauth:abcdefghijklmnop", "abcdefghijklmnopqrstuvwxyz0123456789"} {
+	for _, leak := range []string{"oauth:abcdefghijklmnop", "abcdefghijklmnopqrstuvwxyz0123456789"} {
 		if strings.Contains(body, leak) {
 			t.Errorf("diagnostics leaks %q", leak)
 		}
 	}
-	for _, want := range []string{"version:", "chrome: found=", "==== update ====", "==== config (redacted) ====", "username: \"\"", "==== profile main", "==== log (last 400 lines) ===="} {
+	for _, want := range []string{"version:", "chrome: found=", "==== update ====", "==== config (redacted) ====", "mode: manual", "==== profile main", "==== log (last 400 lines) ===="} {
 		if !strings.Contains(body, want) {
 			t.Errorf("diagnostics missing %q", want)
 		}
@@ -217,7 +215,7 @@ func TestConfigErrorField(t *testing.T) {
 
 func TestExportDiagnosticsZip(t *testing.T) {
 	b := testBackend(t)
-	b.config().Auth.Stored.Username = "secretuser42"
+	b.config().Browser.ExtraFlags = []string{"oauth:secretuser42token"}
 	pp, err := b.config().ProfilePaths("main")
 	if err != nil {
 		t.Fatal(err)
@@ -243,7 +241,7 @@ func TestExportDiagnosticsZip(t *testing.T) {
 			raw, _ := io.ReadAll(rc)
 			rc.Close()
 			if strings.Contains(string(raw), "secretuser42") {
-				t.Error("config.yaml leaks the username")
+				t.Error("config.yaml leaks the token-like flag value")
 			}
 		}
 	}

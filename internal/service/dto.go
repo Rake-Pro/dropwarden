@@ -129,7 +129,6 @@ type ConfigDTO struct {
 	ClaimButtonSelector *string `json:"claimButtonSelector,omitempty"`
 	ClaimButtonText     *string `json:"claimButtonText,omitempty"`
 	AuthMode            string  `json:"authMode"`
-	StoredEnabled       bool    `json:"storedEnabled"`
 	LogLevel            string  `json:"logLevel"`
 	CaptureGQLBodies    bool    `json:"captureGqlBodies"`
 	// Updates pane. Pointers so a partial POST that omits them (an older

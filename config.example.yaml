@@ -125,11 +125,7 @@ kick:
       start_minimized: false
 
 auth:
-  mode: manual                 # manual | stored (stored is unsupported and ships OFF)
-  stored:
-    enabled: false
-    username: ""
-    password_file: ""
+  mode: manual                 # the only mode: you sign in yourself, once; no password is ever stored or typed
 
 logging:
   level: info                  # trace | debug | info | warn | error
