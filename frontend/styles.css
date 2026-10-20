@@ -127,11 +127,14 @@ body {
    existing .stack (its gap spaces the sections); platform cards inside a
    section sit side by side in .now-row (auto-fit, minmax(320px, 1fr)). */
 .profile-section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.profile-head { display: flex; align-items: center; gap: 10px; }
+.profile-head { display: flex; align-items: center; gap: 10px; min-height: 20px; }
+/* Heading (20px) + the section gap (12px): what .side-offset skips so the
+   side column lines up with the first row of cards. */
+.side-offset { padding-top: 32px; }
 /* Two heading levels: section labels (11px uppercase, tertiary: .mini h3,
    .caption) and group titles (13.5px bold, primary: .profile-head .pname,
    .qsec-head h3, .checklist h3). */
-.profile-head .pname { margin: 0; font-size: 13.5px; font-weight: 700; }
+.profile-head .pname { margin: 0; font-size: 13.5px; font-weight: 700; line-height: 20px; }
 
 /* Profile selector pill bar (Queue/History/Settings headers, >1 profile). */
 .prof-pills { display: flex; gap: 6px; flex-wrap: wrap; margin: -6px 0 16px; }

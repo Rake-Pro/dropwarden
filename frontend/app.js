@@ -1048,7 +1048,9 @@ async function renderDashboard() {
   if (chk) v.append(chk);
 
   const left = dashboardCards(profiles, v);
-  const side = el(`<div class="stack">
+  // With profile headings on the left, the side column starts level with the
+  // first row of cards, not with the heading.
+  const side = el(`<div class="stack${multiProfile ? ' side-offset' : ''}">
     <div class="card mini"><h3>Up next</h3><div class="upnext">${upNextHTML(profiles, multiProfile)}</div></div>
     <div class="card mini"><h3>Totals</h3>${totalsHTML(profiles, multiProfile)}</div>
   </div>`);
