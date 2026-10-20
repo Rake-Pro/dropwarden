@@ -1862,9 +1862,13 @@ function wireSettingsFields(host) {
 }
 
 function wireUpdatesPane(host) {
+  // A container install (hostInfo.updates === false) renders the pane without
+  // the status box or the check button: nothing to wire.
+  const status = $('#upd-status', host);
+  if (!status) return;
   refreshUpdStatus(updState);
   renderUpdateProgress(updState || {});
-  $('#upd-status', host).addEventListener('click', e => {
+  status.addEventListener('click', e => {
     const b = e.target.closest('[data-upd]');
     if (!b) return;
     if (b.dataset.upd === 'notes') showUpdateModal(updState);
