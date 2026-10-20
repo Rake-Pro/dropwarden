@@ -42,9 +42,16 @@ and are grouped by day and theme on `main`.
 - The app is written "Dropwarden" in the UI: window title, tray, update and
   status messages, installer and macOS bundle names. Binary, image, path and
   config names stay lowercase.
+- Debugging page: the profile switcher is labelled and sits above the
+  profile's cards; Advanced (troubleshooting) moved to the bottom. Dashboard
+  cards wrap the platform and LIVE badges under a long channel name instead
+  of cutting the name short; the queue's status column fits "Waiting on
+  earlier drop".
+- Built with Go 1.27.3.
 
 ### Removed
-- docs/STATUS.md (operator handoff log).
+- docs/STATUS.md (operator handoff log) and BACKLOG.md (open work is GitHub
+  issues).
 - The stored-credentials sign-in mode (`auth.stored`, shipped off and
   unsupported). `auth.mode` is `manual` only: you sign in yourself, once. A
   config still naming `stored` loads as `manual`.

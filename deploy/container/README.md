@@ -12,7 +12,7 @@ Nothing here has run on real hardware yet: see the verify-live gates below.
 | Base | `ghcr.io/rake-pro/cluster-chrome:<tag>` | tini + Xvfb on `DISPLAY=:1`, uid 1000, home `/home/chrome`, `/usr/local/bin/chrome-gpu` (google-chrome-stable + GPU flags). No window manager, GTK or VNC. Tag in the Dockerfile is a placeholder to bump |
 | Service | `cmd/dropwarden-serve`, `-tags production`, `CGO_ENABLED=0` | Dashboard + JSON API over HTTP, `GET /healthz` |
 | CLI | `cmd/dropwarden-cli`, same flags | `doctor`, `report` etc. via `kubectl exec` |
-| Build | `golang:1.27.2-trixie` stage | Pure Go: sqlite is `modernc.org/sqlite` |
+| Build | `golang:1.27.3-trixie` stage | Pure Go: sqlite is `modernc.org/sqlite` |
 
 - Image name: `ghcr.io/rake-pro/dropwarden:vX.Y.Z`, built by
   `.github/workflows/release.yml` for every release (tag = git tag), `ci.yml` for every dev push (`dev-<sha>`, plus a floating `dev`), `container.yml` on dispatch to rebuild an existing tag.

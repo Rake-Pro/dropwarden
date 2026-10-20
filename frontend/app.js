@@ -724,7 +724,7 @@ function nowCardEl(p, multi, profile) {
     <div class="head">
       <div class="avatar" aria-hidden="true">${esc((showChannel ? st.channelLogin : platLabel(p.platform)).slice(0, 2).toUpperCase())}</div>
       <div class="who">
-        <div class="ch"><span class="nm">${esc(headName)}</span> ${multi && showChannel ? pfBadge(p.platform) : ''} ${kind === 'watching' ? '<span class="live">LIVE</span>' : ''}</div>
+        <div class="ch"><span class="nm">${esc(headName)}</span><span class="bd">${multi && showChannel ? pfBadge(p.platform) : ''}${kind === 'watching' ? '<span class="live">LIVE</span>' : ''}</span></div>
         <div class="game">${esc(st.game || '')}${p.up && !p.enabled ? ' - turned off in Settings, stopping' : ''}</div>
       </div>
       ${kindPill(kind, st)}
@@ -2566,11 +2566,11 @@ function debugShellEl() {
       <button class="btn ghost" id="dbg-refresh" type="button">Refresh</button>
     </div>
     <div id="dbg-export" class="save-msg" aria-live="polite"></div>
+    <div id="debug-panel"></div>
     <details class="adv"><summary>Advanced (troubleshooting)</summary><div class="card">
       ${row('Save raw Twitch responses', 'Writes the raw responses to the debug folder for bug reports. Leave off otherwise.', toggleHTML('captureGqlBodies', !!(cfg && cfg.captureGqlBodies), 'Save raw Twitch responses'))}
       ${row('Raw state', 'Everything on this page as JSON.', '<button class="btn btn-sm" id="dbg-copy-json" type="button">Copy</button>')}
     </div></details>
-    <div id="debug-panel"></div>
   </div>`);
   shell.querySelector('#dbg-diag').addEventListener('click', e => copyDiagnostics(e.currentTarget));
   shell.querySelector('#dbg-export-btn').addEventListener('click', e => exportDiagnostics(e.currentTarget));
@@ -2641,7 +2641,7 @@ async function renderDebugPanel() {
   const logText = (d.logTail || []).slice(-120).join('\n') || 'no log lines yet';
   let pills = '';
   if (names.length > 1) {
-    pills = `<div class="prof-pills" role="group" aria-label="Profile">` + names.map(n => {
+    pills = `<div class="caption">Profile</div><div class="prof-pills dbg-prof" role="group" aria-label="Profile">` + names.map(n => {
       const dn = ((d.profiles || {})[n] || {}).displayName || n;
       return `<button type="button" class="prof-pill ${n === name ? 'active' : ''}" aria-pressed="${n === name}" data-dbgprof="${esc(n)}">${esc(dn)}</button>`;
     }).join('') + `</div>`;

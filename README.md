@@ -353,12 +353,6 @@ backend behind it, it falls back to sample data for design review.
 > headless CI. Windows is the primary target; macOS and
 > Linux are secondary. The GUI is built with Wails v3.
 
-## GoLand
-
-Run configurations are committed under `.run/`: `cli doctor`, `cli login`,
-`cli discover`, `cli watch`, `cli report`, and `gui app`. Open the project and
-pick one from the run dropdown.
-
 ## Development
 
 ```

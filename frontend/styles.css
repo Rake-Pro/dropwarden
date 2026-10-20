@@ -111,9 +111,11 @@ body {
 .now .head > .pill { margin-left: auto; }
 .avatar { width: 46px; height: 46px; border-radius: var(--radius-card); background: linear-gradient(140deg, var(--bg-control), var(--bg-elev)); display: grid; place-items: center; font-size: 17px; font-weight: 700; color: var(--text-secondary); border: 1px solid var(--hairline); }
 .now .who { flex: 1; min-width: 0; }
-.now .who .ch { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.now .who .ch { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .now .who .ch .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 48px; }
 .now .who .ch .pf, .now .who .ch .live { flex: none; }
+.now .who .ch .bd { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+.now .who .ch .bd:empty { display: none; }
 .now .who .ch .live { font-size: 9.5px; font-weight: 800; letter-spacing: .06em; color: #fff; background: var(--live); padding: 2px 6px; border-radius: var(--radius-xs); }
 /* Platform badges (brand colors; shown wherever more than one platform is on). */
 .pf { font-size: 9px; font-weight: 800; letter-spacing: .07em; padding: 1.5px 5px; border-radius: var(--radius-xs); vertical-align: 1px; white-space: nowrap; }
@@ -182,7 +184,7 @@ body {
    Only the title track flexes, and it is minmax(0, 1fr): a bare 1fr has a
    min-content minimum, so a long drop name would push the status pill off the
    right edge instead of truncating. */
-.qrow { display: grid; grid-template-columns: 22px minmax(0, 1fr) 110px 240px 150px 40px; grid-template-areas: "grip name mini act stat sw"; align-items: center; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--hairline-card); }
+.qrow { display: grid; grid-template-columns: 22px minmax(0, 1fr) 110px 240px 215px 40px; grid-template-areas: "grip name mini act stat sw"; align-items: center; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--hairline-card); }
 .qrow .grip { grid-area: grip; } .qrow .qname { grid-area: name; } .qrow .qmini { grid-area: mini; } .qrow .qact { grid-area: act; } .qrow .qstat { grid-area: stat; } .qrow .switch { grid-area: sw; }
 .qrow.pinned { box-shadow: inset 3px 0 0 var(--accent); }
 
@@ -414,6 +416,7 @@ details.adv > .card { margin-top: 8px; }
 
 /* Debugging. */
 .dbg-main { margin-top: 0; }
+.dbg-prof { margin: 0 0 16px; }
 .dbg-card { margin-bottom: 14px; }
 .kv .v.path { font-size: 11px; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .clm-list { margin: 0 calc(-1 * var(--pad-card)) calc(-1 * var(--pad-card)); }
