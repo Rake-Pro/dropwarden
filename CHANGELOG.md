@@ -6,6 +6,9 @@ and are grouped by day and theme on `main`.
 
 ## Unreleased
 
+### Changed
+- Container image builds on cluster-chrome 1.0.2 (Go 1.27.3 rebuild of the base and the dri-plugin).
+
 ## v1.0.0 - 2026-10-20
 
 ### Added
