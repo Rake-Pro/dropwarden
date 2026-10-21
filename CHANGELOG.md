@@ -6,6 +6,8 @@ and are grouped by day and theme on `main`.
 
 ## Unreleased
 
+## v1.0.0 - 2026-10-20
+
 ### Added
 - MIT license (`LICENSE`).
 - Update channels (Settings > Updates > Release channel): Stable follows tagged
