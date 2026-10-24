@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/go-rod/rod v0.116.2
 	github.com/rs/zerolog v1.35.1
-	github.com/wailsapp/wails/v3 v3.0.0-beta.28
+	github.com/wailsapp/wails/v3 v3.0.0-beta.32
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/net v0.61.0
 	golang.org/x/sys v0.49.0
