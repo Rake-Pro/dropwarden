@@ -771,6 +771,12 @@ func (a *App) startKickRuntime(ctx context.Context, pr *ProfileRuntime, stagger 
 	}
 	ctrl := kick.NewController(sess)
 	pages := kick.NewPages(ctrl)
+	// Shape diagnostics for the unofficial endpoints: a 200 that parses to
+	// nothing is logged with a body sample so the parser can be fixed from
+	// evidence (package-level; the last profile's logger serves all).
+	kick.ShapeLogger = func(endpoint, sample string) {
+		klog.Warn().Str("endpoint", endpoint).Str("sample", sample).Msg("kick: endpoint answered but nothing parsed; shape differs from the parser")
+	}
 	disco := kick.NewDiscoverer(pr.Store, pages, kcfg, klog)
 	disco.DebugDir = a.profileDebugDir(pr.Name)
 	ecfg := kcfg

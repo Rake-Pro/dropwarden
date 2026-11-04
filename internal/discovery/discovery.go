@@ -341,9 +341,18 @@ func (d *Discoverer) fetchDetails(ctx context.Context, cfg *config.Config, liste
 	if limit <= 0 {
 		limit = 8
 	}
-	// Candidates: matching game, active, and not already carrying drops.
+	ttl := cfg.Discovery.DetailRefresh
+	if ttl <= 0 {
+		ttl = 6 * time.Hour
+	}
+	// Candidates: matching game, active, and not already carrying fresh
+	// details. Details go stale after detail_refresh: publishers add or swap
+	// drops inside a running campaign (live 2026-11-03: the MW4 launch
+	// campaign replaced two of its three rewards and the new drop IDs never
+	// reached the store), and a row stamped by an older build has no
+	// DetailsFetched at all, so it is re-read once to heal.
 	var targets []domain.Campaign
-	matched, complete := 0, 0
+	matched, complete, stale := 0, 0, 0
 	for _, c := range listed {
 		if c.Status == domain.StatusExpired || !MatchesGameFilter(cfg, c) {
 			continue
@@ -362,8 +371,11 @@ func (d *Discoverer) fetchDetails(ctx context.Context, cfg *config.Config, liste
 		if existing, err := d.store.GetCampaign(c.ID); err == nil && existing != nil &&
 			len(existing.Drops) > 0 && existing.GameSlug != "" && existing.AccountConnected != nil &&
 			d.claimStateSynced(existing) {
-			complete++
-			continue
+			if !existing.DetailsFetched.IsZero() && time.Since(existing.DetailsFetched) < ttl {
+				complete++
+				continue
+			}
+			stale++
 		}
 		targets = append(targets, c)
 		if len(targets) >= limit {
@@ -379,6 +391,10 @@ func (d *Discoverer) fetchDetails(ctx context.Context, cfg *config.Config, liste
 				Msg("discovery: no active campaigns matched the game filter; nothing to detail-fetch")
 		}
 		return 0, 0, nil
+	}
+	if stale > 0 {
+		d.logger.Info().Int("stale", stale).Dur("detail_refresh", ttl).
+			Msg("discovery: re-reading details of campaigns past detail_refresh")
 	}
 	n, pn, err := d.detailCampaigns(ctx, cfg, targets)
 	return n, pn, err
@@ -410,6 +426,7 @@ func (d *Discoverer) detailCampaigns(ctx context.Context, cfg *config.Config, ta
 		if full.ID == "" {
 			continue
 		}
+		full.DetailsFetched = time.Now()
 		if err := d.store.UpsertCampaign(full); err != nil {
 			d.logger.Warn().Err(err).Str("campaign", c.ID).Msg("discovery: store details failed")
 			continue

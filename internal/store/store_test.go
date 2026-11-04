@@ -52,12 +52,13 @@ func TestListUpsertPreservesDetails(t *testing.T) {
 	s := newTestStore(t)
 	// Detailed campaign: has slug, ACL, drops.
 	connected := true
+	fetched := time.Now().Add(-time.Hour).Truncate(time.Millisecond)
 	detailed := domain.Campaign{
 		ID: "c1", Name: "NBPL", GameName: "NARAKA", GameSlug: "naraka",
 		Status: domain.StatusActive, AccountLinkURL: "https://link",
-		AccountConnected: &connected,
-		AllowedChannels:  []domain.Channel{{Login: "chan1"}, {Login: "chan2"}},
-		Drops:            []domain.Drop{{ID: "d1", CampaignID: "c1", RequiredMinutes: 60}},
+		AccountConnected: &connected, DetailsFetched: fetched,
+		AllowedChannels: []domain.Channel{{Login: "chan1"}, {Login: "chan2"}},
+		Drops:           []domain.Drop{{ID: "d1", CampaignID: "c1", RequiredMinutes: 60}},
 	}
 	if err := s.UpsertCampaign(detailed); err != nil {
 		t.Fatal(err)
@@ -85,6 +86,19 @@ func TestListUpsertPreservesDetails(t *testing.T) {
 	}
 	if got.AccountConnected == nil || !*got.AccountConnected {
 		t.Fatalf("account_connected clobbered by nil upsert: %+v", got.AccountConnected)
+	}
+	if !got.DetailsFetched.Equal(fetched) {
+		t.Fatalf("details_fetched clobbered by list upsert: %v want %v", got.DetailsFetched, fetched)
+	}
+	// A fresh details read moves the stamp.
+	later := fetched.Add(30 * time.Minute)
+	detailed.DetailsFetched = later
+	if err := s.UpsertCampaign(detailed); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetCampaign("c1")
+	if !got.DetailsFetched.Equal(later) {
+		t.Fatalf("details_fetched not updated by detailed upsert: %v want %v", got.DetailsFetched, later)
 	}
 	// A list row that DOES carry the signal must win over the stored value.
 	unlinked := false

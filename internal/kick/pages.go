@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/domain"
@@ -94,20 +95,40 @@ func (p *Pages) LiveChannels(context.Context, []string) ([]domain.Channel, error
 	return nil, errors.ErrUnsupported
 }
 
-// DirectoryChannels returns live channel logins for a category slug.
+// DirectoryChannels returns live channel logins for a category slug, most
+// viewers first. It reads the live-streams JSON the category page itself
+// loads, from page context on a kick.com page so the session's cookies and
+// Cloudflare clearance apply; the anchor scrape of the category page is only
+// the fallback when that endpoint is unavailable. The scrape alone returned
+// nothing for weeks: its URL had become a redirect to a 404 (live 2026-11-04).
 func (p *Pages) DirectoryChannels(ctx context.Context, gameSlug string) ([]string, error) {
 	if gameSlug == "" {
 		return nil, fmt.Errorf("kick: empty category slug")
 	}
-	if err := p.ctrl.Session().Navigate(ctx, fmt.Sprintf(URLDirectoryTmpl, gameSlug)); err != nil {
-		return nil, fmt.Errorf("kick: open category %s: %w", gameSlug, err)
+	sess := p.ctrl.Session()
+	if cur, err := sess.CurrentURL(ctx); err != nil || !strings.HasPrefix(cur, URLBase) {
+		if err := sess.Navigate(ctx, URLDrops); err != nil {
+			return nil, fmt.Errorf("kick: open site for category %s: %w", gameSlug, err)
+		}
+		p.settle(ctx)
+	}
+	var raw string
+	if err := sess.Eval(ctx, jsFetchLivestreams(gameSlug), &raw); err != nil {
+		return nil, fmt.Errorf("kick: fetch livestreams %s: %w", gameSlug, err)
+	}
+	logins, err := ParseLivestreamsResponse(raw)
+	if err == nil {
+		return logins, nil
+	}
+	if err := sess.Navigate(ctx, fmt.Sprintf(URLDirectoryTmpl, gameSlug)); err != nil {
+		return nil, fmt.Errorf("kick: open category %s after %v: %w", gameSlug, err, err)
 	}
 	p.settle(ctx)
-	var logins []string
-	if err := p.ctrl.Session().Eval(ctx, jsDirectoryChannels, &logins); err != nil {
+	var scraped []string
+	if err := sess.Eval(ctx, jsDirectoryChannels, &scraped); err != nil {
 		return nil, fmt.Errorf("kick: scrape category: %w", err)
 	}
-	return logins, nil
+	return scraped, nil
 }
 
 // FetchCurrentDrop has no Kick equivalent (no known per-session drop API).
@@ -115,12 +136,34 @@ func (p *Pages) FetchCurrentDrop(ctx context.Context) (*domain.Progress, error) 
 	return nil, nil
 }
 
-// FetchInventoryProgress has no known Kick endpoint yet; progress arrives via
-// inventory-page parsing once its DOM shape is confirmed live. It returns
-// errors.ErrUnsupported (not an empty list) so claim verification never reads
-// "no rows" as evidence.
+// FetchInventoryProgress reads the account's drops progress from the
+// inventory endpoint the drops page renders, from page context on a kick.com
+// page. Before this the engine had no Kick progress source at all, so every
+// watch ended in the 5-minute no-credit give-up while Kick itself was
+// crediting (live 2026-11-04: badge showed 6 minutes after one session).
 func (p *Pages) FetchInventoryProgress(ctx context.Context) ([]domain.Progress, error) {
-	return nil, errors.ErrUnsupported
+	sess := p.ctrl.Session()
+	if cur, err := sess.CurrentURL(ctx); err != nil || !strings.HasPrefix(cur, URLBase) {
+		if err := sess.Navigate(ctx, URLDrops); err != nil {
+			return nil, fmt.Errorf("kick: open site for progress: %w", err)
+		}
+		p.settle(ctx)
+	}
+	var raw string
+	if err := sess.Eval(ctx, jsFetchProgress, &raw); err != nil {
+		return nil, fmt.Errorf("kick: fetch progress: %w", err)
+	}
+	rows, err := ParseProgressResponse(raw, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 && len(raw) > 40 {
+		// Nothing parsed from a real body: either the inventory is empty or
+		// the shape differs from the reward card's fields. Keep a sample in
+		// the log so the shape can be fixed from evidence.
+		p.logShape("progress", raw)
+	}
+	return rows, nil
 }
 
 // CampaignProgress has no known Kick endpoint (no campaign details query).
@@ -132,6 +175,19 @@ func (p *Pages) CampaignProgress(context.Context, string, string) ([]domain.Prog
 // on-screen progress widget is the future source (verify live).
 func (p *Pages) DrainProgress(ctx context.Context) ([]domain.Progress, error) {
 	return nil, nil
+}
+
+// ShapeLogger receives (endpoint, raw sample) when an endpoint answered 200
+// but nothing parsed; the serve/app wiring points it at the logger. Nil = off.
+var ShapeLogger func(endpoint, sample string)
+
+func (p *Pages) logShape(endpoint, raw string) {
+	if ShapeLogger != nil {
+		if len(raw) > 600 {
+			raw = raw[:600]
+		}
+		ShapeLogger(endpoint, raw)
+	}
 }
 
 func (p *Pages) settle(ctx context.Context) {
@@ -149,12 +205,6 @@ func (p *Pages) OpenInventory(ctx context.Context) error {
 	}
 	p.settle(ctx)
 	return ctx.Err()
-}
-
-// ClaimDrop is unsupported on Kick (no known claim API); the engine falls back
-// to the inventory page click.
-func (p *Pages) ClaimDrop(context.Context, string) (string, string, error) {
-	return "", "", errors.ErrUnsupported
 }
 
 // InventoryButtons has no Kick implementation yet.

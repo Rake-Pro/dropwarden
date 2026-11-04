@@ -40,19 +40,30 @@ type kcChannel struct {
 }
 
 type kcReward struct {
-	ID              flexID `json:"id"`
-	Name            string `json:"name"`
-	Title           string `json:"title"`
+	ID    flexID `json:"id"`
+	Name  string `json:"name"`
+	Title string `json:"title"`
+	// RequiredUnits is what the live endpoint sends (minutes under the
+	// "Watch to redeem" rule, see catalog/testdata/kick_campaigns.json); the
+	// three names below were guesses from before a real capture existed.
+	RequiredUnits   int    `json:"required_units"`
 	RequiredMinutes int    `json:"required_minutes"`
 	WatchMinutes    int    `json:"watch_time_minutes"`
 	MinutesRequired int    `json:"minutes_required"`
 	ImageURL        string `json:"image_url"`
 }
 
+type kcRule struct {
+	ID   flexID `json:"id"`
+	Name string `json:"name"`
+}
+
 type kcCampaign struct {
 	ID       flexID      `json:"id"`
 	Name     string      `json:"name"`
 	Title    string      `json:"title"`
+	Status   string      `json:"status"`
+	Rule     *kcRule     `json:"rule"`
 	Category *kcCategory `json:"category"`
 	StartsAt string      `json:"starts_at"`
 	StartAt  string      `json:"start_time"`
@@ -92,7 +103,7 @@ func ParseCampaigns(body []byte) ([]domain.Campaign, error) {
 			Name:     firstNonEmpty(kc.Title, kc.Name),
 			StartAt:  parseTime(firstNonEmpty(kc.StartsAt, kc.StartAt)),
 			EndAt:    parseTime(firstNonEmpty(kc.EndsAt, kc.EndAt)),
-			Status:   domain.StatusActive, // list endpoint presumed active-only; window checks gate eligibility
+			Status:   kickStatus(kc.Status),
 		}
 		if kc.Category != nil {
 			c.GameID = kc.Category.ID.String()
@@ -110,7 +121,16 @@ func ParseCampaigns(body []byte) ([]domain.Campaign, error) {
 			rewards = kc.Drops
 		}
 		for _, r := range rewards {
-			mins := r.RequiredMinutes
+			// Units are watch minutes only under a watch rule; any other rule
+			// (subs, gifts) leaves the drop at zero minutes so the queue skips
+			// it as event-based, the same as Twitch's zero-minute drops.
+			mins := 0
+			if watchRule(kc.Rule) {
+				mins = r.RequiredUnits
+			}
+			if mins == 0 {
+				mins = r.RequiredMinutes
+			}
 			if mins == 0 {
 				mins = r.WatchMinutes
 			}
@@ -128,6 +148,24 @@ func ParseCampaigns(body []byte) ([]domain.Campaign, error) {
 		out = append(out, c)
 	}
 	return out, nil
+}
+
+// kickStatus maps the list endpoint's status string; unknown values are
+// treated as active and left to the campaign window checks, as before.
+func kickStatus(s string) domain.CampaignStatus {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "expired", "ended", "completed":
+		return domain.StatusExpired
+	case "upcoming", "scheduled":
+		return domain.StatusUpcoming
+	}
+	return domain.StatusActive
+}
+
+// watchRule reports whether a campaign's rule is time-based. A missing rule
+// is treated as watch-based so a payload without the field keeps working.
+func watchRule(r *kcRule) bool {
+	return r == nil || strings.Contains(strings.ToLower(r.Name), "watch")
 }
 
 func firstNonEmpty(vals ...string) string {

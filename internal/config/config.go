@@ -151,6 +151,10 @@ type DiscoveryConfig struct {
 	Interval        time.Duration `yaml:"interval"`
 	Jitter          time.Duration `yaml:"jitter"`
 	DetailsPerCycle int           `yaml:"details_per_cycle"`
+	// DetailRefresh is how long a campaign's stored details stay fresh. A
+	// matching campaign detailed longer ago than this is re-read, so drops
+	// the publisher adds or swaps mid-campaign reach the queue. 0 = 6h.
+	DetailRefresh   time.Duration `yaml:"detail_refresh"`
 	DirectoryPoll   time.Duration `yaml:"directory_poll"`
 	DirectoryJitter time.Duration `yaml:"directory_jitter"`
 }

@@ -6,6 +6,31 @@ and are grouped by day and theme on `main`.
 
 ## Unreleased
 
+### Fixed
+- Twitch: a campaign's details are re-read after `discovery.detail_refresh`
+  (default 6h) instead of once per campaign, so drops a publisher adds or
+  swaps mid-campaign reach the queue. The MW4 launch campaign replaced two of
+  its three rewards and the new drops were never seen. Rows from older builds
+  carry no fetch time and are re-read once on the next pass.
+- Kick: drops never queued because the parser read minute fields the live
+  endpoint does not send; `required_units` under the "Watch to redeem" rule is
+  the watch time. Campaign `status` is now mapped instead of assumed active.
+- Kick: any-channel campaigns found no live channel because the category
+  scrape used `kick.com/categories/<slug>`, now a redirect to a 404 page. Live
+  channels come from the category's live-streams listing (most viewers
+  first); the scrape of `kick.com/category/<slug>` is the fallback.
+- Kick: watch progress is read from the account's drops inventory endpoint
+  (the one the drops page renders), so a Kick watch no longer ends in the
+  5-minute "not crediting" give-up while Kick is crediting. The fetch sends
+  the session cookie as the bearer token Kick's client uses; a non-200 is a
+  poll error, never a logged-out verdict.
+- Kick: finished drops are claimed through Kick's claim call (reward and
+  campaign ids, same bearer token) and confirmed against the inventory; the
+  claim sweep picks up rewards that finished in the background. A refused
+  claim still parks the drop for a manual claim on Kick.
+- UI: the "isn't counting progress" queue reason names the drop's platform
+  instead of always saying Twitch.
+
 ### Changed
 - Container image builds on cluster-chrome 1.0.2 (Go 1.27.3 rebuild of the base and the dri-plugin).
 
