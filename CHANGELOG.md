@@ -6,6 +6,16 @@ and are grouped by day and theme on `main`.
 
 ## Unreleased
 
+### Fixed
+- Twitch: a campaign's details are re-read after `discovery.detail_refresh`
+  (default 6h) instead of once per campaign, so drops a publisher adds or
+  swaps mid-campaign reach the queue. The MW4 launch campaign replaced two of
+  its three rewards and the new drops were never seen. Rows from older builds
+  carry no fetch time and are re-read once on the next pass.
+- Kick: drops never queued because the parser read minute fields the live
+  endpoint does not send; `required_units` under the "Watch to redeem" rule is
+  the watch time. Campaign `status` is now mapped instead of assumed active.
+
 ### Changed
 - Container image builds on cluster-chrome 1.0.2 (Go 1.27.3 rebuild of the base and the dri-plugin).
 
