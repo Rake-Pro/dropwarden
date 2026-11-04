@@ -2,6 +2,7 @@ package kick
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,9 +44,15 @@ func TestParseProgress(t *testing.T) {
 }
 
 func TestParseProgressResponseAuth(t *testing.T) {
-	_, err := ParseProgressResponse(`{"status":403,"body":"{\"data\":{\"type\":\"Forbidden\"}}"}`, time.Now())
-	if !errors.Is(err, domain.ErrLoggedOut) {
-		t.Fatalf("403 must read as logged out, got %v", err)
+	_, err := ParseProgressResponse(`{"status":403,"body":"{\"data\":{\"type\":\"Forbidden\"}}","token":false}`, time.Now())
+	if err == nil || errors.Is(err, domain.ErrLoggedOut) {
+		t.Fatalf("403 must be a plain poll error, never a logged-out verdict (it paused a logged-in engine), got %v", err)
+	}
+	if !strings.Contains(err.Error(), "cookie present: false") {
+		t.Fatalf("error must say whether the session cookie was there: %v", err)
+	}
+	if !strings.Contains(jsFetchProgress, "Bearer") || !strings.Contains(jsFetchProgress, "session_token") {
+		t.Fatal("progress fetch must send the session_token cookie as a bearer token")
 	}
 	rows, err := ParseProgressResponse(`{"status":200,"body":"[]"}`, time.Now())
 	if err != nil || len(rows) != 0 {

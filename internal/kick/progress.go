@@ -18,11 +18,20 @@ import (
 const progressAPI = "https://web.kick.com/api/v1/drops/progress"
 
 // jsFetchProgress is the page-context fetch of progressAPI in the same
-// {status, body} wrapper as jsFetchCampaigns.
+// {status, body} wrapper as jsFetchCampaigns. Unlike the anonymous campaign
+// list, the inventory is per account: Kick's own client sends the
+// session_token cookie as a bearer token plus x-app-platform, and without
+// them the endpoint answers 403 even for a logged-in session (live
+// 2026-11-04). The cookie is readable from the page, which is how the site
+// itself gets it.
 const jsFetchProgress = `(async () => {
   try {
-    const r = await fetch('` + progressAPI + `', { credentials: 'include', headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(20000) });
-    return JSON.stringify({ status: r.status, body: await r.text() });
+    const m = document.cookie.match(/(?:^|; )session_token=([^;]*)/);
+    const tok = m ? decodeURIComponent(m[1]) : '';
+    const headers = { 'Accept': 'application/json', 'x-app-platform': 'web' };
+    if (tok) headers['Authorization'] = 'Bearer ' + tok;
+    const r = await fetch('` + progressAPI + `', { credentials: 'include', headers, signal: AbortSignal.timeout(20000) });
+    return JSON.stringify({ status: r.status, body: await r.text(), token: !!tok });
   } catch (e) { return JSON.stringify({ status: 0, body: String(e) }); }
 })()`
 
@@ -52,23 +61,22 @@ type kpCampaign struct {
 	} `json:"campaign"`
 }
 
-// ParseProgressResponse unwraps the {status, body} fetch wrapper. A 401/403
-// is reported as domain.ErrLoggedOut so the engine treats it as a session
-// problem, not as "no progress".
+// ParseProgressResponse unwraps the {status, body, token} fetch wrapper. A
+// non-200 is a plain error, never domain.ErrLoggedOut: the login probe owns
+// that verdict, and a 403 here once paused a logged-in Kick engine (live
+// 2026-11-04, the fetch lacked the bearer token). The engine counts the
+// failed poll and keeps watching.
 func ParseProgressResponse(raw string, now time.Time) ([]domain.Progress, error) {
 	var wrapped struct {
 		Status int    `json:"status"`
 		Body   string `json:"body"`
+		Token  bool   `json:"token"`
 	}
 	if err := json.Unmarshal([]byte(raw), &wrapped); err != nil {
 		return nil, fmt.Errorf("kick: decode progress wrapper (%.120s): %w", raw, err)
 	}
-	switch wrapped.Status {
-	case 200:
-	case 401, 403:
-		return nil, fmt.Errorf("kick: progress endpoint returned %d: %w", wrapped.Status, domain.ErrLoggedOut)
-	default:
-		return nil, fmt.Errorf("kick: progress endpoint returned %d (%.120s)", wrapped.Status, wrapped.Body)
+	if wrapped.Status != 200 {
+		return nil, fmt.Errorf("kick: progress endpoint returned %d (session_token cookie present: %v) (%.120s)", wrapped.Status, wrapped.Token, wrapped.Body)
 	}
 	return ParseProgress([]byte(wrapped.Body), now)
 }

@@ -21,8 +21,9 @@ and are grouped by day and theme on `main`.
   first); the scrape of `kick.com/category/<slug>` is the fallback.
 - Kick: watch progress is read from the account's drops inventory endpoint
   (the one the drops page renders), so a Kick watch no longer ends in the
-  5-minute "not crediting" give-up while Kick is crediting. Claiming is still
-  manual on Kick.
+  5-minute "not crediting" give-up while Kick is crediting. The fetch sends
+  the session cookie as the bearer token Kick's client uses; a non-200 is a
+  poll error, never a logged-out verdict. Claiming is still manual on Kick.
 
 ### Changed
 - Container image builds on cluster-chrome 1.0.2 (Go 1.27.3 rebuild of the base and the dri-plugin).
