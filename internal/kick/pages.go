@@ -136,12 +136,34 @@ func (p *Pages) FetchCurrentDrop(ctx context.Context) (*domain.Progress, error) 
 	return nil, nil
 }
 
-// FetchInventoryProgress has no known Kick endpoint yet; progress arrives via
-// inventory-page parsing once its DOM shape is confirmed live. It returns
-// errors.ErrUnsupported (not an empty list) so claim verification never reads
-// "no rows" as evidence.
+// FetchInventoryProgress reads the account's drops progress from the
+// inventory endpoint the drops page renders, from page context on a kick.com
+// page. Before this the engine had no Kick progress source at all, so every
+// watch ended in the 5-minute no-credit give-up while Kick itself was
+// crediting (live 2026-11-04: badge showed 6 minutes after one session).
 func (p *Pages) FetchInventoryProgress(ctx context.Context) ([]domain.Progress, error) {
-	return nil, errors.ErrUnsupported
+	sess := p.ctrl.Session()
+	if cur, err := sess.CurrentURL(ctx); err != nil || !strings.HasPrefix(cur, URLBase) {
+		if err := sess.Navigate(ctx, URLDrops); err != nil {
+			return nil, fmt.Errorf("kick: open site for progress: %w", err)
+		}
+		p.settle(ctx)
+	}
+	var raw string
+	if err := sess.Eval(ctx, jsFetchProgress, &raw); err != nil {
+		return nil, fmt.Errorf("kick: fetch progress: %w", err)
+	}
+	rows, err := ParseProgressResponse(raw, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 && len(raw) > 40 {
+		// Nothing parsed from a real body: either the inventory is empty or
+		// the shape differs from the reward card's fields. Keep a sample in
+		// the log so the shape can be fixed from evidence.
+		p.logShape("progress", raw)
+	}
+	return rows, nil
 }
 
 // CampaignProgress has no known Kick endpoint (no campaign details query).
@@ -153,6 +175,19 @@ func (p *Pages) CampaignProgress(context.Context, string, string) ([]domain.Prog
 // on-screen progress widget is the future source (verify live).
 func (p *Pages) DrainProgress(ctx context.Context) ([]domain.Progress, error) {
 	return nil, nil
+}
+
+// ShapeLogger receives (endpoint, raw sample) when an endpoint answered 200
+// but nothing parsed; the serve/app wiring points it at the logger. Nil = off.
+var ShapeLogger func(endpoint, sample string)
+
+func (p *Pages) logShape(endpoint, raw string) {
+	if ShapeLogger != nil {
+		if len(raw) > 600 {
+			raw = raw[:600]
+		}
+		ShapeLogger(endpoint, raw)
+	}
 }
 
 func (p *Pages) settle(ctx context.Context) {
