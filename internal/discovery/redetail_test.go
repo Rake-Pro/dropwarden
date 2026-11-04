@@ -201,3 +201,50 @@ func TestReconcileQueueSkipsZeroMinuteDrops(t *testing.T) {
 		t.Fatalf("zero-minute row must be pruned and never re-added: %+v", items)
 	}
 }
+
+// TestStaleDetailsRefetched: a fully detailed campaign is re-read once its
+// DetailsFetched passes detail_refresh (or was never stamped), so a drop the
+// publisher added mid-campaign reaches the store; fresh details are skipped.
+func TestStaleDetailsRefetched(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	connected := true
+	c := rustCampaign("c-mw", "d-old", "Charm")
+	c.GameSlug, c.AccountConnected = "rust", &connected
+	c.DetailsFetched = time.Now().Add(-7 * time.Hour)
+	if err := st.UpsertCampaign(c); err != nil {
+		t.Fatal(err)
+	}
+	// One progress row = claim state synced, so only the age makes it a target.
+	if err := st.SaveProgress(domain.Progress{DropID: "d-old", RequiredMinutes: 60, Source: domain.SourceInventory, ObservedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	sess := &evalSession{respond: func(js string) string {
+		if strings.Contains(js, "dropCampaign(id") {
+			return `{"data":{"user":{"dropCampaign":{"id":"c-mw","name":"Rust c-mw","status":"ACTIVE","game":{"id":"g","displayName":"Rust","slug":"rust"},"self":{"isAccountConnected":true},"timeBasedDrops":[{"id":"d-old","name":"Charm","requiredMinutesWatched":60,"self":{"currentMinutesWatched":0,"isClaimed":false}},{"id":"d-new","name":"Point Man","requiredMinutesWatched":20,"self":{"currentMinutesWatched":0,"isClaimed":false}}]}}}}`
+		}
+		return `{"data":{"currentUser":{"login":"me"}}}`
+	}}
+	cfg := &config.Config{Games: []string{"Rust"}}
+	d := New(st, twitch.NewPages(evalCtrl{sess}), cfg, zerolog.Nop())
+	listed := []domain.Campaign{{ID: "c-mw", Name: "Rust c-mw", GameName: "Rust", Status: domain.StatusActive}}
+
+	n, _, err := d.fetchDetails(context.Background(), cfg, listed)
+	if err != nil || n != 1 || detailsCount(sess) != 1 {
+		t.Fatalf("stale campaign must be re-detailed: n=%d err=%v fetches=%d", n, err, detailsCount(sess))
+	}
+	got, _ := st.GetCampaign("c-mw")
+	if got == nil || len(got.Drops) != 2 {
+		t.Fatalf("new drop must land in the store: %+v", got)
+	}
+	if got.DetailsFetched.IsZero() || time.Since(got.DetailsFetched) > time.Minute {
+		t.Fatalf("re-detail must stamp DetailsFetched: %v", got.DetailsFetched)
+	}
+	n, _, err = d.fetchDetails(context.Background(), cfg, listed)
+	if err != nil || n != 0 || detailsCount(sess) != 1 {
+		t.Fatalf("fresh details must be skipped: n=%d err=%v fetches=%d", n, err, detailsCount(sess))
+	}
+}

@@ -51,10 +51,10 @@ func (s *Store) UpsertCampaign(c domain.Campaign) error {
 			platform=excluded.platform,
 			name=excluded.name, game_id=excluded.game_id, game_name=excluded.game_name,
 			status=excluded.status, start_at=excluded.start_at, end_at=excluded.end_at,
-			details_fetched=excluded.details_fetched,
 			-- Preserve detail-only fields when the incoming row lacks them, so the
 			-- basic list upsert (no ACL/slug/link) never clobbers a detailed campaign.
 			game_slug=CASE WHEN excluded.game_slug='' THEN campaigns.game_slug ELSE excluded.game_slug END,
+			details_fetched=CASE WHEN excluded.details_fetched IS NULL THEN campaigns.details_fetched ELSE excluded.details_fetched END,
 			account_link_url=CASE WHEN excluded.account_link_url='' THEN campaigns.account_link_url ELSE excluded.account_link_url END,
 			account_connected=CASE WHEN excluded.account_connected IS NULL THEN campaigns.account_connected ELSE excluded.account_connected END,
 			allowed_channels=CASE WHEN excluded.allowed_channels IN ('','[]','null') THEN campaigns.allowed_channels ELSE excluded.allowed_channels END`,

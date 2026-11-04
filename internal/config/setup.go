@@ -25,6 +25,7 @@ discovery:
   interval: 45m
   jitter: 30m
   details_per_cycle: 8      # cap on CampaignDetails expansions per cycle
+  detail_refresh: 6h        # re-read a detailed campaign's drops this often (publishers add drops mid-campaign)
   directory_poll: 5m
   directory_jitter: 3m
 
