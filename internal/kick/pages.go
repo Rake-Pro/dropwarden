@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rake-pro/dropwarden/internal/domain"
@@ -94,20 +95,40 @@ func (p *Pages) LiveChannels(context.Context, []string) ([]domain.Channel, error
 	return nil, errors.ErrUnsupported
 }
 
-// DirectoryChannels returns live channel logins for a category slug.
+// DirectoryChannels returns live channel logins for a category slug, most
+// viewers first. It reads the live-streams JSON the category page itself
+// loads, from page context on a kick.com page so the session's cookies and
+// Cloudflare clearance apply; the anchor scrape of the category page is only
+// the fallback when that endpoint is unavailable. The scrape alone returned
+// nothing for weeks: its URL had become a redirect to a 404 (live 2026-11-04).
 func (p *Pages) DirectoryChannels(ctx context.Context, gameSlug string) ([]string, error) {
 	if gameSlug == "" {
 		return nil, fmt.Errorf("kick: empty category slug")
 	}
-	if err := p.ctrl.Session().Navigate(ctx, fmt.Sprintf(URLDirectoryTmpl, gameSlug)); err != nil {
-		return nil, fmt.Errorf("kick: open category %s: %w", gameSlug, err)
+	sess := p.ctrl.Session()
+	if cur, err := sess.CurrentURL(ctx); err != nil || !strings.HasPrefix(cur, URLBase) {
+		if err := sess.Navigate(ctx, URLDrops); err != nil {
+			return nil, fmt.Errorf("kick: open site for category %s: %w", gameSlug, err)
+		}
+		p.settle(ctx)
+	}
+	var raw string
+	if err := sess.Eval(ctx, jsFetchLivestreams(gameSlug), &raw); err != nil {
+		return nil, fmt.Errorf("kick: fetch livestreams %s: %w", gameSlug, err)
+	}
+	logins, err := ParseLivestreamsResponse(raw)
+	if err == nil {
+		return logins, nil
+	}
+	if err := sess.Navigate(ctx, fmt.Sprintf(URLDirectoryTmpl, gameSlug)); err != nil {
+		return nil, fmt.Errorf("kick: open category %s after %v: %w", gameSlug, err, err)
 	}
 	p.settle(ctx)
-	var logins []string
-	if err := p.ctrl.Session().Eval(ctx, jsDirectoryChannels, &logins); err != nil {
+	var scraped []string
+	if err := sess.Eval(ctx, jsDirectoryChannels, &scraped); err != nil {
 		return nil, fmt.Errorf("kick: scrape category: %w", err)
 	}
-	return logins, nil
+	return scraped, nil
 }
 
 // FetchCurrentDrop has no Kick equivalent (no known per-session drop API).

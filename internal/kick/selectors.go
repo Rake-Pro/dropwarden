@@ -13,8 +13,10 @@ const (
 	URLDrops = "https://kick.com/drops"
 	// URLInventory shows earned progress and the manual Claim buttons.
 	URLInventory = "https://kick.com/drops/inventory"
-	// URLDirectoryTmpl lists live channels for one category slug.
-	URLDirectoryTmpl = "https://kick.com/categories/%s"
+	// URLDirectoryTmpl is the category page, the anchor-scrape fallback when
+	// the live-streams JSON is unavailable. It was /categories/<slug>, which
+	// now 308s to /browse/<slug>, a 404 with no channel links (2026-11-04).
+	URLDirectoryTmpl = "https://kick.com/category/%s"
 
 	// campaignsAPI is the UNOFFICIAL campaigns listing used by community
 	// tools; fetched from page context so it inherits the session's cookies

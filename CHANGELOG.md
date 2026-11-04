@@ -15,6 +15,10 @@ and are grouped by day and theme on `main`.
 - Kick: drops never queued because the parser read minute fields the live
   endpoint does not send; `required_units` under the "Watch to redeem" rule is
   the watch time. Campaign `status` is now mapped instead of assumed active.
+- Kick: any-channel campaigns found no live channel because the category
+  scrape used `kick.com/categories/<slug>`, now a redirect to a 404 page. Live
+  channels come from the category's live-streams listing (most viewers
+  first); the scrape of `kick.com/category/<slug>` is the fallback.
 
 ### Changed
 - Container image builds on cluster-chrome 1.0.2 (Go 1.27.3 rebuild of the base and the dri-plugin).
