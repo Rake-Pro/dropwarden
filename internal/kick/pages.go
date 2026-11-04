@@ -207,12 +207,6 @@ func (p *Pages) OpenInventory(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// ClaimDrop is unsupported on Kick (no known claim API); the engine falls back
-// to the inventory page click.
-func (p *Pages) ClaimDrop(context.Context, string) (string, string, error) {
-	return "", "", errors.ErrUnsupported
-}
-
 // InventoryButtons has no Kick implementation yet.
 func (p *Pages) InventoryButtons(context.Context) ([]byte, int, error) {
 	return nil, 0, errors.ErrUnsupported

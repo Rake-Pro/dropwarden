@@ -140,6 +140,7 @@ func ParseProgress(body []byte, now time.Time) ([]domain.Progress, error) {
 			}
 			p := domain.Progress{
 				DropID:          "kick-" + cid + "-" + r.ID.String(),
+				ClaimID:         ClaimIDFor(cid, r.ID.String()),
 				RequiredMinutes: r.RequiredUnits,
 				Source:          domain.SourceInventory,
 				ObservedAt:      now,

@@ -32,6 +32,9 @@ func TestParseProgress(t *testing.T) {
 	if badge.DropID != "kick-01C-01R" || badge.RequiredMinutes != 3000 || badge.RealMinutes != 6 || badge.Claimable || badge.ClaimedAt != nil {
 		t.Fatalf("badge row: %+v", badge)
 	}
+	if badge.ClaimID != "01C#01R" {
+		t.Fatalf("rows must carry the claim id the claim call needs: %q", badge.ClaimID)
+	}
 	if badge.Source != domain.SourceInventory {
 		t.Fatalf("rows must be server-confirmed: %q", badge.Source)
 	}

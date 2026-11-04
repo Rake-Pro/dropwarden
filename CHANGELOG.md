@@ -23,7 +23,13 @@ and are grouped by day and theme on `main`.
   (the one the drops page renders), so a Kick watch no longer ends in the
   5-minute "not crediting" give-up while Kick is crediting. The fetch sends
   the session cookie as the bearer token Kick's client uses; a non-200 is a
-  poll error, never a logged-out verdict. Claiming is still manual on Kick.
+  poll error, never a logged-out verdict.
+- Kick: finished drops are claimed through Kick's claim call (reward and
+  campaign ids, same bearer token) and confirmed against the inventory; the
+  claim sweep picks up rewards that finished in the background. A refused
+  claim still parks the drop for a manual claim on Kick.
+- UI: the "isn't counting progress" queue reason names the drop's platform
+  instead of always saying Twitch.
 
 ### Changed
 - Container image builds on cluster-chrome 1.0.2 (Go 1.27.3 rebuild of the base and the dri-plugin).

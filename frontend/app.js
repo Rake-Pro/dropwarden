@@ -621,14 +621,16 @@ const QUEUE_REASON = [
   [/claim it .*kick inventory/i, 'Watched. Claim it in your Kick inventory'],
   [/claim it .*twitch inventory/i, 'Watched. Claim it in your Twitch inventory'],
   [/prerequisite/i, 'Earn the earlier drop first'],
-  [/^not crediting/i, "Twitch isn't counting progress for this drop"],
+  [/^not crediting/i, (p) => `${platformName(p)} isn't counting progress for this drop`],
   [/channel offline/i, 'The channel went offline'],
   [/different game/i, 'The channel is streaming a different game'],
 ];
-const queueReason = (r) => {
+const platformName = (p) => (String(p || '').toLowerCase() === 'kick' ? 'Kick' : 'Twitch');
+const queueReason = (r, platform) => {
   const s = String(r || '');
   const hit = QUEUE_REASON.find(([re]) => re.test(s));
-  return hit ? hit[1] : s;
+  if (!hit) return s;
+  return typeof hit[1] === 'function' ? hit[1](platform) : hit[1];
 };
 
 // gamesLink opens Settings > Games; with a profile name, for that profile.
@@ -982,7 +984,7 @@ function upNextHTML(profiles, multiProfile) {
   return upnext.map((q, i) => {
     const platBit = (multiProfile ? q.profPlatMulti : soloMulti) ? pfBadge(q.platform) + ' ' : '';
     const profBit = multiProfile ? profBadge(q.profName) + ' ' : '';
-    return `<div class="up">${multiProfile ? '' : `<span class="idx">${i + 1}</span>`}<div class="t"><div class="n">${profBit}${platBit}${esc(q.dropName)}</div><div class="g">${esc(q.game)}${q.reason ? ' &middot; ' + esc(queueReason(q.reason)) : ''}</div></div><span class="m mono">${fmtMins(q.currentMinutes, q.requiredMinutes)}</span></div>`;
+    return `<div class="up">${multiProfile ? '' : `<span class="idx">${i + 1}</span>`}<div class="t"><div class="n">${profBit}${platBit}${esc(q.dropName)}</div><div class="g">${esc(q.game)}${q.reason ? ' &middot; ' + esc(queueReason(q.reason, q.platform)) : ''}</div></div><span class="m mono">${fmtMins(q.currentMinutes, q.requiredMinutes)}</span></div>`;
   }).join('');
 }
 
@@ -1169,7 +1171,7 @@ function queueRowHTML(q, ctx, sec) {
   const mins = fmtMins(q.currentMinutes, q.requiredMinutes);
   const status = esc(labelOf(STATUS_LABEL, q.status));
   const live = liveInfo(q);
-  const metaParts = [sec.pinned ? esc(q.game) : '', esc(queueReason(q.reason)), live.meta].filter(Boolean);
+  const metaParts = [sec.pinned ? esc(q.game) : '', esc(queueReason(q.reason, q.platform)), live.meta].filter(Boolean);
   const meta = metaParts.join(' &middot; ');
   return `<div class="${cls}" data-id="${esc(q.dropID)}" data-fk="q:${esc(q.dropID)}" tabindex="0" role="group" aria-label="${name}" draggable="${sec.pinned ? 'false' : 'true'}">
     <span class="grip" title="${sec.pinned ? 'Pinned: use the arrows to change rank' : 'Drag (or Alt+Up/Down) to reorder within this game'}" aria-hidden="true">&#8285;&#8285;</span>
