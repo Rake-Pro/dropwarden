@@ -10,7 +10,7 @@
 #     uid 1000 with home /home/chrome, and /usr/local/bin/chrome-gpu
 #     (google-chrome-stable with the GPU flags). Chrome's sandbox, GPU device
 #     and seccomp come from the base image and the pod spec, not from here.
-ARG GO_VERSION=1.27.3
+ARG GO_VERSION=1.27.4
 
 FROM golang:${GO_VERSION}-trixie AS build
 WORKDIR /src
@@ -27,7 +27,7 @@ RUN go build -tags production -trimpath \
       -o /out/dropwarden-cli ./cmd/dropwarden-cli
 
 # Placeholder tag: bump to the cluster-chrome release this is verified on.
-FROM ghcr.io/rake-pro/cluster-chrome:1.0.5
+FROM ghcr.io/rake-pro/cluster-chrome:1.0.6
 ARG VERSION=0.0.0-dev
 LABEL org.opencontainers.image.title="dropwarden" \
       org.opencontainers.image.description="dropwarden headless service (Twitch/Kick drops) on Xvfb + Chrome" \
