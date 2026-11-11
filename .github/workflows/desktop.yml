@@ -43,6 +43,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           ref: ${{ inputs.ref }}
 
       - name: Set up Go
@@ -105,6 +106,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           ref: ${{ inputs.ref }}
 
       - name: Set up Go
@@ -222,6 +224,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           ref: ${{ inputs.ref }}
 
       - name: Set up Go

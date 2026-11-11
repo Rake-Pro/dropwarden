@@ -26,6 +26,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           ref: refs/tags/${{ inputs.tag }}
 
       - name: Resolve version
