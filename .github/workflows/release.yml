@@ -63,6 +63,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       # Branch push (promotion merge): mint the next tag from the merged PR's
@@ -102,8 +103,10 @@ jobs:
                 patch) tag="v${ma}.${mi}.$((pa+1))" ;;
               esac
             fi
-            git tag "${tag}" "${GITHUB_SHA}"
-            git push origin "refs/tags/${tag}"
+            # The checkout keeps no credentials, so the tag is created through the API
+            # with the job token instead of git push.
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${tag}" -f sha="${GITHUB_SHA}" --silent
             echo "minted ${tag} at ${GITHUB_SHA}"
           fi
           # vX.Y.Z publishes everywhere; vX.Y.Z-rc.N is a GitHub-only
@@ -142,6 +145,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           ref: refs/tags/${{ needs.version.outputs.tag }}
 
       - uses: docker/setup-buildx-action@v4
@@ -198,6 +202,8 @@ jobs:
       # dispatching this workflow on that branch. The assets were built from
       # the tag by the desktop and image jobs.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Download artifacts
         uses: actions/download-artifact@v8
