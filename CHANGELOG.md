@@ -32,7 +32,8 @@ and are grouped by day and theme on `main`.
   instead of always saying Twitch.
 
 ### Changed
-- Container image builds on cluster-chrome 1.0.2 (Go 1.27.3 rebuild of the base and the dri-plugin).
+- Container image builds on cluster-chrome 1.0.8 (Chrome 157.0.8103.78, which carries the
+  2026-11-11 stable-channel security fixes).
 
 ## v1.0.0 - 2026-10-20
 
