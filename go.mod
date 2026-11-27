@@ -11,9 +11,9 @@ require (
 	github.com/rs/zerolog v1.35.1
 	github.com/wailsapp/wails/v3 v3.1.0
 	go.yaml.in/yaml/v3 v3.0.6
-	golang.org/x/net v0.62.0
+	golang.org/x/net v0.63.0
 	golang.org/x/sys v0.50.0
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
@@ -32,7 +32,7 @@ require (
 	github.com/ysmood/got v0.40.0 // indirect
 	github.com/ysmood/gson v0.7.3 // indirect
 	github.com/ysmood/leakless v0.9.0 // indirect
-	golang.org/x/term v0.47.0 // indirect
+	golang.org/x/term v0.48.0 // indirect
 	modernc.org/libc v1.80.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
